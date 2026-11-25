@@ -1,6 +1,7 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 Persistent
+SetTitleMatchMode 2          ; Teilstring-Suche für Fenstertitel
 SendMode "Input"
 
 ; ============================================================
@@ -12,11 +13,12 @@ SendMode "Input"
 ; ============================================================
 
 ; ---- Konfiguration (bei Bedarf anpassen) ----
-PORT     := 5005
-LOG_FILE := A_ScriptDir "\screen-helper.log"
-; Hinweis: KEIN WinActivate nötig - die onPC nimmt die Tasten auch so entgegen.
-; WinActivate würde das Hauptfenster (Screen 1) nach vorne holen und die
-; anderen offenen Screens verdecken.
+PORT       := 5005
+ONPC_TITLE := "grandMA2"     ; Fenstertitel der onPC (Teilstring), nur für Screen 1.
+LOG_FILE   := A_ScriptDir "\screen-helper.log"
+; Hinweis: WinActivate NUR bei Screen 1 (das ist das Hauptfenster, sinnvoll zum
+; Aufrufen). Bei Screen 2-6 KEIN WinActivate - das würde Screen 1 nach vorne
+; holen und die anderen offenen Screens verdecken.
 
 ; ---- Winsock / UDP-Listener ----
 WSAData := Buffer(408, 0)
@@ -76,9 +78,14 @@ Handle(msg) {
 }
 
 SendScreen(n) {
-    ; KEIN WinActivate: das würde das Hauptfenster (Screen 1) nach vorne holen
-    ; und die anderen offenen Screens verdecken. Die onPC nimmt die Tasten
-    ; auch so entgegen. Struktur fest: Insert an -> Kombi -> Insert aus.
+    global ONPC_TITLE
+    ; Screen 1 ist das Hauptfenster: WinActivate holt es sinnvoll nach vorne.
+    ; Screen 2-6: KEIN WinActivate (würde die anderen offenen Screens verdecken).
+    if (n = 1 && WinExist(ONPC_TITLE)) {
+        WinActivate
+        Sleep 60
+    }
+    ; Struktur fest: Insert an -> Kombi -> Insert aus.
     Send "{Insert}"          ; Shortcut-Modus AN
     Sleep 300
     Send "^!{F" n "}"        ; Ctrl+Alt+Fn  (Screen n toggeln)
