@@ -36,8 +36,9 @@ einziger Transportweg verifiziert.
   Integrationstests ohne Hardware.
 - Dokumentation: README mit manuellem Wheel-Capture-Workflow, ADRs 0001–0007.
 
-Nicht enthalten: Parameter-Unlock, LED-/Motor-Feedback, Fader-Wing-Unterstützung,
-grafische Oberfläche, MIDI/OSC/Telnet/Showcockpit im Wirkpfad.
+Nicht enthalten: Parameter-Unlock, Motor-Feedback, Fader-Wing-Unterstützung,
+grafische Oberfläche, MIDI/OSC/Telnet/Showcockpit im Wirkpfad. Die LED-Anzeige
+des Encoder-Modus am ASL ist enthalten (Task 5.8).
 
 ## Capabilities
 

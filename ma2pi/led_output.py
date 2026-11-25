@@ -1,17 +1,18 @@
-"""RGB LED output for the ASL MK2-E4B3 over raw ALSA MIDI.
+"""LED output for the ASL MK2-E4B3 over raw ALSA MIDI.
 
-Protocol observed from a ShowCockpit capture (MIDI-OX, 2026-11-25):
+Protocol verified live on the device (2026-11-25), starting from a ShowCockpit
+capture (MIDI-OX):
 
-* ``9F 7F 7F`` – Note On, channel 16, note 127, velocity 127: enables LED
-  control and clears all LEDs.  Without this frame the device ignores every
-  colour update and keeps its power-on red.
-* Per LED, one Note On per colour channel with the LED note number as note and
-  the intensity as velocity: channel 1 = red, channel 2 = green,
-  channel 3 = blue.
-* ``9F 7F 7E`` – releases LED control again.
+* ``9F 7F 7F`` – Note On, channel 16, note 127, velocity 127: switches the
+  buttons from "react to keypress" into "react to MIDI" LED mode.
+* Per LED, two Note On messages with the LED note number as note:
+  channel 1 velocity = brightness (0…127), channel 2 velocity = colour index.
+  Verified indices: 8 = green, 48 = red, 127 = white.
+* ``9F 7F 7E`` – releases LED control; the buttons return to keypress mode.
+  It MUST NOT be sent after colour updates, only when closing the port.
 
-The port is kept open for the daemon lifetime: the device resets its LED state
-when the raw MIDI port is opened and closed repeatedly.
+The port is kept open for the daemon lifetime: opening and closing the raw
+MIDI port repeatedly resets the LED state.
 """
 
 from __future__ import annotations
@@ -23,36 +24,34 @@ from pathlib import Path
 
 LOGGER = logging.getLogger("ma2pi.led")
 
+#: Switches the buttons into MIDI LED mode.
 ENABLE = bytes([0x9F, 0x7F, 0x7F])
+#: Releases LED control (keypress mode again).  Only sent on close.
 DISABLE = bytes([0x9F, 0x7F, 0x7E])
 
 CHANNEL_BASE = 0x90
-COLOR_NAMES: dict[str, tuple[int, int, int]] = {
-    "off": (0, 0, 0),
-    "red": (127, 0, 0),
-    "green": (0, 127, 0),
-    "blue": (0, 0, 127),
-    "amber": (127, 48, 0),
-    "yellow": (127, 127, 0),
-    "white": (127, 127, 127),
+#: Colour indices verified on the device.  Other indices are untested.
+COLOR_INDICES: dict[str, int] = {
+    "green": 8,
+    "red": 48,
+    "white": 127,
 }
 
 
-def parse_color(value: object) -> tuple[int, int, int]:
-    """Accept a colour name or an ``[r, g, b]`` triple (0…127)."""
+def parse_color(value: object) -> int:
+    """Accept a colour name or a raw colour index (0…127)."""
     if isinstance(value, str):
         try:
-            return COLOR_NAMES[value.lower()]
+            return COLOR_INDICES[value.lower()]
         except KeyError as exc:
             raise ValueError(
-                f"unbekannte Farbe {value!r} (erlaubt: {', '.join(sorted(COLOR_NAMES))})"
+                f"unbekannte Farbe {value!r} (erlaubt: {', '.join(sorted(COLOR_INDICES))})"
             ) from exc
-    if isinstance(value, (list, tuple)) and len(value) == 3:
-        rgb = tuple(int(part) for part in value)
-        if any(not 0 <= part <= 127 for part in rgb):
-            raise ValueError("RGB-Werte müssen zwischen 0 und 127 liegen")
-        return rgb  # type: ignore[return-value]
-    raise ValueError("Farbe muss ein Name oder [r, g, b] sein")
+    if isinstance(value, int) and not isinstance(value, bool):
+        if not 0 <= value <= 127:
+            raise ValueError("Farbindex muss zwischen 0 und 127 liegen")
+        return value
+    raise ValueError("Farbe muss ein Name oder ein Index (0…127) sein")
 
 
 def note_on(channel: int, note: int, velocity: int) -> bytes:
@@ -64,15 +63,15 @@ class LedSettings:
     enabled: bool = False
     device: str | None = None
     note: int = 9
-    attribute_color: tuple[int, int, int] = (127, 0, 0)
-    screen_color: tuple[int, int, int] = (0, 127, 0)
-    red_channel: int = 1
-    green_channel: int = 2
-    blue_channel: int = 3
+    attribute_color: int = 48  # red
+    screen_color: int = 8  # green
+    brightness: int = 127
+    brightness_channel: int = 1
+    color_channel: int = 2
 
 
 class LedOutput:
-    """Writes RGB LED frames to one ASL button over a persistent MIDI handle."""
+    """Writes LED frames to one ASL button over a persistent MIDI handle."""
 
     def __init__(self, path: str | Path, settings: LedSettings) -> None:
         self.path = Path(path)
@@ -109,16 +108,20 @@ class LedOutput:
             LOGGER.warning("LED-Frame konnte nicht gesendet werden: %s", exc)
 
     def enable(self) -> None:
-        """Take over the LEDs and clear them."""
+        """Switch the buttons into MIDI LED mode."""
         self._write(ENABLE)
 
-    def set_color(self, rgb: tuple[int, int, int]) -> None:
+    def set_color(self, index: int) -> None:
+        """Set brightness and colour index in one write; no release frame.
+
+        Sending ``9F 7F 7E`` here would hand the LEDs back to keypress mode
+        and the colour would never show.
+        """
         note = self.settings.note
-        red, green, blue = rgb
         self._write(
-            note_on(self.settings.red_channel, note, red)
-            + note_on(self.settings.green_channel, note, green)
-            + note_on(self.settings.blue_channel, note, blue)
+            ENABLE
+            + note_on(self.settings.brightness_channel, note, self.settings.brightness)
+            + note_on(self.settings.color_channel, note, index)
         )
 
     def apply_mode(self, screen_mode: bool) -> None:

@@ -44,6 +44,7 @@ def small_config(make_config) -> AppConfig:
         data["ma2"]["port"] = 9
         data["ma2"]["password_file"] = None
         data["ma2"]["password_env"] = "MA2PI_TEST_PASSWORD"
+        data["ma2"]["hardkey_transport"] = "native"
         data["ma2"]["keepalive_interval"] = 0.05
         data["reconnect"]["initial_delay"] = 0.01
         data["reconnect"]["max_delay"] = 0.05

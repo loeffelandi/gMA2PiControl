@@ -17,7 +17,7 @@ def test_keynames_are_unique_and_non_empty():
 
 def test_resolve_returns_keynames():
     assert hardkeys.resolve("MA") == "MA"
-    assert hardkeys.resolve("Fix") == "FIXTURE"
+    assert hardkeys.resolve("Fix") == "FIX"
     assert hardkeys.resolve("Store") == "STORE"
     assert hardkeys.resolve("Clear") == "CLEAR"
     assert hardkeys.resolve("Please") == "ENTER"
@@ -58,3 +58,8 @@ def test_no_x_keys_in_web_remote():
     # The web remote has no X1..X20 keynames; those must be commands.
     assert not hardkeys.is_known("X1")
     assert not hardkeys.is_known("X20")
+
+
+def test_fix_is_not_fixture():
+    assert hardkeys.resolve("Fix") == "FIX"
+    assert hardkeys.resolve("Fixture") == "FIXTURE"

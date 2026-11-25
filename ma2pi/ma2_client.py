@@ -399,6 +399,7 @@ class Ma2Client:
     async def start(self) -> None:
         if self._sender_task is not None:
             return
+        self.warn_unverified_hardkeys()
         self._sender_task = asyncio.create_task(self._sender_loop(), name="ma2pi-sender")
         self._backpressure_task = asyncio.create_task(
             self._backpressure_loop(), name="ma2pi-backpressure"
@@ -672,28 +673,62 @@ class Ma2Client:
                 self.last_error = str(exc)
                 await self._transport.close()
 
+    def warn_unverified_hardkeys(self) -> None:
+        """Log all configured but unverified hardkeys once at startup."""
+
+        if self.dry_run or self.config.ma2.hardkey_transport != "lua":
+            return
+        for name, entry in sorted(self.config.hardkeys.items()):
+            if not entry.verified:
+                LOGGER.warning(
+                    "Hardkey %s (code %d) ist nicht verifiziert und wird nicht gesendet",
+                    name,
+                    entry.code,
+                )
+
+    def _hardkey_frame(
+        self,
+        keyname: str,
+        pressed: bool,
+        session: int,
+        ma2: Any,
+    ) -> dict[str, Any] | None:
+        if ma2.hardkey_transport == "native":
+            return frames.keyname_frame(
+                keyname,
+                pressed,
+                session,
+                ma2.hardkey_press_value,
+                ma2.hardkey_release_value,
+            )
+
+        entry = self.config.hardkeys.get(keyname)
+        if entry is None:
+            LOGGER.error("Kein Keycode für Hardkey %s konfiguriert", keyname)
+            return None
+        if not entry.verified:
+            LOGGER.warning(
+                "Hardkey %s (code %d) ist nicht verifiziert; Frame verworfen",
+                keyname,
+                entry.code,
+            )
+            return None
+        return frames.lua_hardkey_frame(entry.code, pressed, session)
+
     async def _dispatch(self, action: Action) -> None:
         assert self._session is not None
         session = self._session
         ma2 = self.config.ma2
 
         if isinstance(action, Press):
-            frame = frames.keyname_frame(
-                action.keyname,
-                True,
-                session,
-                ma2.hardkey_press_value,
-                ma2.hardkey_release_value,
-            )
+            frame = self._hardkey_frame(action.keyname, True, session, ma2)
+            if frame is None:
+                return
             kind = "hardkeyPress"
         elif isinstance(action, Release):
-            frame = frames.keyname_frame(
-                action.keyname,
-                False,
-                session,
-                ma2.hardkey_press_value,
-                ma2.hardkey_release_value,
-            )
+            frame = self._hardkey_frame(action.keyname, False, session, ma2)
+            if frame is None:
+                return
             kind = "hardkeyRelease"
         elif isinstance(action, Command):
             frame = frames.command_frame(action.text, session)

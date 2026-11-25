@@ -18,6 +18,7 @@ def client_config(config, port: int, **changes):
         "port": port,
         "password_file": None,
         "password_env": "MA2PI_TEST_PASSWORD",
+        "hardkey_transport": "native",
         "keepalive_interval": 0.05,
     }
     values.update(changes)
@@ -59,8 +60,8 @@ async def test_end_to_end_input_to_recorded_frames(config):
         hardkeys = [frame for frame in server.frames if frame.get("requestType") == "keyname"]
         assert [(frame["keyname"], frame["value"]) for frame in hardkeys] == [
             ("MA", 1.0),
-            ("FIXTURE", 1.0),
-            ("FIXTURE", 0.0),
+            ("FIX", 1.0),
+            ("FIX", 0.0),
             ("MA", 0.0),
         ]
         encoders = [

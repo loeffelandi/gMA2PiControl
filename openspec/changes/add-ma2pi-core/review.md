@@ -46,7 +46,7 @@ oder eine begründete Ausnahme zu. Es ersetzt nicht die Hardware-Abnahme (Tasks
 | Nativer Encoder-Frame, ein Frame pro Flush | `frames.encoder_attribute_frame`; `test_encoder_frame_uses_attribute_name`, `test_slot_encoder_uses_console_page`, `test_slot_encoder_ignored_without_page`. |
 | Screen-Modus per Taste | `screen_mode` + `mapping.screen_encoders`; `test_screen_mode_key_toggles`, `test_screen_mode_key`, `test_screen_encoders_parsed`. |
 | Rate-Limit, begrenzter Puffer, Nachlauf | `max_pending_delta` + Log; `test_pending_delta_is_capped`, `test_encoder_stress_against_mock_server` (100 Detents/s über 10 s, Summe 1000, ≤ 40 Frames/s, Queue-Tiefe ≤ 2). |
-| Physische LED-Ansteuerung des ASL | **Ausnahme:** Task 5.8; der Modus steht als `screen_mode` im Status, das MIDI-LED-Protokoll ist noch nicht aufgenommen. |
+| Physische LED-Ansteuerung des ASL | `LedOutput` mit verifiziertem Protokoll (Enable `9F 7F 7F`, Kanal 1 Helligkeit, Kanal 2 Farbindex 8/48, Release nur beim Beenden); `test_led_output_writes_frames`; rot/grün am Gerät bestätigt (2026-11-25). |
 
 ## `hid-input`
 

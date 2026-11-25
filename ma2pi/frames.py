@@ -41,6 +41,18 @@ def command_frame(command: str, session: int) -> dict[str, Any]:
     }
 
 
+def lua_hardkey_frame(code: int, pressed: bool, session: int) -> dict[str, Any]:
+    """Hardkey press/release through the onPC command line.
+
+    The onPC only injects a real hardware key event when the command is sent
+    as a command frame.  Press and release are separate calls; the third
+    argument (``hold``) stays ``false`` as in the MIDIMonster reference.
+    """
+
+    flag = "true" if pressed else "false"
+    return command_frame(f"LUA 'gma.canbus.hardkey({code}, {flag}, false)'", session)
+
+
 def keyname_frame(
     keyname: str,
     pressed: bool,

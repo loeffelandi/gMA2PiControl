@@ -171,21 +171,25 @@ The password and its MD5 hash are never logged.
 
 ### `[led]`
 
-RGB feedback for the ASL mode indicator (protocol captured from ShowCockpit).
+LED feedback for the ASL mode indicator (protocol verified live on the device).
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `enabled` | bool | `false` | Turn LED output on. |
 | `device` | string | auto | Raw MIDI node; default is the configured `midi` device. |
 | `note` | int | `9` | LED note of the button (9–11 = buttons 1–3). |
-| `attribute_color` | name or `[r,g,b]` | `"red"` | Colour in attribute mode. |
-| `screen_color` | name or `[r,g,b]` | `"green"` | Colour in screen mode. |
-| `red_channel`/`green_channel`/`blue_channel` | int | `1`/`2`/`3` | MIDI channels per colour component, must differ. |
+| `attribute_color` | name or index | `"red"` | Colour in attribute mode. |
+| `screen_color` | name or index | `"green"` | Colour in screen mode. |
+| `brightness` | int | `127` | LED brightness, 0–127. |
+| `brightness_channel`/`color_channel` | int | `1`/`2` | MIDI channels for brightness and colour index, must differ. |
 
-The device needs the enable frame `9F 7F 7F` (note 127, channel 16) before it
-accepts colours; the daemon sends it once on start and `9F 7F 7E` on shutdown.
-The port stays open, because opening and closing it per message resets the LEDs.
-Colour names: `off`, `red`, `green`, `blue`, `amber`, `yellow`, `white`.
+Each colour update is `9F 7F 7F` (enable MIDI LED mode) followed by two Note On
+messages: channel 1 velocity = brightness, channel 2 velocity = colour index.
+`9F 7F 7E` releases LED control and is only sent on shutdown — sending it after
+a colour update would switch the buttons back to keypress mode. The port stays
+open, because opening and closing it per message resets the LEDs.
+Verified colour indices: `green` = 8, `red` = 48, `white` = 127; any index
+0–127 can be configured directly.
 
 ### `[devices.<name>]`
 

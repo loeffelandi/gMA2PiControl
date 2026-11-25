@@ -42,6 +42,7 @@ class Ma2Settings:
     password_env: str | None = None
     keepalive_interval: float = 5.0
     login_timeout: float = 10.0
+    hardkey_transport: str = "lua"
     hardkey_press_value: float = 1.0
     hardkey_release_value: float = 0.0
     page_refresh_interval: float = 1.0
@@ -147,6 +148,14 @@ class ModifierMapping:
 
 
 @dataclass(frozen=True, slots=True)
+class HardkeyCode:
+    """Canbus keycode for one hardkey and its verification state."""
+
+    code: int
+    verified: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class KeyMapping:
     hardkey: str | None = None
     command: str | None = None
@@ -200,6 +209,7 @@ class AppConfig:
     devices: Mapping[str, DeviceConfig]
     profiles: Mapping[str, ProfileConfig]
     mapping: MappingSettings
+    hardkeys: Mapping[str, HardkeyCode] = field(default_factory=dict)
     reconnect: ReconnectSettings = field(default_factory=ReconnectSettings)
     rate_limit: RateLimitSettings = field(default_factory=RateLimitSettings)
     logging: LoggingSettings = field(default_factory=LoggingSettings)
@@ -311,6 +321,7 @@ def _parse_ma2(raw: Any) -> Ma2Settings:
         "password_env",
         "keepalive_interval",
         "login_timeout",
+        "hardkey_transport",
         "hardkey_press_value",
         "hardkey_release_value",
         "page_refresh_interval",
@@ -348,6 +359,12 @@ def _parse_ma2(raw: Any) -> Ma2Settings:
     if login_timeout <= 0:
         raise ConfigError(f"{path}.login_timeout", "muss größer 0 sein")
 
+    hardkey_transport = _choice(
+        data.get("hardkey_transport", "lua"),
+        f"{path}.hardkey_transport",
+        {"lua", "native"},
+    )
+
     press = _float(data.get("hardkey_press_value", 1.0), f"{path}.hardkey_press_value")
     release = _float(
         data.get("hardkey_release_value", 0.0), f"{path}.hardkey_release_value"
@@ -372,6 +389,7 @@ def _parse_ma2(raw: Any) -> Ma2Settings:
         password_env=password_env,
         keepalive_interval=keepalive,
         login_timeout=login_timeout,
+        hardkey_transport=hardkey_transport,
         hardkey_press_value=press,
         hardkey_release_value=release,
         page_refresh_interval=page_refresh,
@@ -454,9 +472,9 @@ def _parse_led(raw: Any) -> LedSettings:
             "note",
             "attribute_color",
             "screen_color",
-            "red_channel",
-            "green_channel",
-            "blue_channel",
+            "brightness",
+            "brightness_channel",
+            "color_channel",
         },
         path,
     )
@@ -472,16 +490,19 @@ def _parse_led(raw: Any) -> LedSettings:
         screen_color = parse_color(data.get("screen_color", "green"))
     except ValueError as exc:
         raise ConfigError(f"{path}.attribute_color", str(exc)) from exc
+    brightness = _int(data.get("brightness", 127), f"{path}.brightness")
+    if not 0 <= brightness <= 127:
+        raise ConfigError(f"{path}.brightness", "muss zwischen 0 und 127 liegen")
 
     channels = []
-    for key, default in (("red_channel", 1), ("green_channel", 2), ("blue_channel", 3)):
+    for key, default in (("brightness_channel", 1), ("color_channel", 2)):
         value = _int(data.get(key, default), f"{path}.{key}")
         if not 1 <= value <= 16:
             raise ConfigError(f"{path}.{key}", "muss zwischen 1 und 16 liegen")
         channels.append(value)
-    red_channel, green_channel, blue_channel = channels
-    if len(set(channels)) != 3:
-        raise ConfigError(path, "red_channel, green_channel und blue_channel müssen verschieden sein")
+    brightness_channel, color_channel = channels
+    if brightness_channel == color_channel:
+        raise ConfigError(path, "brightness_channel und color_channel müssen verschieden sein")
 
     return LedSettings(
         enabled=enabled,
@@ -489,9 +510,9 @@ def _parse_led(raw: Any) -> LedSettings:
         note=note,
         attribute_color=attribute_color,
         screen_color=screen_color,
-        red_channel=red_channel,
-        green_channel=green_channel,
-        blue_channel=blue_channel,
+        brightness=brightness,
+        brightness_channel=brightness_channel,
+        color_channel=color_channel,
     )
 
 
@@ -683,6 +704,53 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
             midi_encoders=tuple(midi_encoders),
         )
     return profiles
+
+
+def _parse_hardkeys(raw: Any) -> Mapping[str, HardkeyCode]:
+    path = "hardkeys"
+    if raw is None:
+        return {}
+    data = _table(raw, path)
+    codes: dict[str, HardkeyCode] = {}
+    for name, entry in data.items():
+        item_path = f"{path}.{name}"
+        try:
+            canonical = hardkeys.resolve(name)
+        except hardkeys.UnknownHardkey as exc:
+            raise ConfigError(item_path, f"unbekannter Hardkey {name!r}") from exc
+        if canonical != name:
+            raise ConfigError(
+                item_path,
+                f"Keycode muss unter dem kanonischen Namen {canonical!r} stehen",
+            )
+        item = _table(entry, item_path)
+        _reject_unknown(item, {"code", "verified"}, item_path)
+        code = _int(_require(item, "code", item_path), f"{item_path}.code")
+        if not 1 <= code <= 255:
+            raise ConfigError(f"{item_path}.code", "muss zwischen 1 und 255 liegen")
+        verified = _bool(_require(item, "verified", item_path), f"{item_path}.verified")
+        codes[name] = HardkeyCode(code, verified)
+    return codes
+
+
+def _require_hardkey_codes(
+    mapping: MappingSettings, codes: Mapping[str, HardkeyCode]
+) -> None:
+    used: dict[str, str] = {}
+    for control, entry in mapping.keys.items():
+        if entry.hardkey is not None:
+            used[control] = entry.hardkey
+    for control, entry in mapping.modifiers.items():
+        if entry.hardkey is not None:
+            used[control] = entry.hardkey
+
+    for control, value in sorted(used.items()):
+        canonical = hardkeys.resolve(value)
+        if canonical not in codes:
+            raise ConfigError(
+                f"hardkeys.{canonical}",
+                f"fehlender Keycode für Hardkey {canonical!r} (verwendet von {control})",
+            )
 
 
 def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSettings:
@@ -899,6 +967,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
             "devices",
             "profiles",
             "mapping",
+            "hardkeys",
             "encoder",
             "web",
             "led",
@@ -911,8 +980,11 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
 
     profiles = _parse_profiles(_require(data, "profiles", "config"))
     devices = _parse_devices(_require(data, "devices", "config"), profiles)
-    mapping = _parse_mapping(_require(data, "mapping", "config"), profiles)
     ma2 = _parse_ma2(_require(data, "ma2", "config"))
+    mapping = _parse_mapping(_require(data, "mapping", "config"), profiles)
+    hardkey_codes = _parse_hardkeys(data.get("hardkeys"))
+    if ma2.hardkey_transport == "lua":
+        _require_hardkey_codes(mapping, hardkey_codes)
     reconnect = _parse_reconnect(data.get("reconnect", {}))
     rate_limit = _parse_rate_limit(data.get("rate_limit", {}))
     logging_settings = _parse_logging(data.get("logging", {}))
@@ -925,6 +997,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
         devices=devices,
         profiles=profiles,
         mapping=mapping,
+        hardkeys=hardkey_codes,
         reconnect=reconnect,
         rate_limit=rate_limit,
         logging=logging_settings,

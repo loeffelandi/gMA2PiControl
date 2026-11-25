@@ -120,7 +120,7 @@ def test_numeric_hardkey_is_rejected(make_config):
 def test_hardkey_resolves_to_keyname(make_config):
     config = make_config()
     assert config.mapping.keys["fix"].hardkey == "Fix"
-    assert config.logical_to_hardkey("fix") == "FIXTURE"
+    assert config.logical_to_hardkey("fix") == "FIX"
     assert config.logical_to_hardkey("please_big") == "ENTER"
 
 
@@ -295,3 +295,48 @@ def test_midi_encoder_id_is_global(make_config):
 def test_unknown_backend(make_config):
     with pytest.raises(ConfigError, match="backend"):
         make_config(lambda data: data["devices"]["asl"].__setitem__("backend", "serial"))
+
+
+def test_default_hardkey_transport_is_lua(make_config):
+    config = make_config(lambda data: data["ma2"].pop("hardkey_transport"))
+    assert config.ma2.hardkey_transport == "lua"
+
+
+def test_invalid_hardkey_transport(make_config):
+    with pytest.raises(ConfigError, match="hardkey_transport"):
+        make_config(lambda data: data["ma2"].__setitem__("hardkey_transport", "osc"))
+
+
+def test_missing_hardkey_code_names_the_key(make_config):
+    with pytest.raises(ConfigError, match="STORE"):
+        make_config(lambda data: data["hardkeys"].pop("STORE"))
+
+
+def test_hardkey_code_range(make_config):
+    with pytest.raises(ConfigError, match="CLEAR"):
+        make_config(lambda data: data["hardkeys"]["CLEAR"].__setitem__("code", 0))
+    with pytest.raises(ConfigError, match="CLEAR"):
+        make_config(lambda data: data["hardkeys"]["CLEAR"].__setitem__("code", 300))
+
+
+def test_hardkey_verified_is_required(make_config):
+    with pytest.raises(ConfigError, match="CLEAR.*verified"):
+        make_config(lambda data: data["hardkeys"]["CLEAR"].pop("verified"))
+
+
+def test_hardkey_alias_is_rejected_as_table_key(make_config):
+    def mutate(data):
+        data["hardkeys"]["Store"] = data["hardkeys"].pop("STORE")
+
+    with pytest.raises(ConfigError, match="kanonischen Namen"):
+        make_config(mutate)
+
+
+def test_native_transport_does_not_require_codes(make_config):
+    def mutate(data):
+        data["ma2"]["hardkey_transport"] = "native"
+        data.pop("hardkeys")
+
+    config = make_config(mutate)
+    assert config.ma2.hardkey_transport == "native"
+    assert config.hardkeys == {}

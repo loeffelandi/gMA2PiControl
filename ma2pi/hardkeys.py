@@ -49,6 +49,7 @@ KEYNAMES: frozenset[str] = frozenset(
         "PAUSE",
         "SELECT",
         "FIXTURE",
+        "FIX",
         "SEQU",
         "CUE",
         "PRESET",
@@ -91,7 +92,7 @@ KEYNAMES: frozenset[str] = frozenset(
 
 # Friendly names, mostly matching the printed Cherry key labels.
 ALIASES: dict[str, str] = {
-    "Fix": "FIXTURE",
+    "Fix": "FIX",
     "Store": "STORE",
     "Update": "UPDATE",
     "Clear": "CLEAR",

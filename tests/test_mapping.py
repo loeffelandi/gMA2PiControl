@@ -60,7 +60,7 @@ def encoder(encoder_id: int, delta: int) -> InputEvent:
 def test_tap(engine, sink):
     engine.handle(key("fix", 1))
     engine.handle(key("fix", 0))
-    assert sink.actions == [("press", "FIXTURE"), ("release", "FIXTURE")]
+    assert sink.actions == [("press", "FIX"), ("release", "FIX")]
 
 
 def test_hold_has_one_press_and_one_release(engine, sink):
@@ -83,8 +83,8 @@ def test_modifier_chord_order(engine, sink):
     engine.handle(key("ma", 0))
     assert sink.actions == [
         ("press", "MA"),
-        ("press", "FIXTURE"),
-        ("release", "FIXTURE"),
+        ("press", "FIX"),
+        ("release", "FIX"),
         ("release", "MA"),
     ]
 
@@ -98,8 +98,8 @@ def test_desk_lock_acceptance(engine, sink):
     assert len(sink.actions) == 4
     assert sink.actions == [
         ("press", "MA"),
-        ("press", "FIXTURE"),
-        ("release", "FIXTURE"),
+        ("press", "FIX"),
+        ("release", "FIX"),
         ("release", "MA"),
     ]
 
@@ -112,8 +112,8 @@ def test_cleanup_releases_in_reverse_order(engine, sink):
     assert sink.actions == [
         ("press", "MA"),
         ("press", "STORE"),
-        ("press", "FIXTURE"),
-        ("release", "FIXTURE"),
+        ("press", "FIX"),
+        ("release", "FIX"),
         ("release", "STORE"),
         ("release", "MA"),
     ]

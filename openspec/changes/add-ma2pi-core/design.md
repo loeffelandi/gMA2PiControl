@@ -154,7 +154,9 @@ Screen-Encoder. Die konfigurierte Taste (`screen_mode = true`) schaltet zwischen
 Attribut- und Screen-Modus um; ohne die Sektion bleibt der Attribut-Modus aktiv
 und es wird gewarnt. Der Modus steht als `screen_mode` im Status und dient der
 Oberfläche als LED-Zustand (grün = Screen, rot = Attribut). Die physische
-LED-Ansteuerung des ASL braucht noch einen Mitschnitt des MIDI-LED-Protokolls.
+LED-Ansteuerung ist am Gerät verifiziert: `9F 7F 7F` schaltet in den
+MIDI-LED-Modus, Kanal 1 führt die Helligkeit, Kanal 2 den Farbindex
+(8 = grün, 48 = rot); `9F 7F 7E` gibt die LEDs erst beim Beenden frei.
 
 Beschleunigung: `none` (Multiplier 1), `linear`
 (`1 + k·(rate−1)`, gekappt auf `max_multiplier`) oder `exponentiell`

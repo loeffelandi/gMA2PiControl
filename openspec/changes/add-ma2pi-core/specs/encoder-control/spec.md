@@ -79,12 +79,9 @@ gesendet werden. Sie MUST nur nachfolgende Deltas betreffen.
 
 ### Requirement: Screen-Modus per Taste
 
-Eine konfigurierte Taste SHALL zwischen Attribut- und Screen-Encodern umschalten.
-Im Attribut-Modus folgen die Encoder dem Fenster der onPC. Im Screen-Modus
-MUST jeder Slot auf den in `mapping.screen_encoders` hinterlegten Namen zeigen.
-Fehlt die Sektion, MUST der Modus trotzdem umschalten, aber keine
-Encoder-Frames senden; eine Warnung MUST die fehlende Konfiguration nennen. Der aktive Modus MUST im Status sichtbar sein und als LED-Zustand
-gemeldet werden: grün im Screen-Modus, rot im Attribut-Modus.
+Eine konfigurierte Taste SHALL zwischen Attribut- und Screen-Encodern
+umschalten. Im Screen-Modus MUST jeder Slot auf den in
+`mapping.screen_encoders` hinterlegten Namen zeigen.
 
 #### Scenario: Umschalten mit konfigurierten Screen-Encodern
 
@@ -94,12 +91,28 @@ gemeldet werden: grün im Screen-Modus, rot im Attribut-Modus.
 #### Scenario: Umschalten ohne Konfiguration
 
 - **WHEN** `mapping.screen_encoders` fehlt und die Taste gedrückt wird
-- **THEN** wechselt der Modus und die LED-Farbe, aber es werden keine Encoder-Frames gesendet und im Log erscheint eine Warnung
+- **THEN** wechselt der Modus, es werden aber keine Encoder-Frames gesendet und eine Warnung nennt die fehlende Konfiguration
 
-#### Scenario: LED-Zustand
+#### Scenario: Zurück in den Attribut-Modus
 
-- **WHEN** der Modus wechselt
-- **THEN** meldet der Status den neuen Modus, aus dem die Oberfläche grün (Screen) bzw. rot (Attribut) ableitet
+- **WHEN** die Taste im Screen-Modus erneut gedrückt wird
+- **THEN** folgen die Encoder wieder dem Attribut-Fenster der onPC
+
+### Requirement: LED-Anzeige des Encoder-Modus
+
+Der aktive Modus MUST im Status sichtbar sein und als LED-Zustand an einer
+konfigurierten Taste ausgegeben werden: grün im Screen-Modus, rot im
+Attribut-Modus. Die LED-Ausgabe MUST das Gerät nicht blockieren, wenn es fehlt.
+
+#### Scenario: Moduswechsel an der LED
+
+- **WHEN** der Modus zwischen Attribut und Screen wechselt
+- **THEN** sendet der Daemon innerhalb einer Sekunde die passende Farbe an die Modus-LED
+
+#### Scenario: Gerät nicht angeschlossen
+
+- **WHEN** die LED-Ausgabe aktiviert ist, das MIDI-Gerät aber fehlt
+- **THEN** startet der Daemon normal, protokolliert eine Warnung und versucht es beim nächsten Erscheinen erneut
 
 ### Requirement: Delta-Akkumulation und Flush
 

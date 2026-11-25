@@ -56,7 +56,7 @@
 - [x] 5.5 Nativen Attribut-Encoder-Frame (`requestType: "encoder"`, `name`, `value`) implementieren; Test prüft Name, Wert und Session. CMD-Wrapper für Encoder entfällt.
 - [x] 5.6 Attribut-Fenster aus der onPC ableiten: `presetTypes` liefert das selektierte Attribut, der 4er-Block folgt ihm; Polling jede Sekunde (`page_refresh_interval`). Tests prüfen Fensterwechsel, kurze Features und Feature-Wechsel.
 - [x] 5.7 Screen-Modus per Taste: `screen_mode` schaltet zwischen Attribut- und Screen-Encodern, `mapping.screen_encoders` liefert die Namen für Slots 1–4, der Modus steht als `screen_mode` im Status (grün/rot für die Oberfläche). Test prüft Umschalten, fehlende Konfiguration (Modus wechselt, keine Frames) und Status.
-- [ ] 5.8 Physische LED-Ansteuerung des ASL: MIDI-LED-Protokoll per Mitschnitt ermitteln (Note/CC je Taste), Ausgabe im Daemon implementieren und den Modus grün/rot anzeigen; Test mit aufgezeichnetem Fixture.
+- [x] 5.8 Physische LED-Ansteuerung des ASL: Protokoll am Gerät verifiziert (2026-11-25): `9F 7F 7F` aktiviert den MIDI-LED-Modus, je LED Note On auf Kanal 1 (Helligkeit) und Kanal 2 (Farbindex: 8 = grün, 48 = rot, 127 = weiß); `9F 7F 7E` gibt die LEDs nur beim Beenden frei. Ausgabe im Daemon (`led_output.py`, `[led]`), Modus grün/rot am Gerät bestätigt; Tests prüfen die exakten Frames.
 - [x] 5.9 Encoder-Stresstest gegen den Mock-Server: 100 Detents/s über 10 s bleiben unter dem Limit, die kumulierte Delta-Summe stimmt bis zur Obergrenze, der Puffer bleibt begrenzt.
 - [x] 5.10 Nicht mehr benötigte Wheel-Ziele und CMD-Wrapper entfernen (`wheel_protocol.py` bleibt nur als dokumentierter, ungenutzter Baustein); ADR-0002 wird mit dem verifizierten Attribut-Format aktualisiert.
 

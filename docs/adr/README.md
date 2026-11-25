@@ -13,3 +13,6 @@
 * [0011. Frontend mit Svelte 5 und Vite](0011-frontend-mit-svelte-5-und-vite.md)
 * [0012. Learn-Modus und Live-Event-Stream](0012-learn-modus-und-live-event-stream.md)
 * [0013. LAN-Zugriffsmodell ohne Login](0013-lan-zugriffsmodell-ohne-login.md)
+* [0014. ASL MK2 E4B3 als MIDI-Gerät hinter der Input-Schnittstelle](0014-asl-mk2-e4b3-als-midi-geraet-hinter-der-input-schnittstelle.md)
+* [0015. Attribut-Encoder folgen der onPC statt fester Wheel-Ziele](0015-attribut-encoder-folgen-der-onpc-statt-fester-wheel-ziele.md)
+* [0016. Hardkey-Injection über gma.canbus.hardkey im Command-Line-Modus](0016-hardkey-injection-ueber-gma-canbus-hardkey-im-command-line-modus.md)

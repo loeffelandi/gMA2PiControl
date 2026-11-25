@@ -24,6 +24,7 @@ port = 80
 path = "/?ma=1"
 username = "svt"
 password_file = "{password}"
+hardkey_transport = "native"
 
 [logging]
 level = "INFO"

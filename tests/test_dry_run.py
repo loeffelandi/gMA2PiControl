@@ -7,6 +7,7 @@ No socket is opened and no HID device is required.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 
 from ma2pi.events import InputEvent
 from ma2pi.ma2_client import DryRunTransport, Ma2Client
@@ -31,6 +32,9 @@ def encoder(encoder_id: int, delta: int) -> InputEvent:
 
 
 async def test_dry_run_programming_sequence(config):
+    config = dataclasses.replace(
+        config, ma2=dataclasses.replace(config.ma2, hardkey_transport="native")
+    )
     transport = DryRunTransport()
     client = Ma2Client(config, transport=transport, dry_run=True)
     engine = MappingEngine(config, client)
@@ -81,8 +85,8 @@ async def test_dry_run_programming_sequence(config):
         await wait_until(lambda: len(transport.sent) >= 14)
         assert transport.sent == [
             {"requestType": "keyname", "keyname": "MA", "value": 1.0, "session": 0, "maxRequests": 0},
-            {"requestType": "keyname", "keyname": "FIXTURE", "value": 1.0, "session": 0, "maxRequests": 0},
-            {"requestType": "keyname", "keyname": "FIXTURE", "value": 0.0, "session": 0, "maxRequests": 0},
+            {"requestType": "keyname", "keyname": "FIX", "value": 1.0, "session": 0, "maxRequests": 0},
+            {"requestType": "keyname", "keyname": "FIX", "value": 0.0, "session": 0, "maxRequests": 0},
             {"requestType": "keyname", "keyname": "MA", "value": 0.0, "session": 0, "maxRequests": 0},
             {"requestType": "keyname", "keyname": "STORE", "value": 1.0, "session": 0, "maxRequests": 0},
             {"requestType": "keyname", "keyname": "STORE", "value": 0.0, "session": 0, "maxRequests": 0},

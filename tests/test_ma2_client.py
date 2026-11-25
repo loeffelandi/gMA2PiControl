@@ -16,6 +16,8 @@ from ma2pi.actions import (
     Release,
     merge_encoder,
 )
+from ma2pi.events import InputEvent
+from ma2pi.mapping import MappingEngine
 from ma2pi.ma2_client import (
     BackpressureGuard,
     LoginError,
@@ -542,3 +544,130 @@ async def test_backpressure_loop_engages_and_recovers(small_config, caplog):
             await task
         except asyncio.CancelledError:
             pass
+
+
+def test_lua_hardkey_frame_exact():
+    assert frames.lua_hardkey_frame(59, True, 4) == {
+        "command": "LUA 'gma.canbus.hardkey(59, true, false)'",
+        "session": 4,
+        "requestType": "command",
+        "maxRequests": 0,
+    }
+    assert frames.lua_hardkey_frame(59, False, 4)["command"] == (
+        "LUA 'gma.canbus.hardkey(59, false, false)'"
+    )
+
+
+def _lua_config(make_config, verified=True):
+    def mutate(data):
+        data["ma2"]["host"] = "127.0.0.1"
+        data["ma2"]["port"] = 9
+        data["ma2"]["password_file"] = None
+        data["ma2"]["password_env"] = "MA2PI_TEST_PASSWORD"
+        data["ma2"]["hardkey_transport"] = "lua"
+        data["ma2"]["keepalive_interval"] = 0.05
+        data["reconnect"]["initial_delay"] = 0.01
+        data["reconnect"]["max_delay"] = 0.05
+        data["reconnect"]["jitter"] = 0.0
+        data["reconnect"]["login_failure_delay"] = 0.02
+        data["rate_limit"]["messages_per_second"] = 40
+        data["rate_limit"]["burst"] = 50
+        for entry in data["hardkeys"].values():
+            entry["verified"] = verified
+
+    return make_config(mutate)
+
+
+async def test_lua_dispatch_press_and_release(make_config):
+    cfg = _lua_config(make_config)
+    transport = MockTransport()
+    client = Ma2Client(cfg, transport=transport)
+    client._session = 4
+    client._authenticated = True
+    await client._dispatch(Press("STORE"))
+    await client._dispatch(Release("STORE"))
+    assert transport.sent == [
+        frames.lua_hardkey_frame(59, True, 4),
+        frames.lua_hardkey_frame(59, False, 4),
+    ]
+
+
+async def test_native_dispatch_uses_keyname(make_config):
+    cfg = _lua_config(make_config)
+    cfg = dataclasses.replace(cfg, ma2=dataclasses.replace(cfg.ma2, hardkey_transport="native"))
+    transport = MockTransport()
+    client = Ma2Client(cfg, transport=transport)
+    client._session = 4
+    client._authenticated = True
+    await client._dispatch(Press("STORE"))
+    assert transport.sent[0]["requestType"] == "keyname"
+    assert transport.sent[0]["keyname"] == "STORE"
+
+
+async def test_unverified_hardkey_is_not_sent(make_config, caplog):
+    cfg = _lua_config(make_config, verified=False)
+    transport = MockTransport()
+    client = Ma2Client(cfg, transport=transport)
+    client._session = 4
+    client._authenticated = True
+    with caplog.at_level("WARNING"):
+        await client._dispatch(Press("STORE"))
+    assert transport.sent == []
+    assert "nicht verifiziert" in caplog.text
+
+
+async def test_unverified_hardkeys_warn_at_start(make_config, caplog):
+    cfg = _lua_config(make_config, verified=False)
+    client = Ma2Client(cfg, transport=MockTransport())
+    with caplog.at_level("WARNING"):
+        client.warn_unverified_hardkeys()
+    assert "STORE" in caplog.text
+
+
+async def test_lua_device_loss_sends_exactly_one_release(make_config):
+    cfg = _lua_config(make_config)
+    transport = MockTransport()
+    feed_handshake(transport)
+    client = _client(cfg, transport)
+    await client.connect_once()
+    engine = MappingEngine(cfg, client)
+    client._sender_task = asyncio.create_task(client._sender_loop())
+    engine.handle(InputEvent("key", "store_big", 1, "cherry"))
+    engine.release_device("cherry")
+    await wait_until(
+        lambda: len([f for f in transport.sent if f.get("requestType") == "command"]) >= 2
+    )
+    commands = [f["command"] for f in transport.sent if f.get("requestType") == "command"]
+    assert commands == [
+        "LUA 'gma.canbus.hardkey(59, true, false)'",
+        "LUA 'gma.canbus.hardkey(59, false, false)'",
+    ]
+    engine.cleanup(send=False)
+    await client.shutdown()
+
+
+async def test_lua_connection_loss_does_not_resend_release(make_config):
+    cfg = _lua_config(make_config)
+    transport = MockTransport()
+    feed_handshake(transport)
+    client = _client(cfg, transport)
+    await client.connect_once()
+    engine = MappingEngine(cfg, client)
+    engine.handle(InputEvent("key", "store_big", 1, "cherry"))
+    engine.on_connection_lost()
+    engine.cleanup()
+    assert engine.held == {}
+    assert [f for f in transport.sent if f.get("requestType") == "command"] == []
+    await client.shutdown()
+
+
+async def test_unknown_hardkey_in_lua_path_is_dropped(make_config, caplog):
+    cfg = _lua_config(make_config)
+    transport = MockTransport()
+    client = Ma2Client(cfg, transport=transport)
+    client._session = 4
+    client._authenticated = True
+    with caplog.at_level("ERROR"):
+        await client._dispatch(Press("NOT_A_KEY"))
+    assert transport.sent == []
+    assert "Kein Keycode" in caplog.text
