@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ma2pi"
+version = "0.1.0"
+description = "Cherry POS keyboard and ASL encoders to grandMA2 onPC via Web Remote"
+requires-python = ">=3.13"
+dependencies = [
+    "websockets>=13",
+    "evdev>=1.7; sys_platform == 'linux'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]
+
+[project.scripts]
+ma2pi = "ma2pi.__main__:main"
+
+[tool.setuptools]
+packages = ["ma2pi"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]

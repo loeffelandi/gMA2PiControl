@@ -1,0 +1,83 @@
+# Abschlussreview `add-ma2pi-core`
+
+Stand: Software-Implementierung inklusive MIDI-Eingabe für den ASL abgeschlossen,
+Hardware-Abnahme offen. Dieses Dokument ordnet jeder Anforderung einen Nachweis
+oder eine begründete Ausnahme zu. Es ersetzt nicht die Hardware-Abnahme (Tasks
+3.8, 5.8, 6.1–6.5, 7.3–7.5). Task 3.7 (ASL-Capture) ist abgeschlossen, Task
+8.4 (Tests auf Pi und Entwicklungsrechner) mit 130 grünen Tests.
+
+## `ma2-connection`
+
+| Anforderung | Nachweis / Ausnahme |
+| --- | --- |
+| Verbindungsaufbau und Login | `Ma2Client.connect_once`, `tests/test_ma2_client.py::test_connect_once_success`, `tests/test_integration.py::test_end_to_end_input_to_recorded_frames`; Login-Fehler: `test_login_failure_raises`, `test_wrong_password_is_reported`. |
+| Falsches Passwort → genau eine Meldung + Backoff | `_session_loop` loggt einmal pro Fehlversuch, `_backoff_delay(..., login_failed=True)`; `test_backoff_login_failure_uses_long_delay`. |
+| onPC nicht erreichbar → wachsender Backoff | `_backoff_delay` mit `2**attempt`, Jitter und `max_delay`; `test_reconnect_after_connect_failure`. |
+| Keepalive < 10 s, auch bei Traffic | Eigener Task `_keepalive_loop`; `test_keepalive_is_sent_on_idle`, `test_keepalive_covers_twelve_seconds_of_idle`; Konfiguration erzwingt `< 10` (`test_keepalive_must_be_below_ten`). |
+| Reconnect, Queue leeren, kein Replay | `_handle_disconnect` + `MappingEngine.on_connection_lost`; `test_reconnect_after_server_drop` prüft genau einen Press nach Reconnect. |
+| Globale Queue und Rate-Limit | `SendQueue` + `TokenBucket`; `test_queue_control_has_priority`, `test_queue_coalesces_encoder_targets`, `test_queue_never_drops_controls`, `test_token_bucket_limits_200_frames_in_100ms`. |
+| Dry-Run ohne Socket, Frame-Logging | `DryRunTransport`, `tests/test_dry_run.py`; `test_dry_run_never_connects`. |
+| Keine Passwort-/Hash-Logs | `logging_setup`-Redaktion; `test_secrets_are_redacted`, `test_password_keyword_is_redacted`. |
+| Graceful Shutdown | SIGINT/SIGTERM in `run_daemon`, `Ma2Client.shutdown`; `test_shutdown_drains_release_before_close`, `test_shutdown_with_held_keys_releases_then_closes` (Release → `closeConnection`). |
+| Backpressure | `BackpressureGuard`; `test_backpressure_guard_engages_and_recovers`, `test_backpressure_guard_buffer_threshold`, `test_backpressure_loop_engages_and_recovers`. |
+
+## `mapping-engine`
+
+| Anforderung | Nachweis / Ausnahme |
+| --- | --- |
+| Vollständige Konfigurationsvalidierung, Abbruch vor Frames | `config.py` (unbekannte Keys, Bereiche, Referenzen); `tests/test_config.py` deckt alle Fälle ab; `load_config` nennt Datei, Schlüsselpfad und Ursache. |
+| Press/Release, Duplikat, verwaistes Release | `MappingEngine._press/_release`; `test_tap`, `test_hold_has_one_press_and_one_release`, `test_release_without_press_is_ignored`. |
+| Modifier-Stack und Chords | `test_modifier_chord_order`, `test_desk_lock_acceptance`, `test_cleanup_releases_in_reverse_order`. |
+| Desk Lock MA+Fix = vier Frames | `test_desk_lock_acceptance`, `test_end_to_end_input_to_recorded_frames`. |
+| Hängende Tasten verhindern | `cleanup`, `release_device`, `on_connection_lost`; `test_device_loss_releases_only_that_device`, `test_connection_lost_clears_without_replay`. |
+| CMD-Sequenzen unverändert, genau ein Frame | `test_cmd_key_only_sends_on_press`, `test_cmd_key_preserves_semicolon_sequence`. |
+| Unmappte Controls ohne Frame | `test_unmapped_control_sends_nothing`, `test_unmapped_control_is_logged_once`. |
+| Numerischer Hardkey-Override | `hardkeys.resolve` akzeptiert Zahlen; `test_numeric_hardkey_override`. |
+
+## `encoder-control`
+
+| Anforderung | Nachweis / Ausnahme |
+| --- | --- |
+| Zielmapping Wheel 1–10 / Attribut, Bereich und Duplikate | `config.py`; `test_wheel_out_of_range`, `test_wheel_and_attribute_are_exclusive`, `test_duplicate_encoder_id`, `test_encoder_id_must_be_unique_across_profiles`. |
+| Akkumulation, 40-ms-Flush, Idle-Flush, Null-Delta | `flush_due`/`flush_all`; `test_wheel_accumulates_and_flushes_once`, `test_zero_delta_sends_nothing`, `test_idle_flush_sends_last_detent`, `test_min_interval_between_flushes`. |
+| Beschleunigung none/linear/exponentiell | `_acceleration_multiplier`; `test_acceleration_increases_delta_for_fast_rotation`, `test_acceleration_keeps_sign`, `test_nonzero_input_never_zero_delta`, `test_exponential_curve_accepts_german_spelling`. |
+| Normal/Fine/Ultra, Flush mit alter Auflösung, Ultra-Vorrang | `_resolution_modifier` + Flush bei lokalem Modifier-Press; `test_attribute_fine_resolution`, `test_ultra_wins_over_fine`, `test_resolution_change_flushes_old_resolution`. |
+| CMD-Wrapper exakte Strings, ein Frame pro Flush | `_dispatch`; `test_cmd_encoder_strings`. |
+| Nativer Attribut-Frame | `frames.encoder_attribute_frame`; `test_native_attribute_encoder_frame`, `test_native_attribute_only_is_allowed`. |
+| Nativer Wheel-Modus ohne Capture bricht ab | `wheel_protocol.NATIVE_WHEEL_CONFIRMED = False`; `test_native_wheel_requires_capture`, `test_native_wheel_without_capture_aborts`. |
+| Rate-Limit, begrenzter Puffer, Nachlauf | `max_pending_delta` + Log; `test_pending_delta_is_capped`, `test_encoder_stress_against_mock_server` (100 Detents/s über 10 s, Summe 1000, ≤ 40 Frames/s, Queue-Tiefe ≤ 2). |
+| Capture-Reproduktion | **Ausnahme:** Capture (Task 5.8) benötigt die echte onPC-Hardware und liegt noch nicht vor; CMD-Modus funktioniert unabhängig davon. |
+
+## `hid-input`
+
+| Anforderung | Nachweis / Ausnahme |
+| --- | --- |
+| Enumeration, Interface-Scoring, unbekannte Geräte | `select_devices`; `test_select_prefers_keyboard_interface`, `test_select_ignores_unknown`, `test_unknown_device_is_logged_once` (Debug, einmal pro Gerät). |
+| Profile, fehlende Controls, fehlendes Profil | `validate_profile` bricht mit Profil/Gerät/Control ab; `test_profile_with_missing_control_aborts`; `test_vendor_match_without_profile_warns`. |
+| Key-Normalisierung, Autorepeat, unbekannte Codes | `_normalise`; `test_normalise_key_and_autorepeat`. |
+| Encoder-Decoding absolut/relativ, Wrap-around, Schwelle | `EncoderDecoder`; `test_encoder_absolute_three_and_minus_two`, `test_encoder_absolute_wrap_around`, `test_encoder_relative_and_direction`, `test_encoder_threshold_discards_noise`. |
+| Hotplug, Geräteverlust, Wiederöffnen | `HidManager.reconcile`; `test_hid_manager_hotplug` (DeviceLost, Wiederöffnen ohne Neustart). |
+| Fehlende Berechtigung mit udev-Hinweis und Backoff | `_schedule_retry`; `test_permission_error_keeps_daemon_running`, `test_open_failure_uses_backoff` (kein zweiter Versuch vor Ablauf, Retry danach). |
+| Gerät fehlt beim Start, Backoff | `_next_delay` (Scan-Backoff bis 5 s, danach schnelles Polling); `test_missing_device_at_start_only_warns_once`. |
+| MIDI-Enumeration und Backend-Filter | `midi_input.list_midi_devices` liest `/proc/asound/cards` und `/dev/snd/midiC*`; `select_midi_devices` filtert nach `backend = "midi"`; `test_midi_device_selection`; auf dem Pi liefert `--list-devices` `04d8:e817` und `/dev/snd/midiC3D0`. |
+| MIDI-Parser, fragmentierte Nachrichten, Running Status | `MidiStreamParser`; `test_parser_note_on_and_velocity_one_release`, `test_parser_note_off_and_velocity_zero`, `test_parser_running_status_and_realtime`. |
+| MIDI-Tasten und Encoder-Rastungen | `MidiManager._normalise`; `test_normalise_button`, `test_normalise_encoder`, `test_normalise_unknown_note_logged_once`. |
+| MIDI-Hotplug und Rechtefehler | `MidiManager.reconcile`; `test_midi_manager_hotplug`, `test_midi_permission_error_keeps_daemon_running`, `test_missing_midi_device_warns_once`; auf dem Pi öffnet `--dump-input` beide Geräte ohne Root. |
+| ASL-Hardware verifizieren | Task 3.7 abgeschlossen: geführter Mitschnitt vom 2026-11-25 ordnet Noten 1–4 den Encodern (Velocity `127` = rechts, `1` = links), Noten 5–8 den Encoder-Clicks und Noten 9–11 den Tasten zu. `--dump-input` auf dem Pi liefert `encoder.1..4 ±1` sowie `key fine`/`asl_click_1` mit `1/0`. |
+| Cherry-Hardware verifizieren | **Ausnahme:** Task 3.8 benötigt die Geräte am Pi. |
+
+## Deployment und Abschluss
+
+| Anforderung | Nachweis / Ausnahme |
+| --- | --- |
+| `deploy/install.sh` | Vorhanden und idempotent angelegt; **Ausnahme:** zweimaliger Lauf auf Trixie (Task 6.1) offen. |
+| `deploy/ma2pi.service` | Vorhanden mit `Restart=always`, `After=network-online.target`, `User=ma2pi`, `SupplementaryGroups=audio`, `ProtectSystem=strict`, `PrivateTmp`, `PrivateDevices=false`, `DeviceAllow` für `event*` und `midiC*`, `NoNewPrivileges`; **Ausnahme:** `systemd-analyze verify`/Start-Stop auf dem Pi offen. |
+| udev-Regeln | Cherry-Regel (`input`, `046a`) und ASL-Regel (`sound`, `04d8:e817`) vorhanden; **Ausnahme:** `udevadm test` als `ma2pi` auf dem Pi offen. |
+| README Installation/Update/Rollback | `README.md`; **Ausnahme:** vollständiger Befehlsdurchlauf auf dem Pi offen. |
+| README Capture-Workflow | `README.md#wheel-protocol-capture` mit Chrome-DevTools-Schritten, Filter und Copy-Anleitung. |
+| Konfigurationsreferenz | `README.md#configuration-reference`, Abgleich mit `config.py` inklusive `backend`, `notes` und `midi_encoders`. |
+| `openspec validate --strict` | `Change 'add-ma2pi-core' is valid`. |
+| `pytest` auf Entwicklungsrechner und Pi | 130 Tests grün auf beiden Systemen (Task 8.4). |
+| Web-Remote-Hardkey-Transport | **Ausnahme/offen:** Die von onPC ausgelieferte Web-Remote-JS nutzt `requestType: "keyname"`; ein Live-Login auf `192.168.178.72` scheitert derzeit mit `result: false`. Numerische `hardkey`-Frames sind in der JS nicht enthalten. Umbau und ADR-Nachfolger erst nach verifiziertem Login. |
+| Hardware-Smoke/Stress/Reconnect | **Ausnahme:** Tasks 7.3–7.5 benötigen onPC und Geräte. |
+| ADR-Status | **Ausnahme:** Beförderung auf Accepted erst nach Hardware-Nachweisen (Task 7.6); ADR-0014 (MIDI) ist ergänzt und bleibt Proposed. |

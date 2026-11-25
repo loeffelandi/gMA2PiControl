@@ -1,0 +1,15 @@
+# Architecture Decision Records
+
+* [0001. Web-Remote-WebSocket als Transportweg](0001-web-remote-websocket-als-transportweg.md)
+* [0002. Wheel- und Encoder-Strategie](0002-wheel-und-encoder-strategie.md)
+* [0003. Python 3.13 mit asyncio und evdev statt Node.js](0003-python-3-13-mit-asyncio-und-evdev-statt-node-js.md)
+* [0004. Deployment als venv-Dienst unter /opt/ma2pi](0004-deployment-als-venv-dienst-unter-opt-ma2pi.md)
+* [0005. Rate-Limiting gegen onPC-Lockup](0005-rate-limiting-gegen-onpc-lockup.md)
+* [0006. Konfigurationsschema in TOML](0006-konfigurationsschema-in-toml.md)
+* [0007. Hardkey-Transport und Press-Release-Sicherheit](0007-hardkey-transport-und-press-release-sicherheit.md)
+* [0008. Eingebettete Web-UI im Daemon-Prozess](0008-eingebettete-web-ui-im-daemon-prozess.md)
+* [0009. Konfigurationsspeicherung unter /var/lib/ma2pi](0009-konfigurationsspeicherung-unter-var-lib-ma2pi.md)
+* [0010. Hot Reload der Konfiguration](0010-hot-reload-der-konfiguration.md)
+* [0011. Frontend mit Svelte 5 und Vite](0011-frontend-mit-svelte-5-und-vite.md)
+* [0012. Learn-Modus und Live-Event-Stream](0012-learn-modus-und-live-event-stream.md)
+* [0013. LAN-Zugriffsmodell ohne Login](0013-lan-zugriffsmodell-ohne-login.md)

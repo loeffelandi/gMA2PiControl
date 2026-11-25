@@ -1,0 +1,11 @@
+# grandMA2 onPC bridge: allow the ma2pi service user to read input devices.
+# Install to /etc/udev/rules.d/99-ma2pi.rules and reload:
+#   udevadm control --reload-rules
+#   udevadm trigger --subsystem-match=input --subsystem-match=sound
+
+# Cherry POS Keyboard G86-63400EUADAA (vendor 0x046a), evdev.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="046a", GROUP="ma2pi", MODE="0660"
+
+# ASL MK2 E4B3 (vendor 0x04d8, product 0xe817) is a USB-MIDI device.  It
+# exposes a raw MIDI node such as /dev/snd/midiC3D0 instead of an evdev node.
+SUBSYSTEM=="sound", KERNEL=="midiC*", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="e817", GROUP="ma2pi", MODE="0660"

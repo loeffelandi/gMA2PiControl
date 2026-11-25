@@ -1,0 +1,230 @@
+"""CLI entry point and daemon orchestration."""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import contextlib
+import dataclasses
+import logging
+import signal
+import sys
+from typing import Sequence
+
+from . import __version__
+from .config import AppConfig, ConfigError, find_config
+from .events import DeviceLost, InputEvent
+from .hid_input import HidManager, format_devices, list_devices
+from .logging_setup import setup_logging
+from .ma2_client import Ma2Client
+from .mapping import MappingEngine
+from .midi_input import MidiManager, list_midi_devices
+
+LOGGER = logging.getLogger("ma2pi")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ma2pi",
+        description=(
+            "Cherry POS Keyboard (evdev) und ASL-Encoder (MIDI) über die "
+            "grandMA2 Web-Remote-WebSocket-API an onPC anbinden."
+        ),
+    )
+    parser.add_argument("--config", "-c", help="Pfad zur config.toml")
+    parser.add_argument(
+        "--check-config",
+        action="store_true",
+        help="Konfiguration validieren und beenden",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Frames nur loggen, keine WebSocket-Verbindung öffnen",
+    )
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Log-Level überschreiben",
+    )
+    parser.add_argument(
+        "--list-devices",
+        action="store_true",
+        help="Erkannte Eingabegeräte auflisten",
+    )
+    parser.add_argument(
+        "--dump-input",
+        action="store_true",
+        help="Normalisierte Eingabeereignisse live ausgeben",
+    )
+    parser.add_argument("--version", action="version", version=f"ma2pi {__version__}")
+    return parser
+
+
+def _load(args: argparse.Namespace) -> AppConfig:
+    return find_config(args.config)
+
+
+async def _process_input(
+    queue: "asyncio.Queue[InputEvent | DeviceLost]",
+    engine: MappingEngine,
+) -> None:
+    while True:
+        item = await queue.get()
+        if isinstance(item, DeviceLost):
+            engine.release_device(item.device)
+        else:
+            engine.handle(item)
+
+
+async def run_daemon(config: AppConfig, dry_run: bool) -> int:
+    level = config.logging.level
+    setup_logging(level)
+    LOGGER.info("ma2pi %s startet (dry_run=%s)", __version__, dry_run)
+
+    queue: asyncio.Queue[InputEvent | DeviceLost] = asyncio.Queue(maxsize=1000)
+    client = Ma2Client(config, dry_run=dry_run)
+    engine = MappingEngine(config, client)
+    client.add_connection_lost_callback(engine.on_connection_lost)
+    hid = HidManager(config)
+    midi = MidiManager(config)
+
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop.set)
+        except (NotImplementedError, RuntimeError):  # pragma: no cover
+            pass
+
+    await client.start()
+    encoder_task = asyncio.create_task(engine.run_encoder_loop(), name="ma2pi-encoder")
+    hid_task = asyncio.create_task(hid.run(queue), name="ma2pi-hid")
+    midi_task = asyncio.create_task(midi.run(queue), name="ma2pi-midi")
+    input_task = asyncio.create_task(_process_input(queue, engine), name="ma2pi-input")
+
+    failure: list[BaseException] = []
+
+    def _watch(task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            failure.append(exc)
+            LOGGER.error("Hintergrund-Task %s fehlgeschlagen: %s", task.get_name(), exc)
+            stop.set()
+
+    for task in (encoder_task, hid_task, midi_task, input_task):
+        task.add_done_callback(_watch)
+
+    try:
+        await stop.wait()
+    finally:
+        LOGGER.info("Shutdown angefordert")
+        input_task.cancel()
+        hid_task.cancel()
+        midi_task.cancel()
+        engine.stop()
+        encoder_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await input_task
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await hid_task
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await midi_task
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await encoder_task
+        engine.cleanup(send=client.authenticated)
+        await client.shutdown()
+        await hid.close()
+        await midi.close()
+    if failure:
+        LOGGER.error("ma2pi wegen Fehler beendet: %s", failure[0])
+        return 1
+    LOGGER.info("ma2pi beendet")
+    return 0
+
+
+async def run_dump_input(config: AppConfig) -> int:
+    from .hid_input import evdev
+
+    setup_logging("DEBUG")
+    queue: asyncio.Queue[InputEvent | DeviceLost] = asyncio.Queue()
+    hid = HidManager(config)
+    midi = MidiManager(config)
+    tasks: list[asyncio.Task[None]] = []
+    if evdev is not None:
+        tasks.append(asyncio.create_task(hid.run(queue), name="ma2pi-hid-dump"))
+    tasks.append(asyncio.create_task(midi.run(queue), name="ma2pi-midi-dump"))
+    print("Eingabeereignisse (Ctrl-C zum Beenden):", flush=True)
+    try:
+        while True:
+            item = await queue.get()
+            print(repr(item), flush=True)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        await hid.close()
+        await midi.close()
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        config = _load(args)
+    except ConfigError as exc:
+        print(f"Konfigurationsfehler: {exc}", file=sys.stderr)
+        return 2
+
+    if args.check_config:
+        print(f"Konfiguration gültig: {config.source_path}")
+        return 0
+
+    if args.list_devices:
+        devices = []
+        errors = []
+        try:
+            devices.extend(list_devices())
+        except Exception as exc:
+            errors.append(f"evdev: {exc}")
+        try:
+            devices.extend(list_midi_devices())
+        except Exception as exc:
+            errors.append(f"MIDI: {exc}")
+        if not devices:
+            for error in errors:
+                print(f"Geräte-Enumeration fehlgeschlagen: {error}", file=sys.stderr)
+            return 1
+        print(format_devices(devices))
+        return 0
+
+    if args.dump_input:
+        try:
+            return asyncio.run(run_dump_input(config))
+        except Exception as exc:
+            print(f"--dump-input fehlgeschlagen: {exc}", file=sys.stderr)
+            return 1
+
+    if args.log_level:
+        config = dataclasses.replace(
+            config, logging=dataclasses.replace(config.logging, level=args.log_level)
+        )
+
+    try:
+        return asyncio.run(run_daemon(config, args.dry_run))
+    except KeyboardInterrupt:  # pragma: no cover
+        return 0
+    except ConfigError as exc:
+        print(f"Konfigurationsfehler: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

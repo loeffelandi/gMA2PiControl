@@ -1,0 +1,169 @@
+schema_version = 1
+
+[ma2]
+host = "192.168.0.10"
+port = 80
+path = "/?ma=1"
+username = "ma2pi"
+password_file = "/etc/ma2pi/ma2pi.password"  # alternativ password_env
+keepalive_interval = 5.0
+login_timeout = 10.0
+hardkey_press_value = 1.0                     # value 1 = Taste gedrückt
+hardkey_release_value = 0.0                   # value 0 = Taste losgelassen
+page_refresh_interval = 1.0                   # Encoder-Seite pollen (Sekunden)
+
+[reconnect]
+initial_delay = 1.0
+max_delay = 30.0
+jitter = 0.2
+login_failure_delay = 10.0
+
+[rate_limit]
+messages_per_second = 25
+burst = 10
+encoder_base_interval = 0.025
+encoder_stream_penalty = 0.0024
+encoder_idle_base = 0.040
+encoder_idle_penalty = 0.0022
+max_pending_delta = 1000
+
+[logging]
+level = "INFO"
+
+[devices.cherry]
+vendor_id = 0x046a
+product_id = 0x0000        # 0 = beliebiges Produkt dieser Vendor-ID
+name_contains = "Cherry"
+profile = "cherry-g86"
+
+[devices.asl]
+backend = "midi"           # ASL MK2-E4B3 meldet sich als USB-MIDI, nicht als evdev
+vendor_id = 0x04d8
+product_id = 0xe817
+name_contains = "ASL MK2"
+profile = "asl-mk2-e4b3"
+
+[profiles.cherry-g86.keys]
+KEY_F1 = "fix"
+KEY_F2 = "store"
+KEY_F3 = "clear"
+KEY_F4 = "clear_all"
+KEY_ESC = "ma"
+KEY_F5 = "at"
+KEY_F6 = "thru"
+KEY_ENTER = "please"
+KEY_F7 = "go_plus"
+KEY_F8 = "go_minus"
+KEY_F9 = "pause"
+KEY_KP0 = "num_0"
+KEY_KP1 = "num_1"
+KEY_KP2 = "num_2"
+KEY_KP3 = "num_3"
+KEY_KP4 = "num_4"
+KEY_KP5 = "num_5"
+KEY_KP6 = "num_6"
+KEY_KP7 = "num_7"
+KEY_KP8 = "num_8"
+KEY_KP9 = "num_9"
+
+# ASL MK2-E4B3, Belegung per Mitschnitt vom 2026-11-25 verifiziert:
+#   Noten 1-4  = Encoder 1-4 (links nach rechts), eine Note pro Rastung,
+#                Velocity 127 = rechts, Velocity 1 = links
+#   Noten 5-8  = Encoder-Clicks 1-4
+#   Noten 9-11 = die drei Tasten
+[profiles.asl-mk2-e4b3.notes]
+5 = "asl_click_1"
+6 = "asl_click_2"
+7 = "asl_click_3"
+8 = "asl_click_4"
+9 = "asl_bank"
+10 = "asl_button_2"
+11 = "asl_button_3"
+
+# Jeder Encoder hat genau eine Note; die Richtung steckt in der Velocity.
+[[profiles.asl-mk2-e4b3.midi_encoders]]
+id = 1
+note = 1
+cw_velocity = 127
+ccw_velocity = 1
+direction = 1
+
+[[profiles.asl-mk2-e4b3.midi_encoders]]
+id = 2
+note = 2
+direction = 1
+
+[[profiles.asl-mk2-e4b3.midi_encoders]]
+id = 3
+note = 3
+direction = 1
+
+[[profiles.asl-mk2-e4b3.midi_encoders]]
+id = 4
+note = 4
+direction = 1
+
+[mapping.modifiers]
+ma = { hardkey = "MA" }
+
+[mapping.keys]
+fix = { hardkey = "Fix" }
+store = { hardkey = "Store" }
+clear = { hardkey = "Clear" }
+clear_all = { command = "Clear All" }
+at = { hardkey = "At" }
+thru = { hardkey = "Thru" }
+please = { hardkey = "Please" }
+go_plus = { hardkey = "Go +" }
+go_minus = { hardkey = "Go -" }
+pause = { hardkey = "Pause" }
+num_0 = { hardkey = "0" }
+num_1 = { hardkey = "1" }
+num_2 = { hardkey = "2" }
+num_3 = { hardkey = "3" }
+num_4 = { hardkey = "4" }
+num_5 = { hardkey = "5" }
+num_6 = { hardkey = "6" }
+num_7 = { hardkey = "7" }
+num_8 = { hardkey = "8" }
+num_9 = { hardkey = "9" }
+# ASL: Encoder-Click schaltet Fine für genau diesen Encoder.
+asl_click_1 = { encoder_fine = 1 }
+asl_click_2 = { encoder_fine = 2 }
+asl_click_3 = { encoder_fine = 3 }
+asl_click_4 = { encoder_fine = 4 }
+# ASL-Taste 1 schaltet die vier Encoder auf die nächste Attributgruppe.
+asl_bank = { encoder_bank = 1 }
+# asl_button_2 = { hardkey = "..." }  # Belegung nach Wunsch
+# asl_button_3 = { hardkey = "..." }  # Belegung nach Wunsch
+# x1 = { command = "..." }   # optional (Web Remote hat keine X-Tasten)
+
+# Die vier ASL-Encoder sind die Encoder 1-4 der onPC.  Welche Attribute sie
+# steuern, meldet die Konsole selbst (presetTypes); Slot 1-4 = sichtbare
+# Attributspalte.  Taste 1 (asl_bank) schaltet auf die nächste Vierergruppe.
+[[mapping.encoders]]
+id = 1
+slot = 1
+
+[[mapping.encoders]]
+id = 2
+slot = 2
+
+[[mapping.encoders]]
+id = 3
+slot = 3
+
+[[mapping.encoders]]
+id = 4
+slot = 4
+
+[mapping.encoder_acceleration]
+curve = "linear"          # none | linear | exponential
+window = 0.10
+max_multiplier = 4.0
+
+# Nur für Encoder mit festem Attributnamen (siehe mapping.encoders.attribute).
+[mapping.encoder_resolution.attribute]
+normal = 1.0
+fine = 0.1
+ultra = 0.01

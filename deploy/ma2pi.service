@@ -1,0 +1,34 @@
+[Unit]
+Description=grandMA2 onPC Web Remote bridge for Cherry keyboard and ASL encoders
+Documentation=file:/opt/ma2pi/app/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ma2pi
+Group=ma2pi
+SupplementaryGroups=audio
+WorkingDirectory=/opt/ma2pi/app
+ExecStart=/opt/ma2pi/.venv/bin/python -m ma2pi --config /etc/ma2pi/config.toml
+Restart=always
+RestartSec=5
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+
+# Hardening: no root, read-only filesystem, private tmp, but input devices
+# must remain accessible through the udev rule.  The ASL exposes a raw MIDI
+# node, not an evdev node, so its character device must be allowed as well.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=false
+DeviceAllow=/dev/input/event* r
+DeviceAllow=/dev/snd/midiC* r
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
