@@ -12,7 +12,7 @@
 - [x] 1.3 Strikte TOML-Validierung in `config.py` mit Dataclasses implementieren (Schema-Version, unbekannte Keys, Passwortquelle, Wheel-Bereich, Encoder-IDs, Referenzen); Tests für jeden Fehlerfall.
 - [x] 1.4 `config.toml` als vollständiges Beispiel mit Cherry-/ASL-Profilen, Modifiern, wichtigsten Hardkeys, Number-Block und Encodern anlegen; `python -m ma2pi --check-config` endet mit 0, Test prüft die geforderten Key-Abdeckungen.
 - [x] 1.5 Hardkey-Katalog in `hardkeys.py` aus den Chataigne-IDs ableiten (MA, Fix, Store, Clear, At, Thru, Please, Go +/-, Pause, 0–9, X1–X20); Test prüft Eindeutigkeit und Pflichtnamen.
-- [ ] 1.6 `--list-devices` und `--dump-input` implementieren; auf dem Pi zeigen sie Name, Vendor-/Product-ID und normalisierte Events der angeschlossenen Geräte.
+- [x] 1.6 `--list-devices` und `--dump-input` implementieren; auf dem Pi zeigen sie Name, Vendor-/Product-ID und normalisierte Events der angeschlossenen Geräte. Verifiziert 2026-11-26: `--list-devices` liefert Cherry SPOS (046a:0038, event4) und ASL MK2-E4B3 (04d8:e817, midiC3D0); `--dump-input` öffnet die Cherry und ignoriert unbekannte Geräte.
 
 ## 2. MA2-Client
 

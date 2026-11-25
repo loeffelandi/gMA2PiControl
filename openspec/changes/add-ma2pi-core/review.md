@@ -1,10 +1,11 @@
 # Abschlussreview `add-ma2pi-core`
 
-Stand: Software-Implementierung inklusive MIDI-Eingabe für den ASL abgeschlossen,
-Hardware-Abnahme offen. Dieses Dokument ordnet jeder Anforderung einen Nachweis
-oder eine begründete Ausnahme zu. Es ersetzt nicht die Hardware-Abnahme (Tasks
-3.8, 5.8, 6.1–6.5, 7.3–7.5). Task 3.7 (ASL-Capture) ist abgeschlossen, Task
-8.4 (Tests auf Pi und Entwicklungsrechner) mit 130 grünen Tests.
+Stand: Software-Implementierung inklusive MIDI-Eingabe für den ASL, LUA-Hardkey-
+Transport und Screen-Helper abgeschlossen; Hardware-/Deployment-Abnahme offen.
+Dieses Dokument ordnet jeder Anforderung einen Nachweis oder eine begründete
+Ausnahme zu. Es ersetzt nicht die Hardware-Abnahme (Tasks 3.8, 6.1–6.5, 7.3–7.5).
+Task 3.7 (ASL-Capture), 5.8 (LED) und 1.6 (list-devices/dump-input) sind
+abgeschlossen; Task 8.4 (Tests auf Pi und Entwicklungsrechner) mit 219 grünen Tests.
 
 ## `ma2-connection`
 
@@ -64,7 +65,7 @@ oder eine begründete Ausnahme zu. Es ersetzt nicht die Hardware-Abnahme (Tasks
 | MIDI-Tasten und Encoder-Rastungen | `MidiManager._normalise`; `test_normalise_button`, `test_normalise_encoder`, `test_normalise_unknown_note_logged_once`. |
 | MIDI-Hotplug und Rechtefehler | `MidiManager.reconcile`; `test_midi_manager_hotplug`, `test_midi_permission_error_keeps_daemon_running`, `test_missing_midi_device_warns_once`; auf dem Pi öffnet `--dump-input` beide Geräte ohne Root. |
 | ASL-Hardware verifizieren | Task 3.7 abgeschlossen: geführter Mitschnitt vom 2026-11-25 ordnet Noten 1–4 den Encodern (Velocity `127` = rechts, `1` = links), Noten 5–8 den Encoder-Clicks und Noten 9–11 den Tasten zu. `--dump-input` auf dem Pi liefert `encoder.1..4 ±1` sowie `key fine`/`asl_click_1` mit `1/0`. |
-| Cherry-Hardware verifizieren | **Ausnahme:** Task 3.8 benötigt die Geräte am Pi. |
+| Cherry-Hardware verifizieren | Teilnachweis 2026-11-26: Auf dem Pi existiert nur **ein** Cherry-Interface (`event4`, Cherry SPOS 046a:0038, 148 Tasten); `select_devices` öffnet genau dieses, keine Doppel-Events aus weiteren Interfaces möglich. Profil korrigiert (X13 = KEY_EQUAL, X-Reihe). **Offen:** geführter Per-Taste-Capture (`--dump-input`), dass jede Taste genau ein Press/Release-Paar erzeugt und der Scancode der gedruckten Taste entspricht (Task 3.8). |
 
 ## Deployment und Abschluss
 
@@ -77,7 +78,8 @@ oder eine begründete Ausnahme zu. Es ersetzt nicht die Hardware-Abnahme (Tasks
 | README Capture-Workflow | `README.md#wheel-protocol-capture` mit Chrome-DevTools-Schritten, Filter und Copy-Anleitung. |
 | Konfigurationsreferenz | `README.md#configuration-reference`, Abgleich mit `config.py` inklusive `backend`, `notes` und `midi_encoders`. |
 | `openspec validate --strict` | `Change 'add-ma2pi-core' is valid`. |
-| `pytest` auf Entwicklungsrechner und Pi | 130 Tests grün auf beiden Systemen (Task 8.4). |
-| Web-Remote-Hardkey-Transport | **Ausnahme/offen:** Die von onPC ausgelieferte Web-Remote-JS nutzt `requestType: "keyname"`; ein Live-Login auf `192.168.178.72` scheitert derzeit mit `result: false`. Numerische `hardkey`-Frames sind in der JS nicht enthalten. Umbau und ADR-Nachfolger erst nach verifiziertem Login. |
-| Hardware-Smoke/Stress/Reconnect | **Ausnahme:** Tasks 7.3–7.5 benötigen onPC und Geräte. |
-| ADR-Status | **Ausnahme:** Beförderung auf Accepted erst nach Hardware-Nachweisen (Task 7.6); ADR-0014 (MIDI) ist ergänzt und bleibt Proposed. |
+| `pytest` auf Entwicklungsrechner und Pi | 219 Tests grün auf dem Entwicklungsrechner (Task 8.4); Pi-Lauf steht mit dem Deployment aus. |
+| Web-Remote-Hardkey-Transport | **Gelöst (2026-11-25):** Hardkeys laufen über `LUA 'gma.canbus.hardkey(code, press, hold)'` in der Command-Line (Press/Release getrennt, Halteschwelle 0.5 s, MA-Akkorde). Live verifiziert (MA+Fix → Desk Lock). ADR 0016 Accepted, Change `hardkey-lua-transport` archiviert (`99d6bd8`). |
+| Screen-Tasten | **Gelöst (2026-11-26):** Screens haben keinen canbus-Code/Command/Keyname. Control-Typ `screen` (1–6) + `[screen_helper]` senden `screen <n>` per UDP an einen AutoHotkey-Helper (`docs/screen-helper.ahk`), der Insert → Ctrl+Alt+F1..F6 → Insert sendet. WinActivate nur für Screen 1. Screen 1/2/3 live verifiziert (`21a3452`, `831877c`). |
+| Hardware-Smoke/Stress/Reconnect | **Ausnahme:** Tasks 7.3–7.5 benötigen onPC und Geräte. MA+Fix → Desk Lock und onPC-Neustart-Reconnect bereits live beobachtet. |
+| ADR-Status | **Ausnahme:** Beförderung auf Accepted erst nach Hardware-Nachweisen (Task 7.6); ADR-0014 (MIDI) bleibt Proposed, ADR-0016 (LUA-Hardkey) ist Accepted und archiviert. |
