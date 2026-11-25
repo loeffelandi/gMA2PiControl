@@ -722,9 +722,9 @@ class Ma2Client:
         elif isinstance(action, ToggleScreenMode):
             if not self._screen_mode and not self.config.mapping.screen_encoders:
                 LOGGER.warning(
-                    "Screen-Modus nicht konfiguriert (mapping.screen_encoders fehlt)"
+                    "Screen-Modus ohne mapping.screen_encoders: Modus wechselt, "
+                    "es werden aber keine Encoder-Frames gesendet"
                 )
-                return
             self._screen_mode = not self._screen_mode
             LOGGER.info(
                 "Encoder-Modus: %s",

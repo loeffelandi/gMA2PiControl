@@ -82,8 +82,8 @@ gesendet werden. Sie MUST nur nachfolgende Deltas betreffen.
 Eine konfigurierte Taste SHALL zwischen Attribut- und Screen-Encodern umschalten.
 Im Attribut-Modus folgen die Encoder dem Fenster der onPC. Im Screen-Modus
 MUST jeder Slot auf den in `mapping.screen_encoders` hinterlegten Namen zeigen.
-Fehlt die Sektion, MUST die Taste den Modus nicht wechseln und eine Warnung
-loggen. Der aktive Modus MUST im Status sichtbar sein und als LED-Zustand
+Fehlt die Sektion, MUST der Modus trotzdem umschalten, aber keine
+Encoder-Frames senden; eine Warnung MUST die fehlende Konfiguration nennen. Der aktive Modus MUST im Status sichtbar sein und als LED-Zustand
 gemeldet werden: grün im Screen-Modus, rot im Attribut-Modus.
 
 #### Scenario: Umschalten mit konfigurierten Screen-Encodern
@@ -94,7 +94,7 @@ gemeldet werden: grün im Screen-Modus, rot im Attribut-Modus.
 #### Scenario: Umschalten ohne Konfiguration
 
 - **WHEN** `mapping.screen_encoders` fehlt und die Taste gedrückt wird
-- **THEN** bleibt der Attribut-Modus aktiv und im Log erscheint eine Warnung
+- **THEN** wechselt der Modus und die LED-Farbe, aber es werden keine Encoder-Frames gesendet und im Log erscheint eine Warnung
 
 #### Scenario: LED-Zustand
 

@@ -9,6 +9,7 @@ import dataclasses
 import logging
 import signal
 import sys
+from pathlib import Path
 from typing import Sequence
 
 from . import __version__
@@ -132,6 +133,29 @@ def _start_led(config: AppConfig) -> LedOutput | None:
     return led
 
 
+async def _led_loop(config: AppConfig, client: Ma2Client, holder: dict) -> None:
+    """Open the LED output as soon as the (re)plugged device appears."""
+
+    while True:
+        await asyncio.sleep(2.0)
+        current = holder.get("led")
+        if current is not None and current.is_open:
+            continue
+        path = config.led.device or _find_led_device(config)
+        if not path or not Path(path).exists():
+            continue
+        led = LedOutput(path, config.led)
+        try:
+            led.open()
+        except OSError:
+            continue
+        led.enable()
+        led.apply_mode(bool(client.screen_mode))
+        holder["led"] = led
+        client.set_led(led)
+        LOGGER.info("LED-Ausgabe aktiv auf %s (Note %d)", path, config.led.note)
+
+
 async def _start_web(config: AppConfig, client: Ma2Client):
     """Start the embedded UI; return ``(runner, broadcast_task)`` or ``None``."""
     from aiohttp import web as aiohttp_web
@@ -186,8 +210,13 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
             pass
 
     await client.start()
-    led = _start_led(config)
-    client.set_led(led)
+    led_holder: dict = {"led": _start_led(config)}
+    client.set_led(led_holder["led"])
+    led_task = (
+        asyncio.create_task(_led_loop(config, client, led_holder), name="ma2pi-led")
+        if config.led.enabled
+        else None
+    )
     web_service = await _start_web(config, client)
     encoder_task = asyncio.create_task(engine.run_encoder_loop(), name="ma2pi-encoder")
     hid_task = asyncio.create_task(hid.run(queue), name="ma2pi-hid")
@@ -227,8 +256,12 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
             await encoder_task
         engine.cleanup(send=client.authenticated)
         await client.shutdown()
-        if led is not None:
-            led.close()
+        if led_task is not None:
+            led_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await led_task
+        if led_holder["led"] is not None:
+            led_holder["led"].close()
         if web_service is not None:
             web_runner, web_task = web_service
             web_task.cancel()
