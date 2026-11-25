@@ -17,16 +17,16 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
 UMask=0077
 
-# Hardening: no root, read-only filesystem, private tmp, but input devices
-# must remain accessible through the udev rule.  The ASL exposes a raw MIDI
-# node, not an evdev node, so its character device must be allowed as well.
+# Hardening: no root, read-only filesystem, private tmp.  Device access is
+# granted by the udev rule (GROUP=ma2pi, MODE=0660) on the Cherry evdev node
+# and the ASL raw MIDI node; PrivateDevices=false keeps the real /dev visible.
+# A path-glob DeviceAllow= was tried, but its device-cgroup filter denied
+# access (EPERM) on cgroup v2, so access is controlled via the udev group.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=false
-DeviceAllow=/dev/input/event* r
-DeviceAllow=/dev/snd/midiC* r
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 LockPersonality=true
 

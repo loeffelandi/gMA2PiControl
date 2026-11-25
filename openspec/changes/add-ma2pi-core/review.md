@@ -71,9 +71,9 @@ abgeschlossen; Task 8.4 (Tests auf Pi und Entwicklungsrechner) mit 219 grünen T
 
 | Anforderung | Nachweis / Ausnahme |
 | --- | --- |
-| `deploy/install.sh` | Vorhanden und idempotent angelegt; **Ausnahme:** zweimaliger Lauf auf Trixie (Task 6.1) offen. |
-| `deploy/ma2pi.service` | Vorhanden mit `Restart=always`, `After=network-online.target`, `User=ma2pi`, `SupplementaryGroups=audio`, `ProtectSystem=strict`, `PrivateTmp`, `PrivateDevices=false`, `DeviceAllow` für `event*` und `midiC*`, `NoNewPrivileges`; **Ausnahme:** `systemd-analyze verify`/Start-Stop auf dem Pi offen. |
-| udev-Regeln | Cherry-Regel (`input`, `046a`) und ASL-Regel (`sound`, `04d8:e817`) vorhanden; **Ausnahme:** `udevadm test` als `ma2pi` auf dem Pi offen. |
+| `deploy/install.sh` | Verifiziert 2026-11-26 (Task 6.1): zweimaliger Lauf auf Debian 13 Trixie fehlerfrei; `ma2pi`-User, `/opt/ma2pi/.venv`, pip install mit kompiliertem evdev. |
+| `deploy/ma2pi.service` | Verifiziert 2026-11-26 (Task 6.2): `systemd-analyze verify` grün, Dienst `active`/`enabled`, Start/Stop/Restart ok; öffnet Cherry + ASL, LED aktiv, Session authentifiziert. **Abweichung:** `DeviceAllow`-Pfad-Globs entfernt (Cgroup-Filter → EPERM auf cgroup v2); Gerätezugriff über udev-Gruppe `ma2pi`. |
+| udev-Regeln | Verifiziert 2026-11-26 (Task 6.3): Cherry (`input`, `046a`) und ASL (`sound`, `04d8:e817`) auf `root:ma2pi 0660`; Lesetest als `ma2pi` erfolgreich (Dienst öffnet beide Geräte). |
 | README Installation/Update/Rollback | `README.md`; **Ausnahme:** vollständiger Befehlsdurchlauf auf dem Pi offen. |
 | README Capture-Workflow | `README.md#wheel-protocol-capture` mit Chrome-DevTools-Schritten, Filter und Copy-Anleitung. |
 | Konfigurationsreferenz | `README.md#configuration-reference`, Abgleich mit `config.py` inklusive `backend`, `notes` und `midi_encoders`. |

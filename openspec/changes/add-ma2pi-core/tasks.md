@@ -62,9 +62,9 @@
 
 ## 6. Deployment
 
-- [ ] 6.1 `deploy/install.sh` implementieren: System-User `ma2pi`, Verzeichnisse, venv unter `/opt/ma2pi/.venv`, `pip install`, idempotent; zweimaliger Lauf auf Trixie endet fehlerfrei.
-- [ ] 6.2 `deploy/ma2pi.service` mit `Restart=always`, `After=network-online.target`, `User=ma2pi`, `ProtectSystem=strict`, `PrivateTmp=true`, `PrivateDevices=false`, `DeviceAllow`, `NoNewPrivileges` anlegen; `systemd-analyze verify` ist grün, Start/Stop funktioniert.
-- [ ] 6.3 udev-Regeln für Cherry (0x046a) und ASL (ermittelte ID) mit `GROUP="ma2pi"`, `MODE="0660"` anlegen; `udevadm test` und Lesetest als `ma2pi` bestätigen den Zugriff.
+- [x] 6.1 `deploy/install.sh` implementieren: System-User `ma2pi`, Verzeichnisse, venv unter `/opt/ma2pi/.venv`, `pip install`, idempotent; zweimaliger Lauf auf Trixie endet fehlerfrei. Verifiziert 2026-11-26 auf Debian 13 (Trixie): zwei Läufe fehlerfrei, `ma2pi`-User (uid 999), venv mit evdev 2.0.0 (kompiliert), websockets, aiohttp, tomlkit.
+- [x] 6.2 `deploy/ma2pi.service` mit `Restart=always`, `After=network-online.target`, `User=ma2pi`, `ProtectSystem=strict`, `PrivateTmp=true`, `PrivateDevices=false`, `NoNewPrivileges` anlegen; `systemd-analyze verify` ist grün, Start/Stop funktioniert. Verifiziert 2026-11-26: verify grün, Dienst `active`/`enabled`, Start/Stop/Restart ok. **Abweichung:** `DeviceAllow` mit Pfad-Globs entfernt – der Geräte-Cgroup-Filter verweigerte den Zugriff (EPERM) auf cgroup v2; Gerätezugriff läuft stattdessen über die udev-Gruppe `ma2pi` (dokumentiert in der Unit).
+- [x] 6.3 udev-Regeln für Cherry (0x046a) und ASL (ermittelte ID) mit `GROUP="ma2pi"`, `MODE="0660"` anlegen; `udevadm test` und Lesetest als `ma2pi` bestätigen den Zugriff. Verifiziert 2026-11-26: Regeln aktiv (`/dev/input/event4` und `/dev/snd/midiC3D0` = `root:ma2pi 0660`); Lesetest als `ma2pi` erfolgreich – der Dienst öffnet beide Geräte.
 - [ ] 6.4 README für Installation, Update und Rollback schreiben; die dokumentierten Befehle werden auf dem Pi einmal vollständig ausgeführt.
 - [ ] 6.5 Dienst nach Reboot, onPC-Neustart und Geräte-Replug prüfen; er startet automatisch, verbindet sich neu und nimmt beide Geräte wieder auf.
 
