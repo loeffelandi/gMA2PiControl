@@ -46,10 +46,12 @@ class EncoderAttribute:
 
 
 @dataclass(frozen=True, slots=True)
-class EncoderBank:
-    """Switch the four encoders to the next/previous attribute group."""
+class ToggleScreenMode:
+    """Switch the physical encoders between attribute and screen control.
 
-    step: int = 1
+    Attribute mode follows the window the onPC shows; screen mode hard-wires
+    the encoders to the configured screen-encoder names.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +67,7 @@ Action = Union[
     Command,
     EncoderSlot,
     EncoderAttribute,
-    EncoderBank,
+    ToggleScreenMode,
     ToggleFine,
 ]
 

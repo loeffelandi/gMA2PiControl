@@ -38,23 +38,47 @@ def test_slots_map_to_attribute_names():
     assert instance.name_for(3) is None
 
 
-def test_bank_advances_by_four():
+def _feature_with_selection(names: list[str], selected: int, index: int = 1) -> dict:
+    return {
+        "i": index,
+        "np": "Feature",
+        "s": True,
+        "fea": [
+            {
+                "i": index,
+                "np": "Feature",
+                "s": True,
+                "att": [
+                    {"n": name, "np": name, "s": position == selected}
+                    for position, name in enumerate(names)
+                ],
+            }
+        ],
+    }
+
+
+def test_window_follows_selected_attribute():
+    """The onPC window follows the selected attribute, not a local counter."""
     instance = EncoderPage()
-    instance.update(page([feature("Color", ["A", "B", "C", "D", "E", "F", "G", "H"])]))
+    instance.update(
+        page([_feature_with_selection(["A", "B", "C", "D", "E", "F", "G", "H"], 0)])
+    )
     assert [instance.name_for(slot) for slot in range(1, 5)] == ["A", "B", "C", "D"]
     assert instance.bank == 1
-    instance.advance(1)
+
+    # User scrolls the attribute bank in onPC and selects E (index 4).
+    instance.update(
+        page([_feature_with_selection(["A", "B", "C", "D", "E", "F", "G", "H"], 4)])
+    )
     assert [instance.name_for(slot) for slot in range(1, 5)] == ["E", "F", "G", "H"]
     assert instance.bank == 2
-    instance.advance(1)
-    assert [instance.name_for(slot) for slot in range(1, 5)] == ["A", "B", "C", "D"]
 
 
-def test_bank_is_ignored_for_short_features():
+def test_short_feature_stays_on_first_window():
     instance = EncoderPage()
-    instance.update(page([feature("Dimmer", ["DIM", "CURVE"])]))
-    instance.advance(1)
+    instance.update(page([_feature_with_selection(["DIM", "CURVE"], 1)]))
     assert instance.name_for(1) == "DIM"
+    assert instance.bank == 1
 
 
 def test_selected_feature_wins():
@@ -112,12 +136,21 @@ def test_ignores_other_frames():
     assert instance.update({"responseType": "login", "result": True}) is False
 
 
-def test_change_of_feature_resets_bank():
+def test_feature_change_uses_new_selection():
     instance = EncoderPage()
-    instance.update(page([feature("Color", ["A", "B", "C", "D", "E", "F", "G", "H"])]))
-    instance.advance(1)
     instance.update(
-        page([feature("Position", ["PAN", "TILT", "P1", "P2", "P3"], index=2)])
+        page([_feature_with_selection(["A", "B", "C", "D", "E", "F", "G", "H"], 6)])
+    )
+    assert instance.bank == 2
+
+    instance.update(
+        page(
+            [
+                _feature_with_selection(
+                    ["PAN", "TILT", "P1", "P2", "P3"], 0, index=2
+                )
+            ]
+        )
     )
     assert instance.bank == 1
     assert instance.name_for(1) == "PAN"

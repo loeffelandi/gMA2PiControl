@@ -49,33 +49,130 @@ name_contains = "ASL MK2"
 profile = "asl-mk2-e4b3"
 
 [profiles.cherry-g86.keys]
-KEY_F1 = "fix"
-KEY_F2 = "store"
-KEY_F3 = "clear"
-KEY_F4 = "clear_all"
-KEY_ESC = "ma"
-KEY_F5 = "at"
-KEY_F6 = "thru"
-KEY_ENTER = "please"
-KEY_F7 = "go_plus"
-KEY_F8 = "go_minus"
-KEY_F9 = "pause"
-KEY_KP0 = "num_0"
-KEY_KP1 = "num_1"
-KEY_KP2 = "num_2"
-KEY_KP3 = "num_3"
-KEY_KP4 = "num_4"
-KEY_KP5 = "num_5"
-KEY_KP6 = "num_6"
-KEY_KP7 = "num_7"
-KEY_KP8 = "num_8"
-KEY_KP9 = "num_9"
+KEY_ESC = "ch_pg_plus"
+KEY_GRAVE = "ch_pg_minus"
+KEY_PAGEUP = "fd_pg_plus"
+KEY_PAGEDOWN = "fd_pg_minus"
+KEY_HOME = "bt_pg_plus"
+KEY_DELETE = "bt_pg_minus"
+KEY_F1 = "pause_big"
+KEY_F2 = "v1"
+KEY_F3 = "v7"
+KEY_F4 = "u1"
+KEY_F5 = "target"
+KEY_F6 = "off"
+KEY_F7 = "temp"
+KEY_F8 = "top"
+KEY_F9 = "on"
+KEY_F10 = "view"
+KEY_F11 = "page"
+KEY_F12 = "macro"
+KEY_SYSRQ = "preset"
+KEY_SCROLLLOCK = "tools"
+KEY_PAUSE = "setup"
+KEY_KPSLASH = "backup"
+KEY_Q = "v2"
+KEY_W = "v8"
+KEY_E = "u2"
+KEY_INSERT = "short_cuts"
+KEY_EQUAL = "select"
+KEY_BACKSLASH = "prev_transport"
+KEY_SLASH = "learn"
+KEY_KP4 = "next_transport"
+KEY_J = "effect"
+KEY_K = "sequ"
+KEY_F15 = "cue"
+KEY_X = "exec"
+KEY_N = "del"
+KEY_B = "blind"
+KEY_KATAKANAHIRAGANA = "help"
+KEY_D = "go_minus_big"
+KEY_M = "v3"
+KEY_O = "v9"
+KEY_P = "u3"
+KEY_KPEQUAL = "fix"
+KEY_COMMA = "go_minus"
+KEY_KP3 = "pause"
+KEY_KP8 = "go_plus"
+KEY_102ND = "goto"
+KEY_C = "channel"
+KEY_F = "fixture"
+KEY_G = "group"
+KEY_F22 = "copy"
+KEY_HELP = "freeze"
+KEY_KPCOMMA = "prvw"
+KEY_V = "v4"
+KEY_MINUS = "v10"
+KEY_RIGHTBRACE = "u4"
+KEY_APOSTROPHE = "screen6"
+KEY_KP0 = "screen5"
+KEY_KPDOT = "time"
+KEY_F14 = "esc"
+KEY_7 = "num_7"
+KEY_8 = "num_8"
+KEY_9 = "num_9"
+KEY_KPPLUS = "plus"
+KEY_OPEN = "move"
+KEY_STOP = "assign"
+KEY_PASTE = "align"
+KEY_SPACE = "go_plus_big"
+KEY_LEFTBRACE = "v5"
+KEY_SEMICOLON = "user1"
+KEY_KP2 = "user2"
+KEY_KP6 = "screen4"
+KEY_KP7 = "screen3"
+KEY_F13 = "screen2"
+KEY_F17 = "edit"
+KEY_BACKSPACE = "oops"
+KEY_4 = "num_4"
+KEY_5 = "num_5"
+KEY_6 = "num_6"
+KEY_AGAIN = "thru"
+KEY_UNDO = "full"
+KEY_CUT = "hight"
+KEY_COPY = "solo"
+KEY_KP1 = "v6"
+KEY_L = "list"
+KEY_F20 = "screen1"
+KEY_U = "update"
+KEY_F24 = "clear"
+KEY_1 = "num_1"
+KEY_2 = "num_2"
+KEY_3 = "num_3"
+KEY_KPMINUS = "minus"
+KEY_UP = "up"
+KEY_KPASTERISK = "x1"
+KEY_KPENTER = "x2"
+KEY_KP5 = "x3"
+KEY_KP9 = "x4"
+KEY_COMPOSE = "x5"
+KEY_F16 = "x6"
+KEY_F19 = "x7"
+KEY_F21 = "x8"
+KEY_F23 = "x9"
+KEY_FRONT = "x10"
+KEY_S = "store_big"
+KEY_0 = "num_0"
+KEY_DOT = "dot"
+KEY_RO = "if_key"
+KEY_A = "at"
+KEY_LEFT = "prev"
+KEY_END = "set"
+KEY_RIGHT = "next"
+KEY_H = "x11"
+KEY_I = "x12"
+KEY_R = "x14"
+KEY_T = "x15"
+KEY_F18 = "x16"
+KEY_Y = "x17"
+KEY_Z = "x18"
+KEY_PROPS = "x19"
+KEY_TAB = "x20"
+KEY_FIND = "ma"
+KEY_YEN = "spare"
+KEY_ENTER = "please_big"
+KEY_DOWN = "down"
 
-# ASL MK2-E4B3, Belegung per Mitschnitt vom 2026-11-25 verifiziert:
-#   Noten 1-4  = Encoder 1-4 (links nach rechts), eine Note pro Rastung,
-#                Velocity 127 = rechts, Velocity 1 = links
-#   Noten 5-8  = Encoder-Clicks 1-4
-#   Noten 9-11 = die drei Tasten
 [profiles.asl-mk2-e4b3.notes]
 5 = "asl_click_1"
 6 = "asl_click_2"
@@ -109,43 +206,87 @@ note = 4
 direction = 1
 
 [mapping.modifiers]
+# Logo-Taste wirkt als MA-Modifier (MA + andere Taste).
 ma = { hardkey = "MA" }
 
 [mapping.keys]
+pause_big = { hardkey = "Pause" }
+off = { hardkey = "Off" }
+on = { hardkey = "On" }
+page = { hardkey = "Page" }
+macro = { hardkey = "Macro" }
+preset = { hardkey = "Preset" }
+select = { hardkey = "Select" }
+prev_transport = { hardkey = "Prev" }
+next_transport = { hardkey = "Next" }
+sequ = { hardkey = "Sequ" }
+cue = { hardkey = "Cue" }
+exec = { hardkey = "Exec" }
+del = { hardkey = "Delete" }
+go_minus_big = { hardkey = "Go -" }
 fix = { hardkey = "Fix" }
-store = { hardkey = "Store" }
-clear = { hardkey = "Clear" }
-clear_all = { command = "Clear All" }
-at = { hardkey = "At" }
-thru = { hardkey = "Thru" }
-please = { hardkey = "Please" }
-go_plus = { hardkey = "Go +" }
 go_minus = { hardkey = "Go -" }
 pause = { hardkey = "Pause" }
-num_0 = { hardkey = "0" }
-num_1 = { hardkey = "1" }
-num_2 = { hardkey = "2" }
-num_3 = { hardkey = "3" }
-num_4 = { hardkey = "4" }
-num_5 = { hardkey = "5" }
-num_6 = { hardkey = "6" }
+go_plus = { hardkey = "Go +" }
+goto = { hardkey = "Goto" }
+fixture = { hardkey = "FIXTURE" }
+group = { hardkey = "Group" }
+copy = { hardkey = "Copy" }
+time = { hardkey = "Time" }
+esc = { hardkey = "Esc" }
 num_7 = { hardkey = "7" }
 num_8 = { hardkey = "8" }
 num_9 = { hardkey = "9" }
-# ASL: Encoder-Click schaltet Fine für genau diesen Encoder.
+plus = { hardkey = "Plus" }
+assign = { hardkey = "Assign" }
+go_plus_big = { hardkey = "Go +" }
+edit = { hardkey = "Edit" }
+oops = { hardkey = "Oops" }
+num_4 = { hardkey = "4" }
+num_5 = { hardkey = "5" }
+num_6 = { hardkey = "6" }
+thru = { hardkey = "Thru" }
+full = { hardkey = "Full" }
+hight = { hardkey = "High" }
+solo = { hardkey = "Solo" }
+update = { hardkey = "Update" }
+clear = { hardkey = "Clear" }
+num_1 = { hardkey = "1" }
+num_2 = { hardkey = "2" }
+num_3 = { hardkey = "3" }
+minus = { hardkey = "Minus" }
+up = { hardkey = "UP" }
+store_big = { hardkey = "Store" }
+num_0 = { hardkey = "0" }
+dot = { hardkey = "PUNKT" }
+if_key = { hardkey = "If" }
+at = { hardkey = "At" }
+prev = { hardkey = "Prev" }
+set = { hardkey = "SET" }
+next = { hardkey = "Next" }
+please_big = { hardkey = "Please" }
+down = { hardkey = "DOWN" }
+
+# ASL: Encoder-Click schaltet Fine für genau diesen Encoder
+# (Normal -> Fine -> Ultra -> Normal).
 asl_click_1 = { encoder_fine = 1 }
 asl_click_2 = { encoder_fine = 2 }
 asl_click_3 = { encoder_fine = 3 }
 asl_click_4 = { encoder_fine = 4 }
-# ASL-Taste 1 schaltet die vier Encoder auf die nächste Attributgruppe.
-asl_bank = { encoder_bank = 1 }
-# asl_button_2 = { hardkey = "..." }  # Belegung nach Wunsch
-# asl_button_3 = { hardkey = "..." }  # Belegung nach Wunsch
-# x1 = { command = "..." }   # optional (Web Remote hat keine X-Tasten)
+# ASL-Taste 1 schaltet zwischen Attribut- und Screen-Encodern um. Im
+# Attribut-Modus folgen die Encoder dem Fenster, das die onPC anzeigt.
+# Für den Screen-Modus müssen die Encoder-Namen eingetragen sein; solange
+# [mapping.screen_encoders] fehlt, bleibt die Taste wirkungslos (Warnung im Log).
+asl_bank = { screen_mode = true }
 
-# Die vier ASL-Encoder sind die Encoder 1-4 der onPC.  Welche Attribute sie
-# steuern, meldet die Konsole selbst (presetTypes); Slot 1-4 = sichtbare
-# Attributspalte.  Taste 1 (asl_bank) schaltet auf die nächste Vierergruppe.
+# Namen der Screen-Encoder, die im Screen-Modus auf Slot 1-4 gelegt werden.
+# Beispiel (Namen müssen von der onPC als encoder.name akzeptiert werden):
+# [mapping.screen_encoders]
+# 1 = "screen1"
+# 2 = "screen2"
+# 3 = "screen3"
+# 4 = "screen4"
+
 [[mapping.encoders]]
 id = 1
 slot = 1

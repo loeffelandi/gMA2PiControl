@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 import pytest
 
+from ma2pi.config import load_config
 from ma2pi.events import DeviceLost, InputEvent
 from ma2pi.hid_input import (
     DeviceInfo,
@@ -15,6 +17,9 @@ from ma2pi.hid_input import (
     format_devices,
     select_devices,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeHandle:
@@ -61,19 +66,10 @@ class FakeSource:
         return handle
 
 
-CHERRY_KEYS = (
-    "KEY_F1",
-    "KEY_F2",
-    "KEY_F3",
-    "KEY_F4",
-    "KEY_ESC",
-    "KEY_F5",
-    "KEY_F6",
-    "KEY_ENTER",
-    "KEY_F7",
-    "KEY_F8",
-    "KEY_F9",
-    *(f"KEY_KP{digit}" for digit in range(10)),
+# The fake Cherry device advertises exactly the keys the shipped profile maps,
+# so profile/device mismatches show up as a real error instead of test noise.
+CHERRY_KEYS = tuple(
+    load_config(ROOT / "config.toml").profiles["cherry-g86"].keys
 )
 
 ASL_KEYS = ("BTN_0", "BTN_1")
@@ -140,13 +136,13 @@ def test_normalise_key_and_autorepeat(config):
     profile = config.profiles["cherry-g86"]
     device = cherry()
     assert manager._normalise("cherry", device, profile, RawEvent("key", "KEY_F1", 1)) == InputEvent(
-        "key", "fix", 1, "cherry"
+        "key", "pause_big", 1, "cherry"
     )
     assert manager._normalise("cherry", device, profile, RawEvent("key", "KEY_F1", 0)) == InputEvent(
-        "key", "fix", 0, "cherry"
+        "key", "pause_big", 0, "cherry"
     )
     assert manager._normalise("cherry", device, profile, RawEvent("key", "KEY_F1", 2)) is None
-    assert manager._normalise("cherry", device, profile, RawEvent("key", "KEY_F12", 1)) is None
+    assert manager._normalise("cherry", device, profile, RawEvent("key", "KEY_MICMUTE", 1)) is None
 
 
 def test_encoder_absolute_three_and_minus_two():
@@ -212,7 +208,7 @@ async def test_hid_manager_hotplug(config):
         handle = source.handles["/dev/input/event1"]
         await handle.queue.put(RawEvent("key", "KEY_F1", 1))
         event = await asyncio.wait_for(queue.get(), 1.0)
-        assert event == InputEvent("key", "fix", 1, "cherry")
+        assert event == InputEvent("key", "pause_big", 1, "cherry")
 
         source.devices = []
         lost = await asyncio.wait_for(queue.get(), 2.0)

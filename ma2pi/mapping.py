@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Protocol
 
 from . import hardkeys
-from .actions import EncoderAttribute, EncoderBank, EncoderSlot, ToggleFine
+from .actions import EncoderAttribute, EncoderSlot, ToggleFine
 from .config import (
     AppConfig,
     EncoderMapping,
@@ -43,7 +43,7 @@ class ActionSink(Protocol):
     def command(self, text: str) -> None: ...
     def encoder_slot(self, slot: int, delta: float) -> None: ...
     def encoder_attribute(self, name: str, value: float) -> None: ...
-    def encoder_bank(self, step: int) -> None: ...
+    def toggle_screen_mode(self) -> None: ...
     def toggle_fine(self, slot: int) -> None: ...
 
 
@@ -152,10 +152,10 @@ class MappingEngine:
             return
 
         assert key is not None
-        if key.encoder_bank:
+        if key.screen_mode:
             self.flush_all(now)
             self._add_held(control, device, None, True, False)
-            self.sink.encoder_bank(key.encoder_bank)
+            self.sink.toggle_screen_mode()
             return
         if key.encoder_fine is not None:
             self._add_held(control, device, None, True, False)

@@ -125,7 +125,7 @@ async def test_shutdown_with_held_keys_releases_then_closes(config):
         await client.start()
         await wait_until(lambda: client.authenticated)
         engine.handle(InputEvent("key", "ma", 1, "cherry"))
-        engine.handle(InputEvent("key", "store", 1, "cherry"))
+        engine.handle(InputEvent("key", "store_big", 1, "cherry"))
         await wait_until(
             lambda: sum(1 for f in server.frames if f.get("requestType") == "keyname") >= 2
         )

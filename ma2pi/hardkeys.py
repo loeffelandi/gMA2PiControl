@@ -65,6 +65,10 @@ KEYNAMES: frozenset[str] = frozenset(
         "WINGS",
         "RESET",
         "MA",
+        "UP",
+        "DOWN",
+        "LEFT",
+        "RIGHT",
         # Number block.
         "0",
         "1",

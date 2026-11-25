@@ -85,6 +85,7 @@ def _status_snapshot(client: Ma2Client) -> dict:
         "session": client.session,
         "queue_depth": len(client.queue),
         "rate": client.limiter.effective_rate,
+        "screen_mode": client.screen_mode,
         "frames_sent": client.frames_sent,
         "last_frame_types": list(client.last_frame_types)[-10:],
         "reconnects": client.reconnects,

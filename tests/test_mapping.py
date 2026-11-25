@@ -25,8 +25,8 @@ class Sink:
     def encoder_attribute(self, name: str, value: float) -> None:
         self.actions.append(("attribute", name, value))
 
-    def encoder_bank(self, step: int) -> None:
-        self.actions.append(("bank", step))
+    def toggle_screen_mode(self) -> None:
+        self.actions.append(("screen_mode",))
 
     def toggle_fine(self, slot: int) -> None:
         self.actions.append(("fine", slot))
@@ -64,10 +64,10 @@ def test_tap(engine, sink):
 
 
 def test_hold_has_one_press_and_one_release(engine, sink):
-    engine.handle(key("store", 1))
-    engine.handle(key("store", 1))  # duplicate
-    engine.handle(key("store", 0))
-    engine.handle(key("store", 0))  # orphan
+    engine.handle(key("store_big", 1))
+    engine.handle(key("store_big", 1))  # duplicate
+    engine.handle(key("store_big", 0))
+    engine.handle(key("store_big", 0))  # orphan
     assert sink.actions == [("press", "STORE"), ("release", "STORE")]
 
 
@@ -106,7 +106,7 @@ def test_desk_lock_acceptance(engine, sink):
 
 def test_cleanup_releases_in_reverse_order(engine, sink):
     engine.handle(key("ma", 1))
-    engine.handle(key("store", 1))
+    engine.handle(key("store_big", 1))
     engine.handle(key("fix", 1))
     engine.cleanup()
     assert sink.actions == [
@@ -120,21 +120,27 @@ def test_cleanup_releases_in_reverse_order(engine, sink):
     assert engine.held == {}
 
 
-def test_cmd_key_only_sends_on_press(engine, sink):
-    engine.handle(key("clear_all", 1))
-    engine.handle(key("clear_all", 0))
+def test_cmd_key_only_sends_on_press(make_config, sink):
+    config = make_config(
+        lambda data: data["mapping"]["keys"].__setitem__(
+            "oops", {"command": "Clear All"}
+        )
+    )
+    engine = MappingEngine(config, sink, clock=lambda: 0.0)
+    engine.handle(key("oops", 1))
+    engine.handle(key("oops", 0))
     assert sink.actions == [("command", "Clear All")]
 
 
 def test_cmd_key_preserves_semicolon_sequence(make_config, sink):
     config = make_config(
         lambda data: data["mapping"]["keys"].__setitem__(
-            "clear_all", {"command": "Clear; Store"}
+            "oops", {"command": "Clear; Store"}
         )
     )
     engine = MappingEngine(config, sink, clock=lambda: 0.0)
-    engine.handle(key("clear_all", 1))
-    engine.handle(key("clear_all", 0))
+    engine.handle(key("oops", 1))
+    engine.handle(key("oops", 0))
     assert sink.actions == [("command", "Clear; Store")]
 
 
@@ -222,10 +228,10 @@ def test_encoder_click_toggles_fine(engine, sink):
     assert sink.actions == [("fine", 1)]
 
 
-def test_encoder_bank_key_advances(engine, sink):
+def test_screen_mode_key_toggles(engine, sink):
     engine.handle(key("asl_bank", 1))
     engine.handle(key("asl_bank", 0))
-    assert sink.actions == [("bank", 1)]
+    assert sink.actions == [("screen_mode",)]
 
 
 def test_acceleration_increases_delta_for_fast_rotation(config, sink):

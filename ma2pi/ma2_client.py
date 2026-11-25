@@ -24,7 +24,7 @@ from .actions import (
     Command,
     EncoderAction,
     EncoderAttribute,
-    EncoderBank,
+    ToggleScreenMode,
     EncoderSlot,
     Press,
     Release,
@@ -313,6 +313,7 @@ class Ma2Client:
         self._backpressure_task: asyncio.Task[None] | None = None
         self._connection_lost_callbacks: list[Callable[[], None]] = []
         self._page = EncoderPage()
+        self._screen_mode = False
         self._fine: dict[int, int] = {}
         self._page_task: asyncio.Task[None] | None = None
         self._page_poll_task: asyncio.Task[None] | None = None
@@ -344,6 +345,12 @@ class Ma2Client:
         return self._limiter
 
     @property
+    def screen_mode(self) -> bool:
+        """True while the encoders are hard-wired to the screen encoders."""
+
+        return self._screen_mode
+
+    @property
     def connected(self) -> bool:
         return self._authenticated
 
@@ -367,8 +374,8 @@ class Ma2Client:
     def encoder_attribute(self, name: str, value: float) -> None:
         self._submit(EncoderAttribute(name, value))
 
-    def encoder_bank(self, step: int) -> None:
-        self._submit(EncoderBank(step))
+    def toggle_screen_mode(self) -> None:
+        self._submit(ToggleScreenMode())
 
     def toggle_fine(self, slot: int) -> None:
         self._submit(ToggleFine(slot))
@@ -689,7 +696,16 @@ class Ma2Client:
             frame = frames.encoder_attribute_frame(action.name, action.value, session)
             kind = "encoderAttribute"
         elif isinstance(action, EncoderSlot):
-            name = self._page.name_for(action.slot)
+            if self._screen_mode:
+                name = self.config.mapping.screen_encoders.get(action.slot)
+                if name is None:
+                    LOGGER.warning(
+                        "Screen-Modus aktiv, aber kein screen_encoders.%d konfiguriert",
+                        action.slot,
+                    )
+                    return
+            else:
+                name = self._page.name_for(action.slot)
             if name is None:
                 LOGGER.debug(
                     "Encoder-Slot %d noch unbekannt, Delta verworfen", action.slot
@@ -697,8 +713,17 @@ class Ma2Client:
                 return
             frame = frames.encoder_attribute_frame(name, action.delta, session)
             kind = "encoderAttribute"
-        elif isinstance(action, EncoderBank):
-            self._page.advance(action.step)
+        elif isinstance(action, ToggleScreenMode):
+            if not self._screen_mode and not self.config.mapping.screen_encoders:
+                LOGGER.warning(
+                    "Screen-Modus nicht konfiguriert (mapping.screen_encoders fehlt)"
+                )
+                return
+            self._screen_mode = not self._screen_mode
+            LOGGER.info(
+                "Encoder-Modus: %s",
+                "Screen" if self._screen_mode else "Attribut",
+            )
             return
         elif isinstance(action, ToggleFine):
             name = self._page.name_for(action.slot)

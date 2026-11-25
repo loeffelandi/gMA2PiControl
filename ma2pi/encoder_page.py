@@ -19,10 +19,7 @@ the 4-wide window the physical encoders address.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
-
-LOGGER = logging.getLogger("ma2pi.encoder_page")
 
 WINDOW = 4
 
@@ -63,7 +60,6 @@ class EncoderPage:
     def __init__(self) -> None:
         self._preset_types: list[dict[str, Any]] = []
         self._window_start = 0
-        self._feature_key: tuple[Any, Any] | None = None
 
     @property
     def known(self) -> bool:
@@ -76,11 +72,15 @@ class EncoderPage:
         feature = _selected(preset_type.get("fea") or [])
         if feature is None:
             return []
-        key = (preset_type.get("i"), feature.get("i"))
-        if key != self._feature_key:
-            self._feature_key = key
-            self._window_start = 0
-        return [att for att in (feature.get("att") or []) if att.get("n")]
+        attrs = [att for att in (feature.get("att") or []) if att.get("n")]
+        # The onPC shows the window that contains the selected attribute; the
+        # daemon follows it instead of keeping its own bank counter.  This way
+        # scrolling the attribute bank in the UI moves the physical encoders.
+        selected = next(
+            (index for index, att in enumerate(attrs) if att.get("s")), 0
+        )
+        self._window_start = (selected // WINDOW) * WINDOW
+        return attrs
 
     def update(self, frame: dict[str, Any]) -> bool:
         if frame.get("responseType") != "presetTypes":
@@ -114,21 +114,6 @@ class EncoderPage:
         if att is None:
             return None
         return str(att.get("np") or att["n"])
-
-    def advance(self, banks: int = 1) -> None:
-        attrs = self.attributes()
-        if not attrs:
-            return
-        if len(attrs) <= WINDOW:
-            self._window_start = 0
-        else:
-            steps = max(1, len(attrs) // WINDOW + (1 if len(attrs) % WINDOW else 0))
-            self._window_start = ((self._window_start // WINDOW + banks) % steps) * WINDOW
-        LOGGER.info(
-            "Encoder-Bank %s: %s",
-            self._window_start // WINDOW + 1,
-            [self.name_for(slot) for slot in range(1, WINDOW + 1)],
-        )
 
     @property
     def bank(self) -> int:

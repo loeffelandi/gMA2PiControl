@@ -19,11 +19,11 @@ def test_example_has_required_key_coverage(config):
     required = {
         "ma",
         "fix",
-        "store",
+        "store_big",
         "clear",
         "at",
         "thru",
-        "please",
+        "please_big",
         "go_plus",
         "go_minus",
         "pause",
@@ -121,7 +121,7 @@ def test_hardkey_resolves_to_keyname(make_config):
     config = make_config()
     assert config.mapping.keys["fix"].hardkey == "Fix"
     assert config.logical_to_hardkey("fix") == "FIXTURE"
-    assert config.logical_to_hardkey("please") == "ENTER"
+    assert config.logical_to_hardkey("please_big") == "ENTER"
 
 
 def test_vendor_zero_requires_name(make_config):
@@ -141,18 +141,34 @@ def test_resolution_modifier_must_be_defined(make_config):
         make_config(mutate)
 
 
-def test_encoder_bank_key(make_config):
+def test_screen_mode_key(make_config):
     config = make_config()
-    assert config.mapping.keys["asl_bank"].encoder_bank == 1
+    assert config.mapping.keys["asl_bank"].screen_mode is True
     assert config.mapping.keys["asl_click_1"].encoder_fine == 1
 
 
-def test_encoder_bank_zero_is_rejected(make_config):
-    with pytest.raises(ConfigError, match="darf nicht 0 sein"):
+def test_screen_mode_rejects_non_bool(make_config):
+    with pytest.raises(ConfigError, match="muss true oder false sein"):
         make_config(
             lambda data: data["mapping"]["keys"]["asl_bank"].__setitem__(
-                "encoder_bank", 0
+                "screen_mode", "yes"
             )
+        )
+
+
+def test_screen_encoders_parsed(make_config):
+    config = make_config(
+        lambda data: data["mapping"].__setitem__(
+            "screen_encoders", {"1": "screen1", "4": "screen4"}
+        )
+    )
+    assert config.mapping.screen_encoders == {1: "screen1", 4: "screen4"}
+
+
+def test_screen_encoder_slot_out_of_range(make_config):
+    with pytest.raises(ConfigError, match="zwischen 1 und 4"):
+        make_config(
+            lambda data: data["mapping"].__setitem__("screen_encoders", {"5": "x"})
         )
 
 

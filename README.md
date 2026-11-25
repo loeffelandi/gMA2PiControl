@@ -243,17 +243,31 @@ modifier is not sent to onPC; it only changes the encoder resolution. `fine` and
 
 ### `[mapping.keys.<control>]`
 
-Either `hardkey = "<name-or-id>"` or `command = "<MA2 command>"`, never both.
-A command is sent exactly once on key-down and never on key-up; the string is
-passed through unchanged, including semicolons.
+One of `hardkey = "<name>"`, `command = "<MA2 command>"`, `screen_mode = true`
+or `encoder_fine = <slot>`, never more than one.
+
+* A command is sent exactly once on key-down and never on key-up; the string is
+  passed through unchanged, including semicolons.
+* `screen_mode = true` toggles the encoders between attribute and screen mode.
+* `encoder_fine = <slot>` cycles that encoder Normal → Fine → Ultra → Normal.
 
 ### `[[mapping.encoders]]`
 
 | Key | Type | Meaning |
 | --- | --- | --- |
 | `id` | int | Must exist in a profile and be unique. |
-| `wheel` | int | Wheel 1–10 (1–4 Main, 5–10 Screen), exclusive with `attribute`. |
-| `attribute` | string | Attribute name, exclusive with `wheel`. |
+| `slot` | int | Attribute slot 1–4 on the encoder page, exclusive with `attribute`. |
+| `attribute` | string | Fixed attribute name, exclusive with `slot`. |
+
+A `slot` encoder follows the window the onPC shows: when you scroll the attribute
+bank in the UI, the physical encoders move with it. `wheel`/`attribute` encoders
+are not used by the example config.
+
+### `[mapping.screen_encoders]`
+
+Optional names for the screen-encoder mode (slots 1–4). While the section is
+missing, pressing the `screen_mode` key logs a warning and leaves the encoders in
+attribute mode.
 
 ### `[mapping.encoder_acceleration]`
 

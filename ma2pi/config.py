@@ -149,7 +149,7 @@ class ModifierMapping:
 class KeyMapping:
     hardkey: str | None = None
     command: str | None = None
-    encoder_bank: int = 0
+    screen_mode: bool = False
     encoder_fine: int | None = None
 
 
@@ -187,6 +187,7 @@ class MappingSettings:
     modifiers: Mapping[str, ModifierMapping] = field(default_factory=dict)
     keys: Mapping[str, KeyMapping] = field(default_factory=dict)
     encoders: tuple[EncoderMapping, ...] = ()
+    screen_encoders: Mapping[int, str] = field(default_factory=dict)
     acceleration: AccelerationSettings = field(default_factory=AccelerationSettings)
     resolution: ResolutionSettings = field(default_factory=ResolutionSettings)
 
@@ -635,7 +636,14 @@ def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSe
     data = _table(raw, path)
     _reject_unknown(
         data,
-        {"modifiers", "keys", "encoders", "encoder_acceleration", "encoder_resolution"},
+        {
+            "modifiers",
+            "keys",
+            "encoders",
+            "screen_encoders",
+            "encoder_acceleration",
+            "encoder_resolution",
+        },
         path,
     )
     controls: set[str] = set()
@@ -669,19 +677,19 @@ def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSe
         item_path = f"{path}.keys.{control}"
         item = _table(entry, item_path)
         _reject_unknown(
-            item, {"hardkey", "command", "encoder_bank", "encoder_fine"}, item_path
+            item, {"hardkey", "command", "screen_mode", "encoder_fine"}, item_path
         )
         if control not in controls:
             raise ConfigError(item_path, f"Control {control!r} kommt in keinem Profil vor")
         kinds = [
             name
-            for name in ("hardkey", "command", "encoder_bank", "encoder_fine")
+            for name in ("hardkey", "command", "screen_mode", "encoder_fine")
             if name in item
         ]
         if len(kinds) != 1:
             raise ConfigError(
                 item_path,
-                "genau eines von hardkey, command, encoder_bank oder encoder_fine angeben",
+                "genau eines von hardkey, command, screen_mode oder encoder_fine angeben",
             )
         kind = kinds[0]
         if kind == "hardkey":
@@ -691,11 +699,10 @@ def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSe
             keys[control] = KeyMapping(
                 command=_string(item["command"], f"{item_path}.command")
             )
-        elif kind == "encoder_bank":
-            step = _int(item["encoder_bank"], f"{item_path}.encoder_bank")
-            if step == 0:
-                raise ConfigError(f"{item_path}.encoder_bank", "darf nicht 0 sein")
-            keys[control] = KeyMapping(encoder_bank=step)
+        elif kind == "screen_mode":
+            keys[control] = KeyMapping(
+                screen_mode=_bool(item["screen_mode"], f"{item_path}.screen_mode")
+            )
         else:
             slot = _int(item["encoder_fine"], f"{item_path}.encoder_fine")
             if not 1 <= slot <= 8:
@@ -732,12 +739,25 @@ def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSe
             attribute = _string(item["attribute"], f"{item_path}.attribute")
             encoders.append(EncoderMapping(id=enc_id, attribute=attribute))
 
+    screen_raw = _table(data.get("screen_encoders", {}), f"{path}.screen_encoders")
+    screen_encoders: dict[int, str] = {}
+    for slot_key, name in screen_raw.items():
+        slot_path = f"{path}.screen_encoders.{slot_key}"
+        try:
+            slot = int(slot_key)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(slot_path, "muss zwischen 1 und 4 liegen") from exc
+        if not 1 <= slot <= 4:
+            raise ConfigError(slot_path, "muss zwischen 1 und 4 liegen")
+        screen_encoders[slot] = _string(name, slot_path)
+
     acceleration = _parse_acceleration(data.get("encoder_acceleration"))
     resolution = _parse_resolution(data.get("encoder_resolution"), modifiers)
     return MappingSettings(
         modifiers=modifiers,
         keys=keys,
         encoders=tuple(encoders),
+        screen_encoders=screen_encoders,
         acceleration=acceleration,
         resolution=resolution,
     )
