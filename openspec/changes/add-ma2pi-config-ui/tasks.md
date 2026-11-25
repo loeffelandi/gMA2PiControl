@@ -11,7 +11,7 @@
 
 ## 2. Config-Store und Hot Reload
 
-- [ ] 2.1 Config-Pfad auf `/var/lib/ma2pi/config.toml` und `/var/lib/ma2pi/ma2pi.password` umstellen, Migration aus `/etc/ma2pi` mit Backup implementieren; Test prüft Pfad, Rechte `0640`/`0600` und einmalige Migration.
+- [x] 2.1 Config-Pfad auf `/var/lib/ma2pi/config.toml` und `/var/lib/ma2pi/ma2pi.password` umstellen, Migration aus `/etc/ma2pi` mit Backup implementieren; Test prüft Pfad, Rechte `0640`/`0600` und einmalige Migration. Ergebnis: `ma2pi/config_store.py` mit `ConfigPaths`, `ensure_layout()` (0750/0640/0600), `migrate()` (einmalig, Backup nach `backups/`, `password_file` wird per `tomlkit` umgeschrieben, Kommentare bleiben); `DEFAULT_CONFIG_PATHS` sucht zuerst unter `/var/lib/ma2pi`.
 - [ ] 2.2 JSON-Merge-Patch über `tomlkit` anwenden, atomar schreiben (`fsync`, `os.replace`, Verzeichnis-`fsync`) und Backups (`last-good`, Zeitstempel, Rotation auf 20) anlegen; Tests für Kommentarerhalt, simulierten Abbruch und Backup-Inhalt.
 - [ ] 2.3 Apply-Lock, Validierung, Freigabe gehaltener Tasten, Verwerfen offener Encoder-Deltas, Mapping-Tausch und Generationenzähler implementieren; Test mit gehaltenen MA+Store-Tasten prüft Release-Reihenfolge und neue Generation.
 - [ ] 2.4 Verbindungstest und Reconnect bei geänderten Zugangsdaten implementieren (bestehende Session wiederverwenden, sonst kurzlebige Testsession); Tests für Erfolg, falsches Passwort, unerreichbaren Host und reine Mapping-Änderung ohne Session-Verlust.

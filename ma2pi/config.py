@@ -16,6 +16,7 @@ from typing import Any, Mapping
 from . import hardkeys
 
 DEFAULT_CONFIG_PATHS = (
+    Path("/var/lib/ma2pi/config.toml"),
     Path("/etc/ma2pi/config.toml"),
     Path("config.toml"),
 )
