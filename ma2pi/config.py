@@ -43,6 +43,7 @@ class Ma2Settings:
     keepalive_interval: float = 5.0
     login_timeout: float = 10.0
     hardkey_transport: str = "lua"
+    hardkey_hold_threshold: float = 0.5
     hardkey_press_value: float = 1.0
     hardkey_release_value: float = 0.0
     page_refresh_interval: float = 1.0
@@ -322,6 +323,7 @@ def _parse_ma2(raw: Any) -> Ma2Settings:
         "keepalive_interval",
         "login_timeout",
         "hardkey_transport",
+        "hardkey_hold_threshold",
         "hardkey_press_value",
         "hardkey_release_value",
         "page_refresh_interval",
@@ -365,6 +367,12 @@ def _parse_ma2(raw: Any) -> Ma2Settings:
         {"lua", "native"},
     )
 
+    hold_threshold = _float(
+        data.get("hardkey_hold_threshold", 0.5), f"{path}.hardkey_hold_threshold"
+    )
+    if hold_threshold <= 0:
+        raise ConfigError(f"{path}.hardkey_hold_threshold", "muss größer 0 sein")
+
     press = _float(data.get("hardkey_press_value", 1.0), f"{path}.hardkey_press_value")
     release = _float(
         data.get("hardkey_release_value", 0.0), f"{path}.hardkey_release_value"
@@ -390,6 +398,7 @@ def _parse_ma2(raw: Any) -> Ma2Settings:
         keepalive_interval=keepalive,
         login_timeout=login_timeout,
         hardkey_transport=hardkey_transport,
+        hardkey_hold_threshold=hold_threshold,
         hardkey_press_value=press,
         hardkey_release_value=release,
         page_refresh_interval=page_refresh,

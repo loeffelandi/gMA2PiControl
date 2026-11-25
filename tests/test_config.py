@@ -340,3 +340,13 @@ def test_native_transport_does_not_require_codes(make_config):
     config = make_config(mutate)
     assert config.ma2.hardkey_transport == "native"
     assert config.hardkeys == {}
+
+
+def test_default_hardkey_hold_threshold(make_config):
+    config = make_config(lambda data: data["ma2"].pop("hardkey_hold_threshold", None))
+    assert config.ma2.hardkey_hold_threshold == 0.5
+
+
+def test_invalid_hardkey_hold_threshold(make_config):
+    with pytest.raises(ConfigError, match="hardkey_hold_threshold"):
+        make_config(lambda data: data["ma2"].__setitem__("hardkey_hold_threshold", 0))

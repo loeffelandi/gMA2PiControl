@@ -7,11 +7,11 @@
 
 ## Status
 
-Proposed
+Accepted
 
 Ersetzt [0001. Web-Remote-WebSocket als Transportweg](0001-web-remote-websocket-als-transportweg.md)
 
-Wird auf Accepted gesetzt, wenn die Verifikation unter „Bestätigung“ bestanden ist.
+Verifikation am Pi gegen die onPC bestanden (siehe „Bestätigung“).
 
 ## Kontext und Problemstellung
 
@@ -58,10 +58,20 @@ Die Tabelle `cmdline_keys` in `maweb.c` enthält weitere Einträge.
 ## Entscheidung
 
 Der Daemon sendet Hardkeys im Command-Line-Modus über
-`LUA 'gma.canbus.hardkey(<code>, <pressed>, false)'` als `command`-Frame über die
-bestehende Web-Remote-WebSocket. Press und Release sind getrennte Aufrufe. Halten
-wird durch den Abstand zwischen beiden Aufrufen erreicht, nicht durch den dritten
-Parameter.
+`LUA 'gma.canbus.hardkey(<code>, <pressed>, <hold>)'` als `command`-Frame über die
+bestehende Web-Remote-WebSocket. Press und Release sind getrennte Aufrufe.
+
+Live-Tests am Pi zeigen: Der dritte Parameter (`hold`) entscheidet, ob die onPC die
+Taste gedrückt hält. `hold=false` bei jedem Press lässt jede Taste wie einen kurzen
+Tipper wirken (Halten funktioniert nicht); `hold=true` bei jedem Press macht auch
+kurze Tipper zu Halten (Ziffern funktionieren nicht). Deshalb gilt:
+
+* Ein Tipper sendet Press `(code, true, false)` und Release `(code, false, false)`.
+* Wird eine Taste länger als `ma2.hardkey_hold_threshold` (Default 0,5 s) gehalten,
+  sendet der Daemon einen zusätzlichen Press `(code, true, true)`, damit die onPC sie
+  gedrückt hält (Store Options).
+* Modifier (MA) werden sofort mit `(code, true, false)` gefolgt von `(code, true, true)`
+  gepresst, damit sie für Akkorde (MA + Fix = Desk Lock) gehalten sind.
 
 Der native `keyname`-Pfad bleibt über `hardkey_transport = "native"` verfügbar. Er ist
 der Fallback, wenn die onPC den LUA-Aufruf ablehnt.
@@ -80,13 +90,19 @@ Verifikation produktiv verwendet. Unverifizierte Codes werden nicht gesendet.
 
 ### Bestätigung
 
-Der ADR wird auf Accepted gesetzt, wenn alle folgenden Punkte bestanden sind:
+Am Pi gegen die onPC verifiziert (2026-11-25):
 
-1. Der Web-Remote-Benutzer der onPC hat die nötigen Rechte für `gma.canbus.hardkey`, und der Aufruf wird nicht abgelehnt.
-2. Jede verwendete Taste erscheint einzeln in der onPC-Kommandozeile mit dem erwarteten Keyword.
-3. Press/Release einer Haltetaste (z. B. Store) wirkt wie die echte Taste.
-4. Eine Modifier-Sequenz (MA + Fix) löst Desk Lock aus.
-5. Die verifizierten Keycodes sind in `config.toml` persistiert.
+1. [x] Der Web-Remote-Benutzer `svt` hat die nötigen Rechte für `gma.canbus.hardkey`; der Aufruf wird nicht abgelehnt (Session authentifiziert, Frames gesendet).
+2. [x] Tasten erscheinen in der onPC-Kommandozeile: Clear leert die Zeile, Ziffern/Navigation/Funktionstasten und Channel wurden bestätigt; die übrigen Tasten wurden vom Benutzer freigegeben.
+3. [x] Press/Release einer Haltetaste (Store) wirkt wie die echte Taste: Store Options erscheinen beim Halten (> Halteschwelle) und verschwinden beim Loslassen.
+4. [x] Eine Modifier-Sequenz (MA + Fix) löst Desk Lock aus.
+5. [x] Die Keycodes sind in `config.toml` persistiert (`verified = true`).
+
+Erkenntnisse aus der Verifikation, die über die MIDIMonster-Referenz hinausgehen:
+
+* `hold` muss beim Halten `true` sein; eine Halteschwelle trennt Tippen von Halten.
+* Modifier brauchen einen initialen Press (`hold=false`) plus Hold (`hold=true`).
+* Die physische Logo/MA-Taste sendet `KEY_SLASH` (nicht `KEY_COMMA`); Setup ist Code 118.
 
 ## Vor- und Nachteile der Optionen
 

@@ -8,9 +8,15 @@ from typing import Union
 
 @dataclass(frozen=True, slots=True)
 class Press:
-    """Press a hardkey by Web Remote ``keyname``."""
+    """Press a hardkey by Web Remote ``keyname``.
+
+    ``hold`` marks the press as a held key (LUA transport only).  A tap uses
+    ``hold=False``; a key held past the threshold gets an extra ``hold=True``
+    press so the console keeps it down.
+    """
 
     keyname: str
+    hold: bool = False
 
 
 @dataclass(frozen=True, slots=True)

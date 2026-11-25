@@ -10,7 +10,7 @@ class Sink:
     def __init__(self) -> None:
         self.actions: list[tuple] = []
 
-    def press(self, hardkey_id: int) -> None:
+    def press(self, hardkey_id: int, hold: bool = False) -> None:
         self.actions.append(("press", hardkey_id))
 
     def release(self, hardkey_id: int) -> None:
@@ -83,6 +83,7 @@ def test_modifier_chord_order(engine, sink):
     engine.handle(key("ma", 0))
     assert sink.actions == [
         ("press", "MA"),
+        ("press", "MA"),
         ("press", "FIX"),
         ("release", "FIX"),
         ("release", "MA"),
@@ -95,8 +96,9 @@ def test_desk_lock_acceptance(engine, sink):
     engine.handle(key("fix", 1))
     engine.handle(key("fix", 0))
     engine.handle(key("ma", 0))
-    assert len(sink.actions) == 4
+    assert len(sink.actions) == 5
     assert sink.actions == [
+        ("press", "MA"),
         ("press", "MA"),
         ("press", "FIX"),
         ("release", "FIX"),
@@ -110,6 +112,7 @@ def test_cleanup_releases_in_reverse_order(engine, sink):
     engine.handle(key("fix", 1))
     engine.cleanup()
     assert sink.actions == [
+        ("press", "MA"),
         ("press", "MA"),
         ("press", "STORE"),
         ("press", "FIX"),
@@ -170,10 +173,10 @@ def test_device_loss_releases_only_that_device(engine, sink):
 def test_connection_lost_clears_without_replay(engine, sink):
     engine.handle(key("ma", 1))
     engine.on_connection_lost()
-    assert sink.actions == [("press", "MA")]
+    assert sink.actions == [("press", "MA"), ("press", "MA")]
     assert engine.held == {}
     engine.handle(key("ma", 0))
-    assert sink.actions == [("press", "MA")]
+    assert sink.actions == [("press", "MA"), ("press", "MA")]
 
 
 def test_slot_accumulates_and_flushes_once(engine, sink):
@@ -296,3 +299,87 @@ def test_stress_100_detents_per_second(make_config, sink):
     ticks = sum(action[2] for action in frames)
     assert ticks == pytest.approx(1000.0)
     assert len(frames) <= 260  # roughly 25/s, never unbounded
+
+
+class HoldSink:
+    """Records the hold flag so tap/hold behaviour can be asserted."""
+
+    def __init__(self) -> None:
+        self.actions: list[tuple] = []
+
+    def press(self, keyname: str, hold: bool = False) -> None:
+        self.actions.append(("press", keyname, hold))
+
+    def release(self, keyname: str) -> None:
+        self.actions.append(("release", keyname))
+
+    def command(self, text: str) -> None:
+        self.actions.append(("command", text))
+
+    def encoder_slot(self, slot: int, delta: float) -> None:
+        self.actions.append(("slot", slot, delta))
+
+    def encoder_attribute(self, name: str, value: float) -> None:
+        self.actions.append(("attribute", name, value))
+
+    def toggle_screen_mode(self) -> None:
+        self.actions.append(("screen_mode",))
+
+    def toggle_fine(self, slot: int) -> None:
+        self.actions.append(("fine", slot))
+
+
+def _hold_engine(make_config, sink, now):
+    cfg = make_config(lambda d: d["ma2"].__setitem__("hardkey_hold_threshold", 0.3))
+    return MappingEngine(cfg, sink, clock=lambda: now[0])
+
+
+def test_tap_does_not_upgrade_to_hold(make_config):
+    sink = HoldSink()
+    now = [0.0]
+    engine = _hold_engine(make_config, sink, now)
+    engine.handle(key("store_big", 1))
+    now[0] = 0.1
+    engine.handle(key("store_big", 0))
+    engine.flush_hold_upgrades(now[0])
+    assert sink.actions == [("press", "STORE", False), ("release", "STORE")]
+
+
+def test_hold_upgrades_after_threshold(make_config):
+    sink = HoldSink()
+    now = [0.0]
+    engine = _hold_engine(make_config, sink, now)
+    engine.handle(key("store_big", 1))
+    assert sink.actions == [("press", "STORE", False)]
+    now[0] = 0.2
+    assert engine.flush_hold_upgrades(now[0]) == 0
+    now[0] = 0.35
+    assert engine.flush_hold_upgrades(now[0]) == 1
+    assert sink.actions == [("press", "STORE", False), ("press", "STORE", True)]
+    # Only one upgrade even if flushed again.
+    now[0] = 0.5
+    assert engine.flush_hold_upgrades(now[0]) == 0
+    engine.handle(key("store_big", 0))
+    assert sink.actions[-1] == ("release", "STORE")
+
+
+def test_modifier_presses_as_held_immediately(make_config):
+    sink = HoldSink()
+    now = [0.0]
+    engine = _hold_engine(make_config, sink, now)
+    engine.handle(key("ma", 1))
+    assert sink.actions == [("press", "MA", False), ("press", "MA", True)]
+    engine.handle(key("ma", 0))
+    assert sink.actions[-1] == ("release", "MA")
+
+
+def test_native_transport_has_no_hold_upgrade(make_config):
+    sink = HoldSink()
+    now = [0.0]
+    cfg = make_config(lambda d: d["ma2"].__setitem__("hardkey_transport", "native"))
+    engine = MappingEngine(cfg, sink, clock=lambda: now[0])
+    engine.handle(key("store_big", 1))
+    now[0] = 1.0
+    assert engine.flush_hold_upgrades(now[0]) == 0
+    engine.handle(key("store_big", 0))
+    assert sink.actions == [("press", "STORE", False), ("release", "STORE")]

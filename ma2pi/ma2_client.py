@@ -18,7 +18,7 @@ from collections import Counter, OrderedDict, deque
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Protocol
 
-from . import frames
+from . import frames, hardkeys
 from .actions import (
     Action,
     Command,
@@ -360,8 +360,8 @@ class Ma2Client:
 
     # -- action entry points ---------------------------------------------
 
-    def press(self, keyname: str) -> None:
-        self._submit(Press(keyname))
+    def press(self, keyname: str, hold: bool = False) -> None:
+        self._submit(Press(keyname, hold))
 
     def release(self, keyname: str) -> None:
         self._submit(Release(keyname))
@@ -692,8 +692,15 @@ class Ma2Client:
         pressed: bool,
         session: int,
         ma2: Any,
+        hold: bool = False,
     ) -> dict[str, Any] | None:
         if ma2.hardkey_transport == "native":
+            if keyname not in hardkeys.WEB_REMOTE_KEYNAMES:
+                LOGGER.error(
+                    "Hardkey %s hat keinen Web-Remote-Keyname; native Transport nicht möglich",
+                    keyname,
+                )
+                return None
             return frames.keyname_frame(
                 keyname,
                 pressed,
@@ -713,7 +720,7 @@ class Ma2Client:
                 entry.code,
             )
             return None
-        return frames.lua_hardkey_frame(entry.code, pressed, session)
+        return frames.lua_hardkey_frame(entry.code, pressed, session, hold)
 
     async def _dispatch(self, action: Action) -> None:
         assert self._session is not None
@@ -721,12 +728,12 @@ class Ma2Client:
         ma2 = self.config.ma2
 
         if isinstance(action, Press):
-            frame = self._hardkey_frame(action.keyname, True, session, ma2)
+            frame = self._hardkey_frame(action.keyname, True, session, ma2, action.hold)
             if frame is None:
                 return
             kind = "hardkeyPress"
         elif isinstance(action, Release):
-            frame = self._hardkey_frame(action.keyname, False, session, ma2)
+            frame = self._hardkey_frame(action.keyname, False, session, ma2, False)
             if frame is None:
                 return
             kind = "hardkeyRelease"

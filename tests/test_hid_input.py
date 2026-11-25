@@ -135,13 +135,13 @@ def test_normalise_key_and_autorepeat(config):
     manager = HidManager(config, source=FakeSource([]))
     profile = config.profiles["cherry-g86"]
     device = cherry()
-    assert manager._normalise("cherry", device, profile, RawEvent("key", "KEY_F1", 1)) == InputEvent(
+    assert manager._normalise("cherry", device, profile, RawEvent("key", "KEY_E", 1)) == InputEvent(
         "key", "pause_big", 1, "cherry"
     )
-    assert manager._normalise("cherry", device, profile, RawEvent("key", "KEY_F1", 0)) == InputEvent(
+    assert manager._normalise("cherry", device, profile, RawEvent("key", "KEY_E", 0)) == InputEvent(
         "key", "pause_big", 0, "cherry"
     )
-    assert manager._normalise("cherry", device, profile, RawEvent("key", "KEY_F1", 2)) is None
+    assert manager._normalise("cherry", device, profile, RawEvent("key", "KEY_E", 2)) is None
     assert manager._normalise("cherry", device, profile, RawEvent("key", "KEY_MICMUTE", 1)) is None
 
 
@@ -206,7 +206,7 @@ async def test_hid_manager_hotplug(config):
         await asyncio.sleep(0.03)
         assert "cherry" in manager.open_devices
         handle = source.handles["/dev/input/event1"]
-        await handle.queue.put(RawEvent("key", "KEY_F1", 1))
+        await handle.queue.put(RawEvent("key", "KEY_E", 1))
         event = await asyncio.wait_for(queue.get(), 1.0)
         assert event == InputEvent("key", "pause_big", 1, "cherry")
 

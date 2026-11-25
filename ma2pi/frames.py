@@ -41,16 +41,24 @@ def command_frame(command: str, session: int) -> dict[str, Any]:
     }
 
 
-def lua_hardkey_frame(code: int, pressed: bool, session: int) -> dict[str, Any]:
+def lua_hardkey_frame(
+    code: int, pressed: bool, session: int, hold: bool = False
+) -> dict[str, Any]:
     """Hardkey press/release through the onPC command line.
 
     The onPC only injects a real hardware key event when the command is sent
-    as a command frame.  Press and release are separate calls; the third
-    argument (``hold``) stays ``false`` as in the MIDIMonster reference.
+    as a command frame.  Press and release are separate calls.  ``hold`` marks
+    a key as being held down: a tap uses ``hold=false`` on press and release;
+    a held key gets an extra ``hold=true`` press event so the console keeps it
+    down (Store Options, MA chords).  ``hold=true`` on every press would turn
+    even a quick tap into a hold, so it is only sent after the hold threshold.
     """
 
     flag = "true" if pressed else "false"
-    return command_frame(f"LUA 'gma.canbus.hardkey({code}, {flag}, false)'", session)
+    hold_flag = "true" if hold else "false"
+    return command_frame(
+        f"LUA 'gma.canbus.hardkey({code}, {flag}, {hold_flag})'", session
+    )
 
 
 def keyname_frame(

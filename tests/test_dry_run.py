@@ -73,8 +73,8 @@ async def test_dry_run_programming_sequence(config):
         engine.handle(key("store_big", 0))
         engine.handle(key("clear", 1))
         engine.handle(key("clear", 0))
-        engine.handle(key("go_plus", 1))
-        engine.handle(key("go_plus", 0))
+        engine.handle(key("go_plus_big", 1))
+        engine.handle(key("go_plus_big", 0))
         engine.handle(key("num_1", 1))
         engine.handle(key("num_1", 0))
         # One wheel detent and one attribute detent.

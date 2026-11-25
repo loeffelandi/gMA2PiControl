@@ -1,4 +1,4 @@
-# Spec Delta
+# hardkey-transport Specification
 
 ## Purpose
 
@@ -6,7 +6,7 @@ Sendet Hardkey-Press und -Release an die grandMA2 onPC so, dass die Tasten in de
 Kommandozeile sichtbar sind. Der Transport ist konfigurierbar; der native
 `keyname`-Pfad bleibt als Fallback erhalten.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Transportauswahl
 
@@ -27,15 +27,31 @@ der Konfiguration mit einem Fehler abgelehnt werden.
 ### Requirement: LUA-Hardkey-Befehl
 
 Bei `hardkey_transport = "lua"` SHALL jeder Press und jeder Release als
-`command`-Frame gesendet werden, dessen Befehl genau
-`LUA 'gma.canbus.hardkey(<code>, <pressed>, false)'` lautet. `<pressed>` MUST `true`
-bei Press und `false` bei Release sein. Der dritte Parameter MUST immer `false` sein.
-Halten wird durch den Abstand zwischen Press und Release erreicht.
+`command`-Frame gesendet werden, dessen Befehl
+`LUA 'gma.canbus.hardkey(<code>, <pressed>, <hold>)'` lautet. `<pressed>` MUST `true`
+bei Press und `false` bei Release sein. Ein kurzer Tipper MUST den Press mit
+`hold=false` senden. Wird eine Taste länger als `ma2.hardkey_hold_threshold`
+gehalten, SHALL der Daemon einen zusätzlichen Press mit `hold=true` senden, damit
+die onPC die Taste gedrückt hält (Store Options). Der Release MUST immer
+`hold=false` sein. Modifier MUST sofort mit einem initialen Press (`hold=false`)
+gefolgt von einem Press mit `hold=true` gepresst werden, damit sie für Akkorde
+(MA + Taste) gehalten sind. Ein `hold=true` bei jedem Press würde auch kurze Tipper
+zu Halten machen und ist daher verboten.
 
-#### Scenario: Press einer Taste
+#### Scenario: Tippen einer Taste
 
-- **WHEN** die Taste `Store` gedrückt wird und ihr Keycode `59` ist
-- **THEN** wird ein `command`-Frame mit `LUA 'gma.canbus.hardkey(59, true, false)'` und der aktuellen Session gesendet
+- **WHEN** die Taste `Store` kurz gedrückt und vor Ablauf der Halteschwelle losgelassen wird
+- **THEN** wird ein Press mit `LUA 'gma.canbus.hardkey(59, true, false)'` und ein Release mit `LUA 'gma.canbus.hardkey(59, false, false)'` gesendet, kein `hold=true`
+
+#### Scenario: Halten einer Taste
+
+- **WHEN** die Taste `Store` (Keycode `59`) länger als die Halteschwelle gedrückt bleibt
+- **THEN** wird nach dem Press mit `hold=false` ein zusätzlicher Press mit `LUA 'gma.canbus.hardkey(59, true, true)'` gesendet; beim Loslassen ein Release mit `hold=false`
+
+#### Scenario: Modifier pressen
+
+- **WHEN** der Modifier `MA` (Keycode `68`) gedrückt wird
+- **THEN** werden sofort ein Press mit `hold=false` und ein Press mit `hold=true` gesendet, damit MA für Akkorde gehalten ist; beim Loslassen ein Release mit `hold=false`
 
 #### Scenario: Release einer Taste
 

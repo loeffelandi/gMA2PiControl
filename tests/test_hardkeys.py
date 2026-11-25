@@ -54,10 +54,12 @@ def test_numeric_ids_are_rejected():
         hardkeys.resolve(68)  # type: ignore[arg-type]
 
 
-def test_no_x_keys_in_web_remote():
-    # The web remote has no X1..X20 keynames; those must be commands.
-    assert not hardkeys.is_known("X1")
-    assert not hardkeys.is_known("X20")
+def test_x_keys_are_canbus_only():
+    # The web remote has no X1..X20 keynames; the LUA path sends the canbus code.
+    assert hardkeys.is_known("X1")
+    assert hardkeys.resolve("X1") == "X1"
+    assert "X1" not in hardkeys.WEB_REMOTE_KEYNAMES
+    assert "X20" in hardkeys.CANBUS_ONLY
 
 
 def test_fix_is_not_fixture():

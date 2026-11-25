@@ -547,12 +547,18 @@ async def test_backpressure_loop_engages_and_recovers(small_config, caplog):
 
 
 def test_lua_hardkey_frame_exact():
+    # Tap press: hold=false.
     assert frames.lua_hardkey_frame(59, True, 4) == {
         "command": "LUA 'gma.canbus.hardkey(59, true, false)'",
         "session": 4,
         "requestType": "command",
         "maxRequests": 0,
     }
+    # Held press: hold=true.
+    assert frames.lua_hardkey_frame(59, True, 4, hold=True)["command"] == (
+        "LUA 'gma.canbus.hardkey(59, true, true)'"
+    )
+    # Release always hold=false.
     assert frames.lua_hardkey_frame(59, False, 4)["command"] == (
         "LUA 'gma.canbus.hardkey(59, false, false)'"
     )
@@ -671,3 +677,16 @@ async def test_unknown_hardkey_in_lua_path_is_dropped(make_config, caplog):
         await client._dispatch(Press("NOT_A_KEY"))
     assert transport.sent == []
     assert "Kein Keycode" in caplog.text
+
+
+async def test_native_canbus_only_key_is_dropped(make_config, caplog):
+    cfg = _lua_config(make_config)
+    cfg = dataclasses.replace(cfg, ma2=dataclasses.replace(cfg.ma2, hardkey_transport="native"))
+    transport = MockTransport()
+    client = Ma2Client(cfg, transport=transport)
+    client._session = 4
+    client._authenticated = True
+    with caplog.at_level("ERROR"):
+        await client._dispatch(Press("CHANNEL"))
+    assert transport.sent == []
+    assert "keinen Web-Remote-Keyname" in caplog.text

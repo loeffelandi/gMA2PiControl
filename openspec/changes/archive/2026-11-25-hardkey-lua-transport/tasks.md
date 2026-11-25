@@ -31,14 +31,14 @@
 
 - [x] 6.1 `pytest` im Repo ist grün. Verifikation: alle Tests bestehen, Anzahl gegenüber den bisherigen 175 erhöht.
 - [x] 6.2 Deploy auf dem Pi: Code und `/home/svt/test-live.toml` aktualisieren, Backup der alten Config anlegen, `--check-config`. Verifikation: Daemon startet, Session authentifiziert.
-- [ ] 6.3 Erster Test mit `Clear` (Keycode 105). Verifikation: Die Kommandozeile der onPC zeigt die Taste, der Benutzer bestätigt. Bei Ablehnung: `native` setzen und Ursache im Log prüfen.
-- [ ] 6.4 Verifikation je Taste über die Kommandozeile. Jede bestätigte Taste bekommt `verified = true` in der Config auf dem Pi und im Repo. Verifikation: Liste im Change-Ordner mit Taste, Keycode und Status.
-- [ ] 6.5 Halten testen mit `Store` (Store Options erscheinen nur bei gehaltener Taste). Verifikation: Benutzer bestätigt Verhalten.
-- [ ] 6.6 Modifier-Test: MA + Fix (Desk Lock). Verifikation: Benutzer bestätigt, dass Desk Lock umschaltet.
+- [x] 6.3 Erster Test mit `Clear` (Keycode 105). Verifikation: Die Kommandozeile der onPC zeigt die Taste, der Benutzer bestätigt. Bei Ablehnung: `native` setzen und Ursache im Log prüfen.
+- [x] 6.4 Verifikation je Taste über die Kommandozeile. Jede bestätigte Taste bekommt `verified = true` in der Config auf dem Pi und im Repo. Verifikation: Liste im Change-Ordner mit Taste, Keycode und Status. (Ziffern, Navigation, Funktionstasten, Channel, Clear bestätigt; übrige Tasten vom Benutzer freigegeben. Siehe `verification.md`.)
+- [x] 6.5 Halten testen mit `Store` (Store Options erscheinen nur bei gehaltener Taste). Verifikation: Benutzer bestätigt Verhalten. (Halteschwelle 0,5 s; `hold=true` nach Schwellenwert.)
+- [x] 6.6 Modifier-Test: MA + Fix (Desk Lock). Verifikation: Benutzer bestätigt, dass Desk Lock umschaltet. (MA als initialer Press + Hold; Logo-Taste = `KEY_SLASH`.)
 
 ## 7. ADR
 
-- [ ] 7.1 ADR 0016 auf Accepted setzen, wenn 6.3, 6.5 und 6.6 bestanden sind. Verifikation: ADR-Status und Abschnitt „Bestätigung“ sind abgehakt.
+- [x] 7.1 ADR 0016 auf Accepted setzen, wenn 6.3, 6.5 und 6.6 bestanden sind. Verifikation: ADR-Status und Abschnitt „Bestätigung“ sind abgehakt.
 
 ## Workflow follow-up
 

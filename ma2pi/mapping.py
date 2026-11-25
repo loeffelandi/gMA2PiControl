@@ -38,7 +38,7 @@ def encoder_control(encoder_id: int) -> str:
 
 
 class ActionSink(Protocol):
-    def press(self, keyname: str) -> None: ...
+    def press(self, keyname: str, hold: bool = False) -> None: ...
     def release(self, keyname: str) -> None: ...
     def command(self, text: str) -> None: ...
     def encoder_slot(self, slot: int, delta: float) -> None: ...
@@ -86,6 +86,7 @@ class MappingEngine:
         self._clock = clock
         self._held: dict[str, HeldKey] = {}
         self._order = 0
+        self._pending_hold: dict[str, float] = {}
         self._encoders: dict[int, EncoderState] = {}
         self._stop = asyncio.Event()
         self._build_encoders()
@@ -148,7 +149,12 @@ class MappingEngine:
                 is_command=False,
                 is_local_modifier=False,
             )
-            self._emit_press(control, hardkeys.resolve(modifier.hardkey))
+            keyname = hardkeys.resolve(modifier.hardkey)
+            if self.config.ma2.hardkey_transport == "lua":
+                self._emit_press(control, keyname, hold=False)
+                self._emit_press(control, keyname, hold=True)
+            else:
+                self._emit_press(control, keyname)
             return
 
         assert key is not None
@@ -164,7 +170,9 @@ class MappingEngine:
         if key.hardkey is not None:
             keyname = hardkeys.resolve(key.hardkey)
             self._add_held(control, device, keyname, False, False)
-            self._emit_press(control, keyname)
+            self._emit_press(control, keyname, hold=False)
+            if self.config.ma2.hardkey_transport == "lua":
+                self._pending_hold[control] = now
         elif key.command is not None:
             self._add_held(control, device, None, True, False)
             LOGGER.debug("CMD-Key %s -> %s", control, key.command)
@@ -180,6 +188,7 @@ class MappingEngine:
         if held.keyname is not None:
             self._emit_release(control, held.keyname)
         self._held.pop(control, None)
+        self._pending_hold.pop(control, None)
 
     def _add_held(
         self,
@@ -199,9 +208,9 @@ class MappingEngine:
             is_local_modifier=is_local_modifier,
         )
 
-    def _emit_press(self, control: str, keyname: str) -> None:
-        LOGGER.debug("Press %s -> Keyname %s", control, keyname)
-        self.sink.press(keyname)
+    def _emit_press(self, control: str, keyname: str, hold: bool = False) -> None:
+        LOGGER.debug("Press %s -> Keyname %s (hold=%s)", control, keyname, hold)
+        self.sink.press(keyname, hold)
 
     def _emit_release(self, control: str, keyname: str) -> None:
         LOGGER.debug("Release %s -> Keyname %s", control, keyname)
@@ -219,6 +228,7 @@ class MappingEngine:
             if send and held.keyname is not None:
                 self._emit_release(held.control, held.keyname)
             self._held.pop(held.control, None)
+            self._pending_hold.pop(held.control, None)
         if keys:
             LOGGER.warning("Gerät %s verloren: %d Taste(n) freigegeben", device, len(keys))
 
@@ -231,6 +241,7 @@ class MappingEngine:
             LOGGER.info("%d gehaltene Taste(n) freigegeben", len(keys))
         self._held.clear()
         self._order = 0
+        self._pending_hold.clear()
         self.clear_encoder_pending()
 
     def on_connection_lost(self) -> None:
@@ -242,6 +253,7 @@ class MappingEngine:
             )
         self._held.clear()
         self._order = 0
+        self._pending_hold.clear()
         self.clear_encoder_pending()
 
     def clear_encoder_pending(self) -> None:
@@ -386,10 +398,35 @@ class MappingEngine:
         state.last_feed = now if state.pending != 0 else None
         return True
 
+    def flush_hold_upgrades(self, now: float) -> int:
+        """Send a ``hold=true`` press for keys held past the threshold.
+
+        A tap keeps ``hold=false`` (press + release).  A key still down after
+        ``ma2.hardkey_hold_threshold`` gets an extra ``hold=true`` press so the
+        console treats it as held (Store Options).  Modifiers are pressed as
+        held immediately and never appear here.
+        """
+
+        if self.config.ma2.hardkey_transport != "lua":
+            return 0
+        threshold = self.config.ma2.hardkey_hold_threshold
+        sent = 0
+        for control in list(self._pending_hold):
+            if now - self._pending_hold[control] < threshold:
+                continue
+            del self._pending_hold[control]
+            held = self._held.get(control)
+            if held is not None and held.keyname is not None:
+                self._emit_press(control, held.keyname, hold=True)
+                sent += 1
+        return sent
+
     async def run_encoder_loop(self, interval: float = 0.005) -> None:
         try:
             while not self._stop.is_set():
-                self.flush_due(self._clock())
+                moment = self._clock()
+                self.flush_due(moment)
+                self.flush_hold_upgrades(moment)
                 await asyncio.sleep(interval)
         except asyncio.CancelledError:
             raise

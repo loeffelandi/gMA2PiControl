@@ -37,11 +37,18 @@ Die Mapping-Engine bleibt unverändert und liefert weiter `STORE`, `FIXTURE` usw
 `ma2_client` übersetzt den Keyname im LUA-Pfad in den Keycode. Alternative: Mapping
 liefert direkt Keycodes. Verworfen, weil dann der native Pfad und die Tests ändern.
 
-**D3: Ein Befehl pro Flanke.**
-Press sendet `LUA ... (code, true, false)`, Release sendet `(code, false, false)`.
-Der dritte Parameter bleibt `false` (wie MIDIMonster). Alternative: `hold=true`
-für Haltetasten, wie in der KI-Empfehlung genannt. Verworfen, weil die Referenz das
-nicht verwendet und die Wirkung nicht verifiziert ist.
+**D3: Halteschwelle statt `hold` bei jedem Press.**
+Ein Tipper sendet Press `(code, true, false)` + Release `(code, false, false)`.
+Bleibt eine Taste länger als `ma2.hardkey_hold_threshold` (Default 0,5 s) unten,
+sendet der Daemon einen zusätzlichen Press `(code, true, true)`, damit die onPC
+sie gedrückt hält (Store Options). Modifier (MA) werden sofort mit einem initialen
+Press `(code, true, false)` plus `(code, true, true)` gepresst, damit sie für Akkorde
+gehalten sind (ein Modifier nur mit `hold=true` wird von der onPC nicht registriert).
+Begründung aus Live-Tests: `hold=false` bei
+jedem Press lässt Halten wie Tippen wirken; `hold=true` bei jedem Press macht auch
+Tipper zu Halten (Ziffern kaputt). Die Community-Lösung (Companion-Plugin) nutzt
+denselben Aufbau: erst `hardkey(code, 1, false)`, dann `hardkey(code, pressed, pressed)`.
+Die Schwelle ist konfigurierbar.
 
 **D4: Config-Schema.**
 Neue Felder:

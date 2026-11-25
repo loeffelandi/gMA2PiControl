@@ -9,65 +9,129 @@ password_file = "/etc/ma2pi/ma2pi.password"  # alternativ password_env
 keepalive_interval = 5.0
 login_timeout = 10.0
 hardkey_transport = "lua"                     # lua = Command-Line sichtbar, native = keyname
+hardkey_hold_threshold = 0.5                  # Sekunden halten, bevor eine Taste als "gehalten" gilt
 hardkey_press_value = 1.0                     # value 1 = Taste gedrückt
 hardkey_release_value = 0.0                   # value 0 = Taste losgelassen
 page_refresh_interval = 1.0                   # Encoder-Seite pollen (Sekunden)
 
 # Canbus-Keycodes für den LUA-Hardkey-Transport. Quelle: MIDIMonster maweb.c
-# (Community-Wissen, nicht offiziell dokumentiert). verified = false sendet nichts.
+# (Community-Wissen, nicht offiziell dokumentiert). verified = false sendet nichts;
+# true = vom Benutzer freigegeben.
 [hardkeys]
-MA = { code = 68, verified = false }
-PAUSE = { code = 9, verified = false }
-OFF = { code = 43, verified = false }
-ON = { code = 46, verified = false }
-PAGE = { code = 70, verified = false }
-MACRO = { code = 71, verified = false }
-PRESET = { code = 72, verified = false }
-SELECT = { code = 42, verified = false }
-PREV = { code = 109, verified = false }
-NEXT = { code = 110, verified = false }
-SEQU = { code = 74, verified = false }
-CUE = { code = 75, verified = false }
-EXEC = { code = 76, verified = false }
-DELETE = { code = 69, verified = false }
-GO_MINUS = { code = 10, verified = false }
-FIX = { code = 41, verified = false }
-GO_PLUS = { code = 11, verified = false }
-GOTO = { code = 56, verified = false }
-FIXTURE = { code = 83, verified = false }
-GROUP = { code = 84, verified = false }
-COPY = { code = 73, verified = false }
-TIME = { code = 58, verified = false }
-ESC = { code = 54, verified = false }
-"0" = { code = 86, verified = false }
-"1" = { code = 87, verified = false }
-"2" = { code = 88, verified = false }
-"3" = { code = 89, verified = false }
-"4" = { code = 90, verified = false }
-"5" = { code = 91, verified = false }
-"6" = { code = 92, verified = false }
-"7" = { code = 93, verified = false }
-"8" = { code = 94, verified = false }
-"9" = { code = 95, verified = false }
-PLUS = { code = 96, verified = false }
-ASSIGN = { code = 63, verified = false }
-EDIT = { code = 55, verified = false }
-OOPS = { code = 53, verified = false }
-THRU = { code = 102, verified = false }
-FULL = { code = 99, verified = false }
-HIGH = { code = 100, verified = false }
-SOLO = { code = 101, verified = false }
-UPDATE = { code = 57, verified = false }
-CLEAR = { code = 105, verified = false }
-MINUS = { code = 97, verified = false }
-UP = { code = 107, verified = false }
-STORE = { code = 59, verified = false }
-PUNKT = { code = 98, verified = false }
-IF = { code = 103, verified = false }
-AT = { code = 104, verified = false }
-SET = { code = 108, verified = false }
-ENTER = { code = 106, verified = false }
-DOWN = { code = 111, verified = false }
+MA = { code = 68, verified = true }
+PAUSE = { code = 9, verified = true }
+OFF = { code = 43, verified = true }
+ON = { code = 46, verified = true }
+PAGE = { code = 70, verified = true }
+MACRO = { code = 71, verified = true }
+PRESET = { code = 72, verified = true }
+SELECT = { code = 42, verified = true }
+PREV = { code = 109, verified = true }
+NEXT = { code = 110, verified = true }
+SEQU = { code = 74, verified = true }
+CUE = { code = 75, verified = true }
+EXEC = { code = 76, verified = true }
+DELETE = { code = 69, verified = true }
+GO_MINUS = { code = 10, verified = true }
+FIX = { code = 41, verified = true }
+GO_PLUS = { code = 11, verified = true }
+GOTO = { code = 56, verified = true }
+FIXTURE = { code = 83, verified = true }
+GROUP = { code = 84, verified = true }
+COPY = { code = 73, verified = true }
+TIME = { code = 58, verified = true }
+ESC = { code = 54, verified = true }
+"0" = { code = 86, verified = true }
+"1" = { code = 87, verified = true }
+"2" = { code = 88, verified = true }
+"3" = { code = 89, verified = true }
+"4" = { code = 90, verified = true }
+"5" = { code = 91, verified = true }
+"6" = { code = 92, verified = true }
+"7" = { code = 93, verified = true }
+"8" = { code = 94, verified = true }
+"9" = { code = 95, verified = true }
+PLUS = { code = 96, verified = true }
+ASSIGN = { code = 63, verified = true }
+EDIT = { code = 55, verified = true }
+OOPS = { code = 53, verified = true }
+THRU = { code = 102, verified = true }
+FULL = { code = 99, verified = true }
+HIGH = { code = 100, verified = true }
+SOLO = { code = 101, verified = true }
+UPDATE = { code = 57, verified = true }
+CLEAR = { code = 105, verified = true }
+MINUS = { code = 97, verified = true }
+UP = { code = 107, verified = true }
+STORE = { code = 59, verified = true }
+PUNKT = { code = 98, verified = true }
+IF = { code = 103, verified = true }
+AT = { code = 104, verified = true }
+SET = { code = 108, verified = true }
+ENTER = { code = 106, verified = true }
+DOWN = { code = 111, verified = true }
+# Interne Canbus-Tasten (MIDIMonster maweb.c), ohne Web-Remote-Keyname.
+CHPGPLUS = { code = 3, verified = true }
+CHPGMINUS = { code = 4, verified = true }
+FDPGPLUS = { code = 5, verified = true }
+FDPGMINUS = { code = 6, verified = true }
+BTPGPLUS = { code = 7, verified = true }
+BTPGMINUS = { code = 8, verified = true }
+TOOLS = { code = 119, verified = true }
+SETUP = { code = 118, verified = true }
+BACKUP = { code = 117, verified = true }
+BLIND = { code = 60, verified = true }
+FREEZE = { code = 61, verified = true }
+PREVIEW = { code = 62, verified = true }
+TEMP = { code = 44, verified = true }
+TOP = { code = 45, verified = true }
+VIEW = { code = 66, verified = true }
+EFFECT = { code = 67, verified = true }
+CHANNEL = { code = 82, verified = true }
+MOVE = { code = 85, verified = true }
+BLACKOUT = { code = 65, verified = true }
+LIST = { code = 32, verified = true }
+USER1 = { code = 33, verified = true }
+USER2 = { code = 34, verified = true }
+ALIGN = { code = 64, verified = true }
+HELP = { code = 116, verified = true }
+LEARN = { code = 48, verified = true }
+FASTREVERSE = { code = 47, verified = true }
+FASTFORWARD = { code = 49, verified = true }
+GO_MINUS_SMALL = { code = 50, verified = true }
+PAUSE_SMALL = { code = 51, verified = true }
+GO_PLUS_SMALL = { code = 52, verified = true }
+NIPPLE = { code = 40, verified = true }
+X1 = { code = 12, verified = true }
+X2 = { code = 13, verified = true }
+X3 = { code = 14, verified = true }
+X4 = { code = 15, verified = true }
+X5 = { code = 16, verified = true }
+X6 = { code = 17, verified = true }
+X7 = { code = 18, verified = true }
+X8 = { code = 19, verified = true }
+X9 = { code = 20, verified = true }
+X10 = { code = 21, verified = true }
+X11 = { code = 22, verified = true }
+X12 = { code = 23, verified = true }
+X13 = { code = 24, verified = true }
+X14 = { code = 25, verified = true }
+X15 = { code = 26, verified = true }
+X16 = { code = 27, verified = true }
+X17 = { code = 28, verified = true }
+X18 = { code = 29, verified = true }
+X19 = { code = 30, verified = true }
+X20 = { code = 31, verified = true }
+V1 = { code = 120, verified = true }
+V2 = { code = 121, verified = true }
+V3 = { code = 122, verified = true }
+V4 = { code = 123, verified = true }
+V5 = { code = 124, verified = true }
+V6 = { code = 125, verified = true }
+V7 = { code = 126, verified = true }
+V8 = { code = 127, verified = true }
+V9 = { code = 128, verified = true }
+V10 = { code = 129, verified = true }
 
 [reconnect]
 initial_delay = 1.0
@@ -112,127 +176,129 @@ name_contains = "ASL MK2"
 profile = "asl-mk2-e4b3"
 
 [profiles.cherry-g86.keys]
-KEY_ESC = "ch_pg_plus"
-KEY_GRAVE = "ch_pg_minus"
+# Physische Cherry-POS-Tasten -> Steuerungsname. Quelle: aktuelle CCF-Belegung
+# (singlekeys, eindeutige Linux-Codes); links nach rechts, Reihe fuer Reihe.
+KEY_A = "ch_pg_plus"
+KEY_B = "ch_pg_minus"
 KEY_PAGEUP = "fd_pg_plus"
 KEY_PAGEDOWN = "fd_pg_minus"
-KEY_HOME = "bt_pg_plus"
-KEY_DELETE = "bt_pg_minus"
-KEY_F1 = "pause_big"
-KEY_F2 = "v1"
-KEY_F3 = "v7"
-KEY_F4 = "u1"
-KEY_F5 = "target"
-KEY_F6 = "off"
-KEY_F7 = "temp"
-KEY_F8 = "top"
-KEY_F9 = "on"
-KEY_F10 = "view"
-KEY_F11 = "page"
-KEY_F12 = "macro"
-KEY_SYSRQ = "preset"
-KEY_SCROLLLOCK = "tools"
-KEY_PAUSE = "setup"
-KEY_KPSLASH = "backup"
-KEY_Q = "v2"
-KEY_W = "v8"
-KEY_E = "u2"
-KEY_INSERT = "short_cuts"
-KEY_EQUAL = "select"
-KEY_BACKSLASH = "prev_transport"
-KEY_SLASH = "learn"
-KEY_KP4 = "next_transport"
-KEY_J = "effect"
-KEY_K = "sequ"
-KEY_F15 = "cue"
-KEY_X = "exec"
-KEY_N = "del"
-KEY_B = "blind"
-KEY_KATAKANAHIRAGANA = "help"
-KEY_D = "go_minus_big"
-KEY_M = "v3"
-KEY_O = "v9"
-KEY_P = "u3"
-KEY_KPEQUAL = "fix"
-KEY_COMMA = "go_minus"
-KEY_KP3 = "pause"
-KEY_KP8 = "go_plus"
-KEY_102ND = "goto"
-KEY_C = "channel"
-KEY_F = "fixture"
-KEY_G = "group"
-KEY_F22 = "copy"
-KEY_HELP = "freeze"
-KEY_KPCOMMA = "prvw"
-KEY_V = "v4"
-KEY_MINUS = "v10"
-KEY_RIGHTBRACE = "u4"
-KEY_APOSTROPHE = "screen6"
-KEY_KP0 = "screen5"
-KEY_KPDOT = "time"
-KEY_F14 = "esc"
+KEY_C = "bt_pg_plus"
+KEY_D = "bt_pg_minus"
+KEY_E = "pause_big"
+KEY_F = "v1"
+KEY_G = "v7"
+KEY_H = "u1"
+KEY_I = "target"
+KEY_J = "off"
+KEY_K = "temp"
+KEY_L = "top"
+KEY_M = "on"
+KEY_N = "view"
+KEY_O = "page"
+KEY_P = "macro"
+KEY_Q = "preset"
+KEY_R = "tools"
+KEY_S = "setup"
+KEY_T = "backup"
+KEY_U = "v2"
+KEY_V = "v8"
+KEY_W = "u2"
+KEY_X = "short_cuts"
+KEY_Y = "select"
+KEY_Z = "prev_transport"
+KEY_F1 = "learn"
+KEY_F2 = "next_transport"
+KEY_F3 = "effect"
+KEY_F4 = "sequ"
+KEY_F5 = "cue"
+KEY_F6 = "exec"
+KEY_F7 = "del"
+KEY_F8 = "blind"
+KEY_F9 = "help"
+KEY_F10 = "go_minus_big"
+KEY_F11 = "v3"
+KEY_F12 = "v9"
+KEY_INSERT = "u3"
+KEY_HOME = "fix"
+KEY_END = "go_minus"
+KEY_KPSLASH = "pause"
+KEY_KPASTERISK = "go_plus"
+KEY_KPENTER = "goto"
+KEY_KP1 = "channel"
+KEY_KP2 = "fixture"
+KEY_KP3 = "group"
+KEY_KP4 = "copy"
+KEY_KP5 = "freeze"
+KEY_KP6 = "prvw"
+KEY_KP7 = "v4"
+KEY_KP8 = "v10"
+KEY_KP9 = "u4"
+KEY_KP0 = "screen6"
+KEY_KPDOT = "screen5"
+KEY_F13 = "time"
+KEY_ESC = "esc"
 KEY_7 = "num_7"
 KEY_8 = "num_8"
 KEY_9 = "num_9"
 KEY_KPPLUS = "plus"
-KEY_OPEN = "move"
-KEY_STOP = "assign"
-KEY_PASTE = "align"
-KEY_SPACE = "go_plus_big"
-KEY_LEFTBRACE = "v5"
-KEY_SEMICOLON = "user1"
-KEY_KP2 = "user2"
-KEY_KP6 = "screen4"
-KEY_KP7 = "screen3"
-KEY_F13 = "screen2"
-KEY_F17 = "edit"
+KEY_F14 = "move"
+KEY_F15 = "assign"
+KEY_F16 = "align"
+KEY_F17 = "go_plus_big"
+KEY_F18 = "v5"
+KEY_F19 = "user1"
+KEY_F20 = "user2"
+KEY_F21 = "screen4"
+KEY_F22 = "screen3"
+KEY_F23 = "screen2"
+KEY_F24 = "edit"
 KEY_BACKSPACE = "oops"
 KEY_4 = "num_4"
 KEY_5 = "num_5"
 KEY_6 = "num_6"
-KEY_AGAIN = "thru"
-KEY_UNDO = "full"
-KEY_CUT = "hight"
-KEY_COPY = "solo"
-KEY_KP1 = "v6"
-KEY_L = "list"
-KEY_F20 = "screen1"
-KEY_U = "update"
-KEY_F24 = "clear"
+KEY_OPEN = "thru"
+KEY_HELP = "full"
+KEY_PROPS = "hight"
+KEY_FRONT = "solo"
+KEY_STOP = "v6"
+KEY_AGAIN = "list"
+KEY_UNDO = "screen1"
+KEY_CUT = "update"
+KEY_DELETE = "clear"
 KEY_1 = "num_1"
 KEY_2 = "num_2"
 KEY_3 = "num_3"
 KEY_KPMINUS = "minus"
 KEY_UP = "up"
-KEY_KPASTERISK = "x1"
-KEY_KPENTER = "x2"
-KEY_KP5 = "x3"
-KEY_KP9 = "x4"
-KEY_COMPOSE = "x5"
-KEY_F16 = "x6"
-KEY_F19 = "x7"
-KEY_F21 = "x8"
-KEY_F23 = "x9"
-KEY_FRONT = "x10"
-KEY_S = "store_big"
+KEY_COPY = "x1"
+KEY_PASTE = "x2"
+KEY_FIND = "x3"
+KEY_KPCOMMA = "x4"
+KEY_RO = "x5"
+KEY_KATAKANAHIRAGANA = "x6"
+KEY_YEN = "x7"
+KEY_HENKAN = "x8"
+KEY_MUHENKAN = "x9"
+KEY_KPJPCOMMA = "x10"
+KEY_HANGEUL = "store_big"
 KEY_0 = "num_0"
 KEY_DOT = "dot"
-KEY_RO = "if_key"
-KEY_A = "at"
+KEY_HANJA = "if_key"
+KEY_KATAKANA = "at"
 KEY_LEFT = "prev"
-KEY_END = "set"
+KEY_HIRAGANA = "set"
 KEY_RIGHT = "next"
-KEY_H = "x11"
-KEY_I = "x12"
-KEY_R = "x14"
-KEY_T = "x15"
-KEY_F18 = "x16"
-KEY_Y = "x17"
-KEY_Z = "x18"
-KEY_PROPS = "x19"
-KEY_TAB = "x20"
-KEY_FIND = "ma"
-KEY_YEN = "spare"
+KEY_ZENKAKUHANKAKU = "x11"
+KEY_MINUS = "x12"
+KEY_EQUAL = "x13"
+KEY_LEFTBRACE = "x14"
+KEY_RIGHTBRACE = "x15"
+KEY_BACKSLASH = "x16"
+KEY_SEMICOLON = "x17"
+KEY_APOSTROPHE = "x18"
+KEY_GRAVE = "x19"
+KEY_COMMA = "x20"
+KEY_SLASH = "ma"
 KEY_ENTER = "please_big"
 KEY_DOWN = "down"
 
@@ -273,6 +339,62 @@ direction = 1
 ma = { hardkey = "MA" }
 
 [mapping.keys]
+# Seite/Tasten ohne Web-Remote-Namen, aber mit Canbus-Code.
+ch_pg_plus = { hardkey = "CHPGPLUS" }
+ch_pg_minus = { hardkey = "CHPGMINUS" }
+fd_pg_plus = { hardkey = "FDPGPLUS" }
+fd_pg_minus = { hardkey = "FDPGMINUS" }
+bt_pg_plus = { hardkey = "BTPGPLUS" }
+bt_pg_minus = { hardkey = "BTPGMINUS" }
+v1 = { hardkey = "V1" }
+v2 = { hardkey = "V2" }
+v3 = { hardkey = "V3" }
+v4 = { hardkey = "V4" }
+v5 = { hardkey = "V5" }
+v6 = { hardkey = "V6" }
+v7 = { hardkey = "V7" }
+v8 = { hardkey = "V8" }
+v9 = { hardkey = "V9" }
+v10 = { hardkey = "V10" }
+x1 = { hardkey = "X1" }
+x2 = { hardkey = "X2" }
+x3 = { hardkey = "X3" }
+x4 = { hardkey = "X4" }
+x5 = { hardkey = "X5" }
+x6 = { hardkey = "X6" }
+x7 = { hardkey = "X7" }
+x8 = { hardkey = "X8" }
+x9 = { hardkey = "X9" }
+x10 = { hardkey = "X10" }
+x11 = { hardkey = "X11" }
+x12 = { hardkey = "X12" }
+x13 = { hardkey = "X13" }
+x14 = { hardkey = "X14" }
+x15 = { hardkey = "X15" }
+x16 = { hardkey = "X16" }
+x17 = { hardkey = "X17" }
+x18 = { hardkey = "X18" }
+x19 = { hardkey = "X19" }
+x20 = { hardkey = "X20" }
+temp = { hardkey = "TEMP" }
+top = { hardkey = "TOP" }
+view = { hardkey = "VIEW" }
+tools = { hardkey = "TOOLS" }
+setup = { hardkey = "SETUP" }
+backup = { hardkey = "BACKUP" }
+learn = { hardkey = "LEARN" }
+effect = { hardkey = "EFFECT" }
+blind = { hardkey = "BLIND" }
+help = { hardkey = "HELP" }
+channel = { hardkey = "CHANNEL" }
+freeze = { hardkey = "FREEZE" }
+prvw = { hardkey = "PREVIEW" }
+move = { hardkey = "MOVE" }
+align = { hardkey = "ALIGN" }
+user1 = { hardkey = "USER1" }
+user2 = { hardkey = "USER2" }
+list = { hardkey = "LIST" }
+
 pause_big = { hardkey = "Pause" }
 off = { hardkey = "Off" }
 on = { hardkey = "On" }
@@ -280,17 +402,17 @@ page = { hardkey = "Page" }
 macro = { hardkey = "Macro" }
 preset = { hardkey = "Preset" }
 select = { hardkey = "Select" }
-prev_transport = { hardkey = "Prev" }
-next_transport = { hardkey = "Next" }
+prev_transport = { hardkey = "Fast Reverse" }
+next_transport = { hardkey = "Fast Forward" }
 sequ = { hardkey = "Sequ" }
 cue = { hardkey = "Cue" }
 exec = { hardkey = "Exec" }
 del = { hardkey = "Delete" }
 go_minus_big = { hardkey = "Go -" }
 fix = { hardkey = "Fix" }
-go_minus = { hardkey = "Go -" }
-pause = { hardkey = "Pause" }
-go_plus = { hardkey = "Go +" }
+go_minus = { hardkey = "Go - small" }
+pause = { hardkey = "Pause small" }
+go_plus = { hardkey = "Go + small" }
 goto = { hardkey = "Goto" }
 fixture = { hardkey = "FIXTURE" }
 group = { hardkey = "Group" }
