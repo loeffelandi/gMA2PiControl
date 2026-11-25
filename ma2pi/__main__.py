@@ -93,10 +93,10 @@ def _status_snapshot(client: Ma2Client) -> dict:
 
 
 async def _start_web(config: AppConfig, client: Ma2Client):
-    """Start the embedded UI; return the runner or ``None`` on failure."""
+    """Start the embedded UI; return ``(runner, broadcast_task)`` or ``None``."""
     from aiohttp import web as aiohttp_web
 
-    from .web import create_app
+    from .web import BUS_KEY, create_app
 
     app = create_app(config, status_provider=lambda: _status_snapshot(client))
     runner = aiohttp_web.AppRunner(app, access_log=None)
@@ -110,8 +110,19 @@ async def _start_web(config: AppConfig, client: Ma2Client):
         )
         await runner.cleanup()
         return None
+
+    bus = app[BUS_KEY]
+
+    async def broadcast() -> None:
+        """Push the runtime status once per second while clients listen."""
+        while True:
+            await asyncio.sleep(1.0)
+            if bus.subscriber_count:
+                bus.publish({"type": "status", "data": _status_snapshot(client)})
+
+    task = asyncio.create_task(broadcast(), name="ma2pi-web-status")
     LOGGER.info("Web-UI erreichbar unter http://%s:%s/", config.web.bind, config.web.port)
-    return runner
+    return runner, task
 
 
 async def run_daemon(config: AppConfig, dry_run: bool) -> int:
@@ -135,7 +146,7 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
             pass
 
     await client.start()
-    web_runner = await _start_web(config, client)
+    web_service = await _start_web(config, client)
     encoder_task = asyncio.create_task(engine.run_encoder_loop(), name="ma2pi-encoder")
     hid_task = asyncio.create_task(hid.run(queue), name="ma2pi-hid")
     midi_task = asyncio.create_task(midi.run(queue), name="ma2pi-midi")
@@ -174,7 +185,11 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
             await encoder_task
         engine.cleanup(send=client.authenticated)
         await client.shutdown()
-        if web_runner is not None:
+        if web_service is not None:
+            web_runner, web_task = web_service
+            web_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await web_task
             with contextlib.suppress(Exception):
                 await web_runner.cleanup()
         await hid.close()

@@ -15,6 +15,7 @@ from aiohttp import web
 
 from .. import __version__
 from ..config import AppConfig
+from .events import EventBus, events_handler
 
 LOGGER = logging.getLogger("ma2pi.web")
 
@@ -31,6 +32,7 @@ DEFAULT_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
 
 CONFIG_KEY: web.AppKey[AppConfig] = web.AppKey("config", AppConfig)
 DIST_KEY: web.AppKey[Path] = web.AppKey("dist_dir", Path)
+BUS_KEY: web.AppKey[EventBus] = web.AppKey("bus", EventBus)
 
 
 def _json_error(status: int, error: str, detail: str = "") -> web.Response:
@@ -88,8 +90,10 @@ def create_app(
     dist = Path(dist_dir) if dist_dir is not None else DEFAULT_DIST
 
     app = web.Application(middlewares=[no_cors, request_guard])
+    bus = EventBus()
     app[CONFIG_KEY] = config
     app[DIST_KEY] = dist
+    app[BUS_KEY] = bus
 
     async def health(_: web.Request) -> web.Response:
         return web.json_response({"status": "ok"})
@@ -108,9 +112,14 @@ def create_app(
             return web.json_response({"api": API_VERSION, "runtime": "unavailable"})
         return web.json_response(status_provider())
 
+    async def events(request: web.Request) -> web.WebSocketResponse:
+        initial = {"type": "status", "data": status_provider() if status_provider else None}
+        return await events_handler(request, bus, initial=initial)
+
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/version", version)
     app.router.add_get("/api/status", status)
+    app.router.add_get("/api/events", events)
 
     _mount_static(app, dist)
     return app

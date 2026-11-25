@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -132,6 +132,62 @@ async def test_spa_does_not_escape_dist(config, tmp_path):
         assert "top secret" not in await response.text()
     finally:
         await client.close()
+
+
+async def test_events_websocket_receives_initial_and_published(client):
+    from ma2pi.web import BUS_KEY
+
+    ws = await client.ws_connect("/api/events")
+    initial = await ws.receive_json()
+    assert initial["type"] == "status"
+
+    client.app[BUS_KEY].publish({"type": "learn", "data": {"control": "fine"}})
+    event = await ws.receive_json()
+    assert event == {"type": "learn", "data": {"control": "fine"}}
+    await ws.close()
+
+
+async def test_events_two_clients_and_reconnect(client):
+    from ma2pi.web import BUS_KEY
+
+    bus = client.app[BUS_KEY]
+    first = await client.ws_connect("/api/events")
+    second = await client.ws_connect("/api/events")
+    await first.receive_json()
+    await second.receive_json()
+    assert bus.subscriber_count == 2
+
+    bus.publish({"type": "status", "data": {"connected": False}})
+    assert (await first.receive_json())["data"] == {"connected": False}
+    assert (await second.receive_json())["data"] == {"connected": False}
+
+    await first.close()
+    for _ in range(50):
+        if bus.subscriber_count == 1:
+            break
+        await asyncio.sleep(0.01)
+    assert bus.subscriber_count == 1
+
+    bus.publish({"type": "status", "data": {"connected": True}})
+    assert (await second.receive_json())["data"] == {"connected": True}
+    await second.close()
+
+    # Reconnect after a disconnect works.
+    third = await client.ws_connect("/api/events")
+    assert (await third.receive_json())["type"] == "status"
+    await third.close()
+
+
+async def test_events_slow_client_is_dropped():
+    from ma2pi.web.events import EventBus
+
+    bus = EventBus(queue_size=1)
+    queue = bus.subscribe()
+    bus.publish({"n": 1})
+    assert bus.subscriber_count == 1
+    bus.publish({"n": 2})
+    assert bus.subscriber_count == 0
+    assert queue.get_nowait() == {"n": 1}
 
 
 def test_web_config_parsed(make_config):

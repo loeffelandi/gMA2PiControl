@@ -7,7 +7,7 @@
 
 - [x] 1.1 `aiohttp` und `tomlkit` als Laufzeitabhängigkeiten ergänzen, `ma2pi/web/` mit App-Factory, Static-File-Serving und `/api/health`/`/api/version` anlegen; Test startet den Server auf einem freien Port und ruft beide Endpunkte ab. Ergebnis: `ma2pi/web/__init__.py` mit `create_app()`, `[web]`-Sektion (`bind`, `port`, `pin_enabled`), SPA-Fallback aus `web/dist`; Server läuft im Daemon und meldet sich im Log.
 - [x] 1.2 API-Middleware für JSON-Pflicht und `X-Ma2pi-Request` bei schreibenden Aufrufen, einheitliche Fehlerantworten, Secret-Redaktion und deaktiviertes CORS implementieren; Tests prüfen 415/403, Redaktion und fehlende CORS-Header. Ergebnis: `request_guard` und `no_cors` als aiohttp-Middleware; Status-Endpunkt liefert nur Laufzeitdaten ohne Zugangsdaten.
-- [ ] 1.3 Event-Bus und WebSocket `/api/events` für Status-, Learn- und Log-Ereignisse implementieren; Test verbindet zwei Clients, sendet ein Ereignis und prüft Empfang sowie Reconnect nach Trennung.
+- [x] 1.3 Event-Bus und WebSocket `/api/events` für Status-, Learn- und Log-Ereignisse implementieren; Test verbindet zwei Clients, sendet ein Ereignis und prüft Empfang sowie Reconnect nach Trennung. Ergebnis: `ma2pi/web/events.py` mit begrenzten Queues pro Client (langsame Clients werden getrennt), Status-Broadcast einmal pro Sekunde, Live-Test gegen den Daemon erfolgreich.
 
 ## 2. Config-Store und Hot Reload
 
