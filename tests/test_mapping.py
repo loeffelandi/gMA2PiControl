@@ -31,6 +31,9 @@ class Sink:
     def toggle_fine(self, slot: int) -> None:
         self.actions.append(("fine", slot))
 
+    def screen_shortcut(self, screen: int) -> None:
+        self.actions.append(("screen", screen))
+
 
 @pytest.fixture
 def sink() -> Sink:
@@ -145,6 +148,17 @@ def test_cmd_key_preserves_semicolon_sequence(make_config, sink):
     engine.handle(key("oops", 1))
     engine.handle(key("oops", 0))
     assert sink.actions == [("command", "Clear; Store")]
+
+
+def test_screen_key_sends_shortcut_on_press_only(make_config, sink):
+    config = make_config(
+        lambda data: data["mapping"]["keys"].__setitem__("oops", {"screen": 2})
+    )
+    engine = MappingEngine(config, sink, clock=lambda: 0.0)
+    engine.handle(key("oops", 1))
+    engine.handle(key("oops", 0))
+    assert sink.actions == [("screen", 2)]
+    assert engine.held == {}
 
 
 def test_unmapped_control_is_logged_once(engine, sink, caplog):

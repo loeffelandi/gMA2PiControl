@@ -172,6 +172,43 @@ def test_screen_encoder_slot_out_of_range(make_config):
         )
 
 
+def test_screen_shortcut_key(make_config):
+    config = make_config()
+    assert config.mapping.keys["screen2"].screen == 2
+    assert config.mapping.keys["screen6"].screen == 6
+
+
+def test_screen_shortcut_out_of_range(make_config):
+    with pytest.raises(ConfigError, match="zwischen 1 und 6"):
+        make_config(
+            lambda data: data["mapping"]["keys"]["screen2"].__setitem__("screen", 7)
+        )
+
+
+def test_screen_helper_defaults(make_config):
+    config = make_config(lambda data: data.pop("screen_helper", None))
+    assert config.screen_helper.enabled is False
+    assert config.screen_helper.port == 5005
+
+
+def test_screen_helper_parsed(make_config):
+    config = make_config(
+        lambda data: data.__setitem__(
+            "screen_helper", {"enabled": True, "host": "192.168.178.72", "port": 5005}
+        )
+    )
+    assert config.screen_helper.enabled is True
+    assert config.screen_helper.host == "192.168.178.72"
+    assert config.screen_helper.port == 5005
+
+
+def test_screen_helper_port_out_of_range(make_config):
+    with pytest.raises(ConfigError, match="zwischen 1 und 65535"):
+        make_config(
+            lambda data: data.__setitem__("screen_helper", {"port": 0})
+        )
+
+
 def test_key_mapping_requires_exactly_one_kind(make_config):
     with pytest.raises(ConfigError, match="genau eines"):
         make_config(

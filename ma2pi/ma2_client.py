@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Protocol
 
 from . import frames, hardkeys
+from .screen_helper import ScreenHelper
 from .actions import (
     Action,
     Command,
@@ -315,6 +316,7 @@ class Ma2Client:
         self._page = EncoderPage()
         self._screen_mode = False
         self._led = None
+        self._screen_helper = ScreenHelper(config.screen_helper)
         self._fine: dict[int, int] = {}
         self._page_task: asyncio.Task[None] | None = None
         self._page_poll_task: asyncio.Task[None] | None = None
@@ -386,6 +388,14 @@ class Ma2Client:
     def toggle_fine(self, slot: int) -> None:
         self._submit(ToggleFine(slot))
 
+    def screen_shortcut(self, screen: int) -> None:
+        """Select an onPC screen via the PC-keyboard helper (not the WebSocket)."""
+
+        if self.dry_run:
+            LOGGER.info("dry-run: Screen-Shortcut %d", screen)
+            return
+        self._screen_helper.send(screen)
+
     def _submit(self, action: Action) -> None:
         if self._shutting_down:
             return
@@ -453,6 +463,7 @@ class Ma2Client:
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
         self._queue.clear()
+        self._screen_helper.close()
 
     # -- session loop -----------------------------------------------------
 

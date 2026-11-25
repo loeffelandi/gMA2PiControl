@@ -162,6 +162,7 @@ class KeyMapping:
     command: str | None = None
     screen_mode: bool = False
     encoder_fine: int | None = None
+    screen: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +205,15 @@ class MappingSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class ScreenHelperSettings:
+    """UDP-Helper auf dem onPC-PC, der Screen-Shortcuts als Keystrokes sendet."""
+
+    enabled: bool = False
+    host: str = "192.168.0.10"
+    port: int = 5005
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     schema_version: int
     ma2: Ma2Settings
@@ -216,6 +226,7 @@ class AppConfig:
     logging: LoggingSettings = field(default_factory=LoggingSettings)
     web: WebSettings = field(default_factory=WebSettings)
     led: LedSettings = field(default_factory=LedSettings)
+    screen_helper: ScreenHelperSettings = field(default_factory=ScreenHelperSettings)
     source_path: str = ""
 
     def profile_for_device(self, name: str) -> ProfileConfig:
@@ -542,6 +553,18 @@ def _parse_web(raw: Any) -> WebSettings:
     return WebSettings(bind=bind, port=port, pin_enabled=pin_enabled)
 
 
+def _parse_screen_helper(raw: Any) -> ScreenHelperSettings:
+    path = "screen_helper"
+    data = _table(raw, path)
+    _reject_unknown(data, {"enabled", "host", "port"}, path)
+    enabled = _bool(data.get("enabled", False), f"{path}.enabled")
+    host = _string(data.get("host", "192.168.0.10"), f"{path}.host")
+    port = _int(data.get("port", 5005), f"{path}.port")
+    if not 1 <= port <= 65535:
+        raise ConfigError(f"{path}.port", "muss zwischen 1 und 65535 liegen")
+    return ScreenHelperSettings(enabled=enabled, host=host, port=port)
+
+
 def _parse_devices(raw: Any, profiles: Mapping[str, ProfileConfig]) -> Mapping[str, DeviceConfig]:
     path = "devices"
     data = _table(raw, path)
@@ -808,19 +831,19 @@ def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSe
         item_path = f"{path}.keys.{control}"
         item = _table(entry, item_path)
         _reject_unknown(
-            item, {"hardkey", "command", "screen_mode", "encoder_fine"}, item_path
+            item, {"hardkey", "command", "screen_mode", "encoder_fine", "screen"}, item_path
         )
         if control not in controls:
             raise ConfigError(item_path, f"Control {control!r} kommt in keinem Profil vor")
         kinds = [
             name
-            for name in ("hardkey", "command", "screen_mode", "encoder_fine")
+            for name in ("hardkey", "command", "screen_mode", "encoder_fine", "screen")
             if name in item
         ]
         if len(kinds) != 1:
             raise ConfigError(
                 item_path,
-                "genau eines von hardkey, command, screen_mode oder encoder_fine angeben",
+                "genau eines von hardkey, command, screen_mode, encoder_fine oder screen angeben",
             )
         kind = kinds[0]
         if kind == "hardkey":
@@ -834,6 +857,11 @@ def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSe
             keys[control] = KeyMapping(
                 screen_mode=_bool(item["screen_mode"], f"{item_path}.screen_mode")
             )
+        elif kind == "screen":
+            screen = _int(item["screen"], f"{item_path}.screen")
+            if not 1 <= screen <= 6:
+                raise ConfigError(f"{item_path}.screen", "muss zwischen 1 und 6 liegen")
+            keys[control] = KeyMapping(screen=screen)
         else:
             slot = _int(item["encoder_fine"], f"{item_path}.encoder_fine")
             if not 1 <= slot <= 8:
@@ -980,6 +1008,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
             "encoder",
             "web",
             "led",
+            "screen_helper",
         },
         "config",
     )
@@ -999,6 +1028,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
     logging_settings = _parse_logging(data.get("logging", {}))
     web_settings = _parse_web(data.get("web", {}))
     led_settings = _parse_led(data.get("led", {}))
+    screen_helper_settings = _parse_screen_helper(data.get("screen_helper", {}))
 
     return AppConfig(
         schema_version=version,
@@ -1012,6 +1042,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
         logging=logging_settings,
         web=web_settings,
         led=led_settings,
+        screen_helper=screen_helper_settings,
         source_path=source_path,
     )
 

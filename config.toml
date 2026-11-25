@@ -14,6 +14,14 @@ hardkey_press_value = 1.0                     # value 1 = Taste gedrückt
 hardkey_release_value = 0.0                   # value 0 = Taste losgelassen
 page_refresh_interval = 1.0                   # Encoder-Seite pollen (Sekunden)
 
+# Screen-Tasten laufen über einen Keystroke-Helper auf dem onPC-PC (nicht über
+# Web Remote): Insert an -> Ctrl+Alt+F1..F6 -> Insert aus. Der Helper lauscht
+# auf UDP und sendet die Shortcuts. Siehe docs/screen-helper.ahk.
+[screen_helper]
+enabled = true
+host = "192.168.0.10"                         # IP des onPC-PCs
+port = 5005
+
 # Canbus-Keycodes für den LUA-Hardkey-Transport. Quelle: MIDIMonster maweb.c
 # (Community-Wissen, nicht offiziell dokumentiert). verified = false sendet nichts;
 # true = vom Benutzer freigegeben.
@@ -376,6 +384,12 @@ x17 = { hardkey = "X17" }
 x18 = { hardkey = "X18" }
 x19 = { hardkey = "X19" }
 x20 = { hardkey = "X20" }
+screen1 = { screen = 1 }
+screen2 = { screen = 2 }
+screen3 = { screen = 3 }
+screen4 = { screen = 4 }
+screen5 = { screen = 5 }
+screen6 = { screen = 6 }
 temp = { hardkey = "TEMP" }
 top = { hardkey = "TOP" }
 view = { hardkey = "VIEW" }

@@ -45,6 +45,7 @@ class ActionSink(Protocol):
     def encoder_attribute(self, name: str, value: float) -> None: ...
     def toggle_screen_mode(self) -> None: ...
     def toggle_fine(self, slot: int) -> None: ...
+    def screen_shortcut(self, screen: int) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +167,10 @@ class MappingEngine:
         if key.encoder_fine is not None:
             self._add_held(control, device, None, True, False)
             self.sink.toggle_fine(key.encoder_fine)
+            return
+        if key.screen is not None:
+            self._add_held(control, device, None, True, False)
+            self.sink.screen_shortcut(key.screen)
             return
         if key.hardkey is not None:
             keyname = hardkeys.resolve(key.hardkey)
