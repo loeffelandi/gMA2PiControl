@@ -14,6 +14,7 @@ import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Callable, Mapping
 
 LOGGER = logging.getLogger("ma2pi.config_store")
 
@@ -106,7 +107,9 @@ def _backup(path: Path, destination_dir: Path) -> Path | None:
     return target
 
 
-def _rewrite_password_path(config: Path, password: Path) -> bool:
+def _rewrite_password_path(
+    config: Path, password: Path, owner: str | None = None
+) -> bool:
     """Point ``ma2.password_file`` at ``password`` while keeping comments."""
     try:
         import tomlkit
@@ -121,7 +124,7 @@ def _rewrite_password_path(config: Path, password: Path) -> bool:
     if ma2 is None or "password_file" not in ma2:
         return False
     ma2["password_file"] = str(password)
-    config.write_text(tomlkit.dumps(document), encoding="utf-8")
+    _atomic_write(config, tomlkit.dumps(document), CONFIG_MODE, owner)
     return True
 
 
@@ -158,7 +161,131 @@ def migrate(
         _backup(paths.legacy_password, paths.backups)
         shutil.copy2(paths.legacy_password, paths.password)
         _apply(paths.password, PASSWORD_MODE, owner)
-        _rewrite_password_path(paths.config, paths.password)
+        _rewrite_password_path(paths.config, paths.password, owner)
 
     LOGGER.info("Konfiguration von %s nach %s migriert", paths.etc_dir, paths.state_dir)
     return True
+
+
+#: How many timestamped backups are kept; ``last-good.toml`` is separate.
+MAX_BACKUPS = 20
+LAST_GOOD = "last-good.toml"
+
+
+class ConfigWriteError(RuntimeError):
+    """A configuration could not be written safely."""
+
+
+def merge_patch(target: dict, patch: Mapping[str, Any]) -> dict:
+    """Apply an RFC 7386 JSON merge patch to ``target`` in place."""
+
+    for key, value in patch.items():
+        if value is None:
+            target.pop(key, None)
+        elif isinstance(value, dict):
+            existing = target.get(key)
+            if not isinstance(existing, dict):
+                existing = {}
+                target[key] = existing
+            merge_patch(existing, value)
+        else:
+            target[key] = value
+    return target
+
+
+def _apply_patch_to_table(table: Any, patch: Mapping[str, Any]) -> None:
+    """Apply a merge patch to a tomlkit container, preserving comments."""
+
+    import tomlkit
+
+    for key, value in patch.items():
+        if value is None:
+            if key in table:
+                del table[key]
+        elif isinstance(value, dict):
+            child = table.get(key)
+            if child is None or isinstance(child, (list, tuple)) or not hasattr(
+                child, "__setitem__"
+            ):
+                table[key] = tomlkit.table()
+                child = table[key]
+            _apply_patch_to_table(child, value)
+        else:
+            table[key] = value
+
+
+def _atomic_write(path: Path, text: str, mode: int, owner: str | None) -> None:
+    """Write ``text`` via a synced temporary file and an atomic rename."""
+
+    tmp = path.with_name(f".{path.name}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _apply(tmp, mode, owner)
+        try:
+            os.replace(tmp, path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+    # Make the rename durable as well.
+    dir_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def rotate_backups(backup_dir: Path, keep: int = MAX_BACKUPS) -> None:
+    """Keep the newest ``keep`` timestamped backups, delete the rest."""
+
+    files = sorted(backup_dir.glob("config-*.toml"))
+    if keep <= 0:
+        return
+    for old in files[:-keep]:
+        old.unlink(missing_ok=True)
+
+
+def apply_patch(
+    paths: ConfigPaths,
+    patch: Mapping[str, Any],
+    *,
+    owner: str | None = "ma2pi",
+    validate: Callable[[dict[str, Any]], Any] | None = None,
+) -> Any:
+    """Merge ``patch`` into the active config and write it atomically.
+
+    ``validate`` receives the merged plain dict and must raise on invalid
+    content; it runs *before* anything is written.  On success the previous
+    file is kept in ``backups/`` and as ``last-good.toml``.
+    """
+
+    import copy
+    import tomlkit
+
+    ensure_layout(paths, owner=owner)
+    if not paths.config.is_file():
+        raise ConfigWriteError(f"Konfiguration {paths.config} fehlt")
+
+    document = tomlkit.parse(paths.config.read_text(encoding="utf-8"))
+    candidate = merge_patch(copy.deepcopy(dict(document.unwrap())), patch)
+
+    result = validate(candidate) if validate is not None else candidate
+
+    _apply_patch_to_table(document, patch)
+    text = tomlkit.dumps(document)
+
+    _backup(paths.config, paths.backups)
+    paths.backups.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(paths.config, paths.backups / LAST_GOOD)
+    rotate_backups(paths.backups)
+
+    _atomic_write(paths.config, text, CONFIG_MODE, owner)
+    LOGGER.info("Konfiguration atomar geschrieben: %s", paths.config)
+    return result
