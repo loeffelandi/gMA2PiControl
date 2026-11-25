@@ -49,15 +49,16 @@
 
 ## 5. Encoder-Control
 
-- [x] 5.1 Encoder-Zielmapping (Wheel 1–10 oder Attribut) mit Eindeutigkeits- und Bereichsprüfung implementieren; Tests für Wheel, Attribut, Wheel 11 und doppelte ID.
+- [x] 5.1 Encoder-Zielmapping (Slot 1–8 oder festes Attribut) mit Eindeutigkeits- und Bereichsprüfung implementieren; Tests für Slot, Attribut, ungültigen Slot und doppelte ID.
 - [x] 5.2 Delta-Akkumulation, 40-ms-Flush, Idle-Flush und Null-Delta-Unterdrückung implementieren; Tests für 10 Detents in 10 ms, langsame Drehung, Cancellation und letzten Detent.
 - [x] 5.3 Beschleunigungskurven `none`/`linear`/`exponentiell` mit Fenster und Kappung implementieren; Tests prüfen 1:1 bei langsam, größeren Delta bei schnell, Vorzeichen und „nie 0“.
-- [x] 5.4 Auflösungsumschaltung Normal/Fine/Ultra mit getrennten Wheel-/Attribut-Multiplikatoren implementieren; Tests für Fine, Flush mit alter Auflösung und Ultra-Vorrang.
-- [x] 5.5 CMD-Wrapper für Attribut und Wheel implementieren (`Attribute "<Name>" At +<delta> Please`, `Feature $feature.<n> At +<delta>`); Tests prüfen genaue Kommandostrings und ein Frame pro Flush.
-- [x] 5.6 Nativen Attribut-Encoder-Frame (`requestType: "encoder"`) implementieren und per Config aktivierbar machen; Test prüft Name, Wert und Session.
-- [x] 5.7 `wheel_protocol.py` mit `NATIVE_WHEEL_CONFIRMED = False`, Konstanten und Builder anlegen; Test prüft, dass nativer Wheel-Modus ohne Capture mit klarer Meldung abbricht.
-- [ ] 5.8 Manuellen Wheel-Capture nach README durchführen, Frames analysieren, Builder/Konstanten aktualisieren und Capture als JSONL-Fixture ablegen; Test reproduziert die Frame-Struktur, ADR-0002 wird mit Ergebnis aktualisiert.
+- [x] 5.4 Auflösung per Encoder-Klick zyklisch umschalten (Normal → Fine → Ultra → Normal) und als eigenen `encoder`-Frame mit `resolution` senden; Test prüft alle drei Stufen und dass der Pending-Delta verworfen wird.
+- [x] 5.5 Nativen Attribut-Encoder-Frame (`requestType: "encoder"`, `name`, `value`) implementieren; Test prüft Name, Wert und Session. CMD-Wrapper für Encoder entfällt.
+- [x] 5.6 Attribut-Fenster aus der onPC ableiten: `presetTypes` liefert das selektierte Attribut, der 4er-Block folgt ihm; Polling jede Sekunde (`page_refresh_interval`). Tests prüfen Fensterwechsel, kurze Features und Feature-Wechsel.
+- [x] 5.7 Screen-Modus per Taste: `screen_mode` schaltet zwischen Attribut- und Screen-Encodern, `mapping.screen_encoders` liefert die Namen für Slots 1–4, der Modus steht als `screen_mode` im Status (grün/rot für die Oberfläche). Test prüft Umschalten, fehlende Konfiguration und Status.
+- [ ] 5.8 Physische LED-Ansteuerung des ASL: MIDI-LED-Protokoll per Mitschnitt ermitteln (Note/CC je Taste), Ausgabe im Daemon implementieren und den Modus grün/rot anzeigen; Test mit aufgezeichnetem Fixture.
 - [x] 5.9 Encoder-Stresstest gegen den Mock-Server: 100 Detents/s über 10 s bleiben unter dem Limit, die kumulierte Delta-Summe stimmt bis zur Obergrenze, der Puffer bleibt begrenzt.
+- [x] 5.10 Nicht mehr benötigte Wheel-Ziele und CMD-Wrapper entfernen (`wheel_protocol.py` bleibt nur als dokumentierter, ungenutzter Baustein); ADR-0002 wird mit dem verifizierten Attribut-Format aktualisiert.
 
 ## 6. Deployment
 

@@ -11,6 +11,8 @@ Proposed
 
 Ergänzt durch [14. ASL MK2 E4B3 als MIDI-Geraet hinter der Input-Schnittstelle](0014-asl-mk2-e4b3-als-midi-geraet-hinter-der-input-schnittstelle.md)
 
+Ergänzt durch [15. Attribut-Encoder folgen der onPC statt fester Wheel-Ziele](0015-attribut-encoder-folgen-der-onpc-statt-fester-wheel-ziele.md)
+
 ## Kontext und Problemstellung
 
 Die Web-Remote-API dokumentiert Login, Session, `dataRequest` und

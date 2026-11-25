@@ -2,39 +2,104 @@
 
 ## Purpose
 
-Übersetzt die vier Drehgeber des ASL MK2 E4B3 in MA2-Encoder-Wheels oder
-Attributänderungen, bündelt Detent-Deltas zu wenigen Frames, unterstützt
-Beschleunigung sowie Normal/Fine/Ultra und schützt die onPC vor zu hohen
-Frame-Raten.
+Übersetzt die vier Drehgeber des ASL MK2 E4B3 in die Attribut-Encoder der
+laufenden onPC: Sie folgen dem Attribut-Fenster, das die onPC anzeigt, bündeln
+Detent-Deltas zu wenigen nativen Encoder-Frames, unterstützen
+Normal/Fine/Ultra pro Encoder-Klick und schützen die onPC vor zu hohen
+Frame-Raten. Eine Taste schaltet zwischen Attribut- und Screen-Encodern um.
 
 ## ADDED Requirements
 
 ### Requirement: Encoder-Zielmapping
 
 Jeder physische Encoder SHALL in der Konfiguration genau ein Ziel erhalten:
-Wheel 1–4 (Main), Wheel 5–10 (Screen) oder einen Attributnamen. Ungültige
-Wheel-Nummern, doppelte Encoder-IDs oder unbekannte Ziele MUST die
-Konfigurationsvalidierung fehlschlagen lassen.
+entweder einen Attribut-Slot (`slot`, 1–8) oder einen festen Attributnamen
+(`attribute`). Beide gleichzeitig, eine ungültige Slot-Nummer oder eine doppelte
+Encoder-ID MUST die Konfigurationsvalidierung fehlschlagen lassen.
 
-#### Scenario: Encoder auf Main-Wheel
+#### Scenario: Encoder folgt dem Attribut-Fenster
 
-- **WHEN** Encoder 1 auf Wheel 1 gemappt ist
-- **THEN** werden seine Deltas als Änderungen an Wheel 1 gesendet
+- **WHEN** Encoder 1 auf Slot 1 gemappt ist
+- **THEN** sendet er Deltas für das erste Attribut, das die onPC im aktuellen Fenster zeigt
 
-#### Scenario: Encoder auf Attribut
+#### Scenario: Encoder auf festem Attribut
 
-- **WHEN** Encoder 2 auf das Attribut `Dimmer` gemappt ist
-- **THEN** werden seine Deltas als relative Dimmer-Änderung gesendet
+- **WHEN** Encoder 2 auf das Attribut `PAN` gemappt ist
+- **THEN** sendet er seine Deltas unabhängig vom angezeigten Fenster an `PAN`
 
-#### Scenario: Ungültige Wheel-Nummer
+#### Scenario: Ungültiger Slot
 
-- **WHEN** die Konfiguration Wheel 11 zuweist
-- **THEN** bricht der Start mit einer Meldung ab, die den gültigen Bereich 1–10 nennt
+- **WHEN** die Konfiguration einen Slot außerhalb von 1–8 zuweist
+- **THEN** bricht die Validierung mit einer Meldung ab, die den gültigen Bereich nennt
 
 #### Scenario: Doppelte Encoder-ID
 
 - **WHEN** zwei Einträge dieselbe Encoder-ID definieren
 - **THEN** bricht die Validierung mit Verweis auf beide Einträge ab
+
+### Requirement: Attribut-Fenster folgt der onPC
+
+Das von den Slots adressierte Attribut-Fenster SHALL aus der aktuellen Auswahl
+der onPC abgeleitet werden, nicht aus einem eigenen Bankzähler. Blättert der
+Benutzer in der onPC zum nächsten Attribut-Block, MUST der Daemon das innerhalb
+weniger Sekunden übernehmen. Slots ohne zugehöriges Attribut MUST keine Frames
+erzeugen.
+
+#### Scenario: onPC blättert weiter
+
+- **WHEN** der Benutzer in der onPC von den Attributen 1–4 auf die Attribute 5–8 wechselt
+- **THEN** senden die vier Encoder danach die Attribute 5–8
+
+#### Scenario: Weniger Attribute als Slots
+
+- **WHEN** das aktuelle Feature nur zwei Attribute hat
+- **THEN** bleiben die Slots 3 und 4 ohne Wirkung und senden keine Frames
+
+#### Scenario: Feature-Wechsel
+
+- **WHEN** der Benutzer in der onPC ein anderes Feature wählt
+- **THEN** übernehmen die Encoder das Fenster des neuen Features
+
+### Requirement: Auflösung per Encoder-Klick
+
+Ein Druck auf einen Encoder SHALL dessen Auflösung zyklisch umschalten:
+Normal (0) → Fine (1) → Ultra (2) → Normal (0). Die Auflösung MUST pro Encoder
+gespeichert und als eigener `encoder`-Frame mit `resolution` an die onPC
+gesendet werden. Sie MUST nur nachfolgende Deltas betreffen.
+
+#### Scenario: Drei Klicks
+
+- **WHEN** ein Encoder dreimal hintereinander gedrückt wird
+- **THEN** werden nacheinander `resolution` 1, 2 und 0 gesendet
+
+#### Scenario: Auflösung gilt ab dem nächsten Detent
+
+- **WHEN** die Auflösung geändert wird, während noch Deltas ausstehen
+- **THEN** wird der ausstehende Delta verworfen und erst der nächste Detent mit der neuen Auflösung gesendet
+
+### Requirement: Screen-Modus per Taste
+
+Eine konfigurierte Taste SHALL zwischen Attribut- und Screen-Encodern umschalten.
+Im Attribut-Modus folgen die Encoder dem Fenster der onPC. Im Screen-Modus
+MUST jeder Slot auf den in `mapping.screen_encoders` hinterlegten Namen zeigen.
+Fehlt die Sektion, MUST die Taste den Modus nicht wechseln und eine Warnung
+loggen. Der aktive Modus MUST im Status sichtbar sein und als LED-Zustand
+gemeldet werden: grün im Screen-Modus, rot im Attribut-Modus.
+
+#### Scenario: Umschalten mit konfigurierten Screen-Encodern
+
+- **WHEN** `mapping.screen_encoders` die Slots 1–4 belegt und die Taste gedrückt wird
+- **THEN** senden die Encoder danach die Screen-Encoder-Namen und der Status meldet `screen_mode: true`
+
+#### Scenario: Umschalten ohne Konfiguration
+
+- **WHEN** `mapping.screen_encoders` fehlt und die Taste gedrückt wird
+- **THEN** bleibt der Attribut-Modus aktiv und im Log erscheint eine Warnung
+
+#### Scenario: LED-Zustand
+
+- **WHEN** der Modus wechselt
+- **THEN** meldet der Status den neuen Modus, aus dem die Oberfläche grün (Screen) bzw. rot (Attribut) ableitet
 
 ### Requirement: Delta-Akkumulation und Flush
 
@@ -85,55 +150,27 @@ und ein von Null verschiedener Input darf nie Delta 0 erzeugen.
 - **WHEN** schnell gegen den Uhrzeigersinn gedreht wird
 - **THEN** sind alle gesendeten Deltas negativ
 
-### Requirement: Auflösungsumschaltung Normal/Fine/Ultra
+### Requirement: Nativer Encoder-Frame
 
-Modifier-Tasten SHALL die Encoder-Auflösung zwischen Normal, Fine und Ultra
-umschalten. Die Umschaltung MUST nur nachfolgende Detents betreffen; ein davor
-akkumulierter Delta MUST mit der alten Auflösung geflusht werden. Bei
-gleichzeitig gehaltenen Fine- und Ultra-Modifern MUST Ultra Vorrang haben.
+Der Encoder-Transport SHALL ausschließlich der native Web-Remote-Frame sein. Pro
+Flush MUST genau ein Frame `{"requestType": "encoder", "name": <Attribut>,
+"value": <Delta>}` entstehen. Auflösungswechsel MUST als eigener Frame ohne
+`value` gesendet werden. CMD-Wrapper für Encoder werden nicht verwendet.
 
-#### Scenario: Fine hält die Auflösung fein
+#### Scenario: Attribut-Delta
 
-- **WHEN** Fine gehalten wird und ein Detent eintrifft
-- **THEN** wird der konfigurierte Fine-Anteil (z. B. `0.1`) statt des Normalwerts gesendet
+- **WHEN** ein akkumulierter Delta für `DIM` anliegt
+- **THEN** wird genau ein Frame mit `name: "DIM"` und dem Delta als `value` gesendet
 
-#### Scenario: Umschaltung mitten in der Akkumulation
+#### Scenario: Auflösungswechsel
 
-- **WHEN** während eines offenen Akkumulationsfensters auf Fine umgeschaltet wird
-- **THEN** wird der bisherige Delta mit Normal-Auflösung geflusht und erst der nächste Detent mit Fine-Auflösung gesendet
+- **WHEN** die Auflösung für `DIM` auf Fine wechselt
+- **THEN** wird ein Frame mit `name: "DIM"` und `resolution: 1`, aber ohne `value` gesendet
 
-#### Scenario: Ultra und Fine gleichzeitig
+#### Scenario: Dry-Run
 
-- **WHEN** Fine und Ultra gleichzeitig gehalten werden
-- **THEN** gilt die Ultra-Auflösung
-
-### Requirement: Transportauswahl CMD-Wrapper oder nativ
-
-Der Encoder-Transport MUST per Konfiguration zwischen CMD-Wrapper und nativem
-Protokoll wählbar sein; Default ist der CMD-Wrapper, solange das native
-Wheel-Format nicht per Capture verifiziert ist. Im CMD-Modus SHALL pro Flush
-genau ein Befehl mit relativem Delta entstehen, im nativen Modus genau ein
-nativer Frame.
-
-#### Scenario: CMD-Wrapper für ein Attribut
-
-- **WHEN** der CMD-Modus aktiv ist und ein akkumulierter Delta für `Dimmer` anliegt
-- **THEN** wird ein `command`-Frame mit einer relativen Anweisung wie `Attribute "Dimmer" At +0.1 Please` gesendet
-
-#### Scenario: Nativer Attribut-Frame
-
-- **WHEN** der native Modus aktiv ist und ein Attribut-Ziel konfiguriert ist
-- **THEN** wird pro Flush ein nativer Encoder-Frame mit Name und Delta gesendet
-
-#### Scenario: Nativer Wheel-Modus ohne verifiziertes Format
-
-- **WHEN** der native Modus für ein Wheel-Ziel aktiviert ist, aber kein verifiziertes Wheel-Frame-Format vorliegt
-- **THEN** bricht der Start mit dem Hinweis ab, zuerst den Capture-Workflow auszuführen oder den CMD-Modus zu wählen
-
-#### Scenario: Dry-Run zeigt den gewählten Transport
-
-- **WHEN** der Daemon im Dry-Run mit CMD-Modus läuft
-- **THEN** werden die erzeugten CMD-Frames protokolliert, ohne dass eine Verbindung geöffnet wird
+- **WHEN** der Daemon im Dry-Run läuft
+- **THEN** werden die nativen Encoder-Frames protokolliert, ohne dass eine Verbindung geöffnet wird
 
 ### Requirement: Rate-Limiting und Lockup-Schutz
 
@@ -156,20 +193,3 @@ Verwerfen geloggt werden.
 
 - **WHEN** die Drehung endet und noch ein akkumulierter Delta offen ist
 - **THEN** wird dieser Delta nach dem nächsten freien Limit-Slot gesendet
-
-### Requirement: Kompatibilität mit aufgezeichnetem Wheel-Protokoll
-
-Nach einem Capture MUST der native Wheel-Modus strukturell dieselben Frames
-erzeugen wie die aufgezeichnete Referenz (gleiche Frame-Art und Felder), und ein
-Fixture der Aufzeichnung MUST in den Tests wiederverwendet werden. Ohne Capture
-MUST der CMD-Wrapper unverändert funktionieren.
-
-#### Scenario: Capture-Fixture wird reproduziert
-
-- **WHEN** ein aufgezeichneter Wheel-Frame als Fixture vorliegt und der native Modus aktiv ist
-- **THEN** erzeugt die Engine für dieselbe Eingabe einen Frame mit identischer Struktur
-
-#### Scenario: CMD-Modus bleibt unabhängig vom Capture
-
-- **WHEN** noch kein Capture vorliegt
-- **THEN** funktionieren alle Encoder im CMD-Modus ohne Fehler und ohne native Wheel-Frames

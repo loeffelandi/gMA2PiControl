@@ -10,7 +10,7 @@ OSC, Telnet or Showcockpit path to onPC, and no parameter unlock.
 > development machine and on the Pi. The ASL has been identified as a USB-MIDI
 > device, its MIDI backend is implemented, and its note/velocity layout has been
 > verified on the hardware. Remaining acceptance steps (controlled Cherry
-> capture, live Web Remote login, wheel capture, Raspberry Pi service
+> capture, live Web Remote login, ASL LED protocol, Raspberry Pi service
 > installation and hardware smoke/stress tests) are still open. See
 > [Open hardware acceptance](#open-hardware-acceptance).
 
@@ -23,7 +23,7 @@ OSC, Telnet or Showcockpit path to onPC, and no parameter unlock.
 - [Command line](#command-line)
 - [Dry-run: expected frame sequence](#dry-run-expected-frame-sequence)
 - [Identifying the devices](#identifying-the-devices)
-- [Wheel protocol capture](#wheel-protocol-capture)
+- [Encoder protocol notes](#encoder-protocol-notes)
 - [Tests](#tests)
 - [Update and rollback](#update-and-rollback)
 - [Troubleshooting](#troubleshooting)
@@ -49,8 +49,8 @@ ASL encoders ────┘         │                          (held keys,   
 * `ma2pi/ma2_client.py` — handshake, login, keepalive, reconnect, one global
   send queue with control priority, token bucket and backpressure guard.
 * `ma2pi/frames.py` — exact JSON frame builders.
-* `ma2pi/wheel_protocol.py` — native wheel builder, gated until a capture is
-  documented.
+* `ma2pi/wheel_protocol.py` — historischer Wheel-Builder; die Encoder nutzen
+  heute ausschließlich das native Attribut-Format.
 
 Releases and commands are never dropped. Encoder frames are coalesced per
 target. On a connection loss the local key state is cleared and no stale
@@ -129,7 +129,6 @@ complete example is in [`config.toml`](config.toml).
 | `password_env` | string | — | Environment variable containing the password. |
 | `keepalive_interval` | float | `5.0` | Seconds between keepalives, `0 < x < 10`. |
 | `login_timeout` | float | `10.0` | Seconds to wait for each handshake message, `> 0`. |
-| `hardkey_transport` | string | `"native"` | `native` or `lua`. `lua` is the verified fallback for onPC versions that reject native hardkey frames. |
 | `hardkey_press_value` | float | `1.0` | Press value, must be `> 0.9`. |
 | `hardkey_release_value` | float | `0.0` | Release value, must be `< 0.9`. |
 
@@ -260,8 +259,7 @@ or `encoder_fine = <slot>`, never more than one.
 | `attribute` | string | Fixed attribute name, exclusive with `slot`. |
 
 A `slot` encoder follows the window the onPC shows: when you scroll the attribute
-bank in the UI, the physical encoders move with it. `wheel`/`attribute` encoders
-are not used by the example config.
+bank in the UI, the physical encoders move with it.
 
 ### `[mapping.screen_encoders]`
 
@@ -277,21 +275,12 @@ attribute mode.
 | `window` | float | `0.10` | Rate measurement window in seconds, `> 0`. |
 | `max_multiplier` | float | `4.0` | Maximum acceleration, `>= 1`. |
 
-### `[mapping.encoder_resolution.wheel]` and `.attribute`
+### `[mapping.encoder_resolution.attribute]`
 
-Each has `normal`, `fine`, `ultra` floats `> 0`. Defaults:
-
-* wheel: `1.0`, `0.25`, `0.1`
-* attribute: `1.0`, `0.1`, `0.01`
-
-`[mapping.encoder_resolution.modifiers]` names the local modifiers (`fine`,
-`ultra`). Both must exist and be `local = true`. Ultra wins when both are held.
-
-### `[encoder]`
-
-| Key | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `transport` | string | `"cmd"` | `cmd` or `native`. Native wheel mode is rejected until a wheel capture is documented; native attribute frames are allowed. |
+`normal`, `fine`, `ultra` floats `> 0` (defaults `1.0`, `0.1`, `0.01`). Only used
+by encoders with a fixed `attribute`, because slot encoders send the resolution
+to the onPC instead of scaling the delta. `[mapping.encoder_resolution.modifiers]`
+optionally names local `fine`/`ultra` modifier controls.
 
 ## Command line
 
@@ -368,37 +357,42 @@ The supplied udev rules set both devices to group `ma2pi`. As a fallback the
 service also joins the `audio` group, because ALSA creates MIDI nodes with
 group `audio` and mode `0660`.
 
-## Wheel protocol capture
+## Encoder protocol notes
 
-The native wheel frame format is **not yet documented**. Until a capture exists,
-keep `encoder.transport = "cmd"`; the CMD wrapper
-(`Feature $feature.<n> At +<delta>`) works unchanged. To capture the native
-format:
+Die Encoder sprechen ausschließlich das native Web-Remote-Format:
 
-1. Open onPC on a machine with Chrome/Chromium/Edge and load the show.
-2. Open DevTools (`F12`) → **Network** tab, enable **Preserve log**, and filter
-   the request list with `?ma=1` (or `WS`).
-3. Reload the Web Remote page so the WebSocket connects. Select the `?ma=1`
-   entry.
-4. Open the **Messages** tab. Clear the message list.
-5. In the Web Remote UI, select a fixture and turn one encoder wheel one detent
-   forward, then one detent backward. Do not touch the keyboard.
-6. Filter the messages for `requestType` or `wheel` and locate the outgoing
-   frames. Copy each complete JSON object.
-7. Save one JSON object per line as
-   `tests/fixtures/wheel-capture.jsonl`. Keep at least one forward and one
-   backward frame, with the session value normalised or documented.
-8. Update the constants/builder in `ma2pi/wheel_protocol.py`, set
-   `NATIVE_WHEEL_CONFIRMED = True`, and add a test that reproduces the captured
-   structure from the fixture.
-9. Record the result in a successor ADR to ADR-0002 (`adr link` with “Amends” /
-   “Amended by”); do not edit the old ADR. Set `encoder.transport = "native"`
-   only after the capture test passes.
-10. Re-run `--check-config` and the full test suite.
+```json
+{"requestType": "encoder", "name": "PAN", "value": 7.18}
+{"requestType": "encoder", "name": "PAN", "resolution": 1}
+```
 
-The same procedure can capture hardkey frames if a future onPC version changes
-the native hardkey format; the LUA fallback remains available through
-`hardkey_transport = "lua"`.
+* `name` ist das Attribut, das die onPC gerade anzeigt (`DIM`, `PAN`, `TILT`,
+  `SHUTTER`, `COLORRGB1`, …).
+* `value` ist ein relatives Delta; `resolution` (0 = Normal, 1 = Fine,
+  2 = Ultra) kommt als eigener Frame ohne `value`.
+* Die vier Encoder folgen dem Attribut-Fenster der onPC. Blätterst du dort
+  weiter, wandern sie mit – ein lokaler Bankzähler existiert nicht.
+* Ein Klick auf einen Encoder zyklisiert Normal → Fine → Ultra → Normal.
+* Die Taste `screen_mode` schaltet auf die Screen-Encoder aus
+  `[mapping.screen_encoders]`; ohne diese Sektion bleibt der Attribut-Modus
+  aktiv und es wird gewarnt.
+
+### Noch offen: Screen-Encoder-Namen und ASL-LEDs
+
+Zwei Dinge sind noch nicht verifiziert und deshalb nicht fest verdrahtet:
+
+1. **Screen-Encoder-Namen.** Die Web-Remote-JS enthält keine Screen-Encoder;
+   welche `name`-Werte die onPC dafür akzeptiert, muss per Mitschnitt geklärt
+   werden (DevTools → Network → `?ma=1` → Messages, dann am Pult Screen-
+   Encoder drehen).
+2. **LED-Ansteuerung des ASL.** Derzeit liest der Daemon nur MIDI. Für grün/rot
+   am Encoder-Modus muss das LED-Protokoll (Note/CC je Taste) aufgenommen und
+   die Ausgabe ergänzt werden. Bis dahin steht der Modus als `screen_mode` im
+   Status und kann im UI angezeigt werden.
+
+Mitschnitt-Vorgehen wie oben: DevTools öffnen, `?ma=1` filtern, Messages
+leeren, die Aktion ausführen, die vollständigen JSON-Objekte kopieren und als
+Fixture ablegen. Ergebnis in einem Nachfolge-ADR zu ADR-0002/0015 festhalten.
 
 ## Tests
 
@@ -455,10 +449,9 @@ sudo groupdel ma2pi
 | `Profil … referenziert nicht unterstützte Controls` | The selected interface lacks a key/axis from the profile; choose the keyboard interface or correct the profile. |
 | Login fails | `password_file`/`password_env`, exact onPC user name, Web Remote enabled, `forceLogin`; an empty password is valid and must still be sent as the MD5 of the empty string. |
 | onPC not reachable | The daemon stays alive and reconnects with exponential backoff; check `journalctl`. |
-| Frames visible in dry-run but nothing happens | Check `hardkey_transport` (`native` vs `lua`) and that Web Remote accepts commands; inspect `journalctl` at `DEBUG`. |
+| Frames visible in dry-run but nothing happens | Check the exact `keyname` spelling (log at `DEBUG`) and that Web Remote accepts commands. |
 | Encoder direction reversed | Set `direction = -1` in the profile encoder entry. |
-| Wheel moves too far | Use the `fine`/`ultra` modifiers or lower the resolution values. |
-| Native wheel config rejected | Expected until a capture is documented; use `encoder.transport = "cmd"`. |
+| Encoder moves too far | Click the encoder to switch to Fine/Ultra, or lower `mapping.encoder_resolution.attribute`. |
 
 ## Open hardware acceptance
 
@@ -469,7 +462,7 @@ still open:
   complete the profile — task 3.8.
 * Live Web Remote login and hardkey-transport decision (`keyname` vs `lua`) —
   task 7.3 (blocked: onPC rejects the supplied credentials).
-* Native wheel capture — task 5.8.
+* ASL LED protocol capture (green/red for the screen mode) — task 5.8.
 * Pi installation, `systemd-analyze verify`, udev access test — tasks 6.1–6.5.
 * Hardware smoke, stress and reconnect acceptance — tasks 7.3–7.5.
 * `pytest` on the Pi — task 8.4.

@@ -133,27 +133,38 @@ Hardkey-Transport (ADR-0007):
 ### Encoder-Pipeline
 
 1. `hid_input` liefert signed Detent-Deltas pro Encoder.
-2. `mapping` addiert `delta × Beschleunigung × Auflösung` in `pending_units`.
-   Für Wheel-Ziele werden ganze Ticks gesendet und der Rest als Bruchteil
-   behalten; für Attribut-Ziele wird der Float-Wert gesendet.
+2. `mapping` addiert `delta × Beschleunigung` in `pending_units`; die Auflösung
+   wird nicht mehr multipliziert, sondern als eigener Frame gesetzt.
 3. Ein Flush ist fällig, wenn das Flush-Intervall abgelaufen ist und das
    Per-Encoder-Mindestintervall erreicht ist, oder wenn die Idle-Frist nach dem
    letzten Input abgelaufen ist.
 4. Beim Flush wird genau eine Aktion an `ma2_client` übergeben:
-   * CMD-Attribut: `Attribute "<Name>" At +<delta> Please`
-   * CMD-Wheel: `Feature $feature.<wheel> At +<delta>`
-   * Native Attribut: `{"requestType":"encoder","name":"<Name>","value":<delta>,…}`
-   * Native Wheel: Builder aus `wheel_protocol.py`
+   `{"requestType":"encoder","name":"<Name>","value":<delta>,…}` – nativ, ohne
+   CMD-Wrapper.
+
+**Attribut-Fenster:** `encoder_page.py` liest die `presetTypes`-Antwort der onPC
+und leitet den 4er-Block aus dem *selektierten* Attribut ab
+(`(index // 4) * 4`). Damit folgen die physischen Encoder dem Blättern in der
+onPC; ein eigener Bankzähler existiert nicht. Der Daemon pollt die Seite jede
+Sekunde (`page_refresh_interval`), weil die onPC Auswahländerungen nicht
+zuverlässig pusht.
+
+**Screen-Modus:** `screen_encoders` (Slots 1–4) enthält die Namen der
+Screen-Encoder. Die konfigurierte Taste (`screen_mode = true`) schaltet zwischen
+Attribut- und Screen-Modus um; ohne die Sektion bleibt der Attribut-Modus aktiv
+und es wird gewarnt. Der Modus steht als `screen_mode` im Status und dient der
+Oberfläche als LED-Zustand (grün = Screen, rot = Attribut). Die physische
+LED-Ansteuerung des ASL braucht noch einen Mitschnitt des MIDI-LED-Protokolls.
 
 Beschleunigung: `none` (Multiplier 1), `linear`
 (`1 + k·(rate−1)`, gekappt auf `max_multiplier`) oder `exponentiell`
 (`rate^α`, gekappt). `rate` ist die Anzahl Detents pro Beschleunigungsfenster.
-Das Vorzeichen bleibt erhalten; ein von Null verschiedener Input ergibt nie
+Das Vorzeichen bleibt erhalten; ein von null verschiedener Input ergibt nie
 einen Delta von 0.
 
-Auflösung: getrennte Multiplikatoren für Wheel und Attribut. Beim Umschalten
-wird der offene Pending-Delta zuerst mit der alten Auflösung geflusht. Bei
-gleichzeitigem Fine und Ultra gewinnt Ultra.
+Auflösung: Ein Encoder-Klick zyklisiert Normal (0) → Fine (1) → Ultra (2) →
+Normal (0) pro Encoder. Beim Wechsel wird der offene Pending-Delta verworfen,
+damit er nicht mit der neuen Auflösung gesendet wird.
 
 ### Rate-Limiter und Queue
 
@@ -420,4 +431,5 @@ Konfiguration bleibt für einen erneuten Versuch erhalten.
 | 0005 | Rate-Limiting gegen onPC-Lockup | Proposed |
 | 0006 | Konfigurationsschema in TOML | Proposed |
 | 0007 | Hardkey-Transport und Press/Release-Sicherheit | Proposed |
+| 0015 | Attribut-Encoder folgen der onPC statt fester Wheel-Ziele | Proposed |
 | 0014 | ASL MK2 E4B3 als MIDI-Gerät hinter der Input-Schnittstelle | Accepted |

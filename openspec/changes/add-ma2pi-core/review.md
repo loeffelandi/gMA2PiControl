@@ -38,15 +38,15 @@ oder eine begründete Ausnahme zu. Es ersetzt nicht die Hardware-Abnahme (Tasks
 
 | Anforderung | Nachweis / Ausnahme |
 | --- | --- |
-| Zielmapping Wheel 1–10 / Attribut, Bereich und Duplikate | `config.py`; `test_wheel_out_of_range`, `test_wheel_and_attribute_are_exclusive`, `test_duplicate_encoder_id`, `test_encoder_id_must_be_unique_across_profiles`. |
-| Akkumulation, 40-ms-Flush, Idle-Flush, Null-Delta | `flush_due`/`flush_all`; `test_wheel_accumulates_and_flushes_once`, `test_zero_delta_sends_nothing`, `test_idle_flush_sends_last_detent`, `test_min_interval_between_flushes`. |
-| Beschleunigung none/linear/exponentiell | `_acceleration_multiplier`; `test_acceleration_increases_delta_for_fast_rotation`, `test_acceleration_keeps_sign`, `test_nonzero_input_never_zero_delta`, `test_exponential_curve_accepts_german_spelling`. |
-| Normal/Fine/Ultra, Flush mit alter Auflösung, Ultra-Vorrang | `_resolution_modifier` + Flush bei lokalem Modifier-Press; `test_attribute_fine_resolution`, `test_ultra_wins_over_fine`, `test_resolution_change_flushes_old_resolution`. |
-| CMD-Wrapper exakte Strings, ein Frame pro Flush | `_dispatch`; `test_cmd_encoder_strings`. |
-| Nativer Attribut-Frame | `frames.encoder_attribute_frame`; `test_native_attribute_encoder_frame`, `test_native_attribute_only_is_allowed`. |
-| Nativer Wheel-Modus ohne Capture bricht ab | `wheel_protocol.NATIVE_WHEEL_CONFIRMED = False`; `test_native_wheel_requires_capture`, `test_native_wheel_without_capture_aborts`. |
+| Zielmapping Slot 1–8 / festes Attribut, Bereich und Duplikate | `config.py`; `test_slot_out_of_range`, `test_slot_and_attribute_are_exclusive`, `test_midi_encoder_id_is_global`. |
+| Akkumulation, 40-ms-Flush, Idle-Flush, Null-Delta | `flush_due`/`flush_all`; `test_slot_accumulates_and_flushes_once`, `test_zero_delta_sends_nothing`, `test_idle_flush_sends_last_detent`, `test_min_interval_between_flushes`. |
+| Beschleunigung none/linear/exponentiell | `_acceleration_multiplier`; `test_acceleration_increases_delta_for_fast_rotation`, `test_acceleration_keeps_sign`, `test_fixed_attribute_encoder_is_supported`, `test_exponential_curve_accepts_german_spelling`. |
+| Attribut-Fenster folgt der onPC | `EncoderPage.attributes()` leitet `(selected // 4) * 4` aus `presetTypes` ab, `page_refresh_interval` pollt jede Sekunde; `test_window_follows_selected_attribute`, `test_short_feature_stays_on_first_window`, `test_feature_change_uses_new_selection`. |
+| Auflösung per Encoder-Klick (Normal/Fine/Ultra) | `ToggleFine` + `RESOLUTION_NAMES`; `test_fine_toggle_sends_resolution_frame` prüft 1 → 2 → 0. |
+| Nativer Encoder-Frame, ein Frame pro Flush | `frames.encoder_attribute_frame`; `test_encoder_frame_uses_attribute_name`, `test_slot_encoder_uses_console_page`, `test_slot_encoder_ignored_without_page`. |
+| Screen-Modus per Taste | `screen_mode` + `mapping.screen_encoders`; `test_screen_mode_key_toggles`, `test_screen_mode_key`, `test_screen_encoders_parsed`. |
 | Rate-Limit, begrenzter Puffer, Nachlauf | `max_pending_delta` + Log; `test_pending_delta_is_capped`, `test_encoder_stress_against_mock_server` (100 Detents/s über 10 s, Summe 1000, ≤ 40 Frames/s, Queue-Tiefe ≤ 2). |
-| Capture-Reproduktion | **Ausnahme:** Capture (Task 5.8) benötigt die echte onPC-Hardware und liegt noch nicht vor; CMD-Modus funktioniert unabhängig davon. |
+| Physische LED-Ansteuerung des ASL | **Ausnahme:** Task 5.8; der Modus steht als `screen_mode` im Status, das MIDI-LED-Protokoll ist noch nicht aufgenommen. |
 
 ## `hid-input`
 

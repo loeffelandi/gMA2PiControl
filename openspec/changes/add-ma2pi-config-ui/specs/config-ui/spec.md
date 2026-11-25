@@ -111,9 +111,11 @@ Zustandsänderung wiederherstellen.
 
 Die Oberfläche SHALL den aktuellen Zustand über eine dauerhafte
 WebSocket-Verbindung anzeigen: Verbindung zur onPC, Session, erkannte Geräte,
-Rate-Limiter und die letzten Frame-Typen. Zugangsdaten und Passwort-Hashes
-MUST NOT Teil der Statusdaten sein. Die UI-Verbindung MUST sich nach einer
-Unterbrechung selbstständig wieder aufbauen.
+Rate-Limiter, die letzten Frame-Typen und den aktiven Encoder-Modus
+(Attribut oder Screen). Aus dem Encoder-Modus MUST sich ein LED-Zustand
+ableiten lassen: grün im Screen-Modus, rot im Attribut-Modus. Zugangsdaten und
+Passwort-Hashes MUST NOT Teil der Statusdaten sein. Die UI-Verbindung MUST sich
+nach einer Unterbrechung selbstständig wieder aufbauen.
 
 #### Scenario: Verbindungszustand ändert sich
 
@@ -124,6 +126,11 @@ Unterbrechung selbstständig wieder aufbauen.
 
 - **WHEN** Tasten gedrückt oder Encoder gedreht werden
 - **THEN** aktualisieren sich Frame-Zähler und die Liste der letzten Frame-Typen in Echtzeit
+
+#### Scenario: Encoder-Modus sichtbar
+
+- **WHEN** die Screen-Modus-Taste am Gerät gedrückt wird
+- **THEN** meldet der Status innerhalb einer Sekunde den neuen Modus und die Oberfläche zeigt den passenden LED-Zustand
 
 #### Scenario: UI-Verbindung bricht ab
 

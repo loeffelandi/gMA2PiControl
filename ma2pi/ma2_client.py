@@ -18,7 +18,7 @@ from collections import Counter, OrderedDict, deque
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Protocol
 
-from . import frames, wheel_protocol
+from . import frames
 from .actions import (
     Action,
     Command,
