@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from . import hardkeys
+from .led_output import LedSettings, parse_color
 
 DEFAULT_CONFIG_PATHS = (
     Path("/var/lib/ma2pi/config.toml"),
@@ -203,6 +204,7 @@ class AppConfig:
     rate_limit: RateLimitSettings = field(default_factory=RateLimitSettings)
     logging: LoggingSettings = field(default_factory=LoggingSettings)
     web: WebSettings = field(default_factory=WebSettings)
+    led: LedSettings = field(default_factory=LedSettings)
     source_path: str = ""
 
     def profile_for_device(self, name: str) -> ProfileConfig:
@@ -439,6 +441,58 @@ def _parse_logging(raw: Any) -> LoggingSettings:
     if level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
         raise ConfigError(f"{path}.level", "muss ein gültiges Log-Level sein")
     return LoggingSettings(level)
+
+
+def _parse_led(raw: Any) -> LedSettings:
+    path = "led"
+    data = _table(raw, path)
+    _reject_unknown(
+        data,
+        {
+            "enabled",
+            "device",
+            "note",
+            "attribute_color",
+            "screen_color",
+            "red_channel",
+            "green_channel",
+            "blue_channel",
+        },
+        path,
+    )
+    enabled = _bool(data.get("enabled", False), f"{path}.enabled")
+    device = data.get("device")
+    if device is not None:
+        device = _string(device, f"{path}.device")
+    note = _int(data.get("note", 9), f"{path}.note")
+    if not 1 <= note <= 127:
+        raise ConfigError(f"{path}.note", "muss zwischen 1 und 127 liegen")
+    try:
+        attribute_color = parse_color(data.get("attribute_color", "red"))
+        screen_color = parse_color(data.get("screen_color", "green"))
+    except ValueError as exc:
+        raise ConfigError(f"{path}.attribute_color", str(exc)) from exc
+
+    channels = []
+    for key, default in (("red_channel", 1), ("green_channel", 2), ("blue_channel", 3)):
+        value = _int(data.get(key, default), f"{path}.{key}")
+        if not 1 <= value <= 16:
+            raise ConfigError(f"{path}.{key}", "muss zwischen 1 und 16 liegen")
+        channels.append(value)
+    red_channel, green_channel, blue_channel = channels
+    if len(set(channels)) != 3:
+        raise ConfigError(path, "red_channel, green_channel und blue_channel müssen verschieden sein")
+
+    return LedSettings(
+        enabled=enabled,
+        device=device,
+        note=note,
+        attribute_color=attribute_color,
+        screen_color=screen_color,
+        red_channel=red_channel,
+        green_channel=green_channel,
+        blue_channel=blue_channel,
+    )
 
 
 def _parse_web(raw: Any) -> WebSettings:
@@ -847,6 +901,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
             "mapping",
             "encoder",
             "web",
+            "led",
         },
         "config",
     )
@@ -862,6 +917,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
     rate_limit = _parse_rate_limit(data.get("rate_limit", {}))
     logging_settings = _parse_logging(data.get("logging", {}))
     web_settings = _parse_web(data.get("web", {}))
+    led_settings = _parse_led(data.get("led", {}))
 
     return AppConfig(
         schema_version=version,
@@ -873,6 +929,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
         rate_limit=rate_limit,
         logging=logging_settings,
         web=web_settings,
+        led=led_settings,
         source_path=source_path,
     )
 

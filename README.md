@@ -161,6 +161,32 @@ The password and its MD5 hash are never logged.
 | --- | --- | --- | --- |
 | `level` | string | `"INFO"` | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`. |
 
+### `[web]`
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `bind` | string | `"0.0.0.0"` | Listen address; changes need a service restart. |
+| `port` | int | `8080` | HTTP/WebSocket port, 1–65535. |
+| `pin_enabled` | bool | `false` | Reserved; `true` is rejected in this version. |
+
+### `[led]`
+
+RGB feedback for the ASL mode indicator (protocol captured from ShowCockpit).
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `enabled` | bool | `false` | Turn LED output on. |
+| `device` | string | auto | Raw MIDI node; default is the configured `midi` device. |
+| `note` | int | `9` | LED note of the button (9–11 = buttons 1–3). |
+| `attribute_color` | name or `[r,g,b]` | `"red"` | Colour in attribute mode. |
+| `screen_color` | name or `[r,g,b]` | `"green"` | Colour in screen mode. |
+| `red_channel`/`green_channel`/`blue_channel` | int | `1`/`2`/`3` | MIDI channels per colour component, must differ. |
+
+The device needs the enable frame `9F 7F 7F` (note 127, channel 16) before it
+accepts colours; the daemon sends it once on start and `9F 7F 7E` on shutdown.
+The port stays open, because opening and closing it per message resets the LEDs.
+Colour names: `off`, `red`, `green`, `blue`, `amber`, `yellow`, `white`.
+
 ### `[devices.<name>]`
 
 | Key | Type | Meaning |

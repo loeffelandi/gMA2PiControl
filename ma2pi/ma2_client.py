@@ -314,6 +314,7 @@ class Ma2Client:
         self._connection_lost_callbacks: list[Callable[[], None]] = []
         self._page = EncoderPage()
         self._screen_mode = False
+        self._led = None
         self._fine: dict[int, int] = {}
         self._page_task: asyncio.Task[None] | None = None
         self._page_poll_task: asyncio.Task[None] | None = None
@@ -376,6 +377,11 @@ class Ma2Client:
 
     def toggle_screen_mode(self) -> None:
         self._submit(ToggleScreenMode())
+
+    def set_led(self, led) -> None:
+        """Attach an LED output; it follows the encoder mode."""
+
+        self._led = led
 
     def toggle_fine(self, slot: int) -> None:
         self._submit(ToggleFine(slot))
@@ -724,6 +730,8 @@ class Ma2Client:
                 "Encoder-Modus: %s",
                 "Screen" if self._screen_mode else "Attribut",
             )
+            if self._led is not None:
+                self._led.apply_mode(self._screen_mode)
             return
         elif isinstance(action, ToggleFine):
             name = self._page.name_for(action.slot)

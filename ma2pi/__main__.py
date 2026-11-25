@@ -14,7 +14,8 @@ from typing import Sequence
 from . import __version__
 from .config import AppConfig, ConfigError, find_config
 from .events import DeviceLost, InputEvent
-from .hid_input import HidManager, format_devices, list_devices
+from .hid_input import HidManager, device_matches, format_devices, list_devices
+from .led_output import LedOutput
 from .logging_setup import setup_logging
 from .ma2_client import Ma2Client
 from .mapping import MappingEngine
@@ -93,6 +94,44 @@ def _status_snapshot(client: Ma2Client) -> dict:
     }
 
 
+def _find_led_device(config: AppConfig) -> str | None:
+    """Return the raw MIDI node of a configured MIDI device (usually the ASL)."""
+
+    try:
+        infos = list_midi_devices()
+    except Exception as exc:  # pragma: no cover - hardware dependent
+        LOGGER.warning("MIDI-Enumeration für LED fehlgeschlagen: %s", exc)
+        return None
+    for device in config.devices.values():
+        if device.backend != "midi":
+            continue
+        for info in infos:
+            if device_matches(device, info):
+                return info.path
+    return infos[0].path if infos else None
+
+
+def _start_led(config: AppConfig) -> LedOutput | None:
+    """Open the LED output; a failure must never stop the daemon."""
+
+    if not config.led.enabled:
+        return None
+    path = config.led.device or _find_led_device(config)
+    if path is None:
+        LOGGER.warning("LED-Ausgabe aktiviert, aber kein MIDI-Gerät gefunden")
+        return None
+    led = LedOutput(path, config.led)
+    try:
+        led.open()
+    except OSError as exc:
+        LOGGER.error("LED-Ausgabe konnte %s nicht öffnen: %s", path, exc)
+        return None
+    led.enable()
+    led.apply_mode(False)
+    LOGGER.info("LED-Ausgabe aktiv auf %s (Note %d)", path, config.led.note)
+    return led
+
+
 async def _start_web(config: AppConfig, client: Ma2Client):
     """Start the embedded UI; return ``(runner, broadcast_task)`` or ``None``."""
     from aiohttp import web as aiohttp_web
@@ -147,6 +186,8 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
             pass
 
     await client.start()
+    led = _start_led(config)
+    client.set_led(led)
     web_service = await _start_web(config, client)
     encoder_task = asyncio.create_task(engine.run_encoder_loop(), name="ma2pi-encoder")
     hid_task = asyncio.create_task(hid.run(queue), name="ma2pi-hid")
@@ -186,6 +227,8 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
             await encoder_task
         engine.cleanup(send=client.authenticated)
         await client.shutdown()
+        if led is not None:
+            led.close()
         if web_service is not None:
             web_runner, web_task = web_service
             web_task.cancel()
