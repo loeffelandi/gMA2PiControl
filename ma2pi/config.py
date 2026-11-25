@@ -89,6 +89,20 @@ class LoggingSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class WebSettings:
+    """Settings for the embedded configuration UI.
+
+    ``bind``/``port`` changes only take effect after a service restart; the
+    running server keeps its listener.  ``pin_enabled`` is a prepared extension
+    point and stays disabled in v1.
+    """
+
+    bind: str = "0.0.0.0"
+    port: int = 8080
+    pin_enabled: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class DeviceConfig:
     name: str
     profile: str
@@ -186,6 +200,7 @@ class AppConfig:
     reconnect: ReconnectSettings = field(default_factory=ReconnectSettings)
     rate_limit: RateLimitSettings = field(default_factory=RateLimitSettings)
     logging: LoggingSettings = field(default_factory=LoggingSettings)
+    web: WebSettings = field(default_factory=WebSettings)
     source_path: str = ""
 
     def profile_for_device(self, name: str) -> ProfileConfig:
@@ -422,6 +437,23 @@ def _parse_logging(raw: Any) -> LoggingSettings:
     if level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
         raise ConfigError(f"{path}.level", "muss ein gültiges Log-Level sein")
     return LoggingSettings(level)
+
+
+def _parse_web(raw: Any) -> WebSettings:
+    path = "web"
+    data = _table(raw, path)
+    _reject_unknown(data, {"bind", "port", "pin_enabled"}, path)
+    bind = _string(data.get("bind", "0.0.0.0"), f"{path}.bind")
+    port = _int(data.get("port", 8080), f"{path}.port")
+    if not 1 <= port <= 65535:
+        raise ConfigError(f"{path}.port", "muss zwischen 1 und 65535 liegen")
+    pin_enabled = _bool(data.get("pin_enabled", False), f"{path}.pin_enabled")
+    if pin_enabled:
+        raise ConfigError(
+            f"{path}.pin_enabled",
+            "PIN-Sperre ist in dieser Version noch nicht implementiert",
+        )
+    return WebSettings(bind=bind, port=port, pin_enabled=pin_enabled)
 
 
 def _parse_devices(raw: Any, profiles: Mapping[str, ProfileConfig]) -> Mapping[str, DeviceConfig]:
@@ -793,6 +825,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
             "profiles",
             "mapping",
             "encoder",
+            "web",
         },
         "config",
     )
@@ -807,6 +840,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
     reconnect = _parse_reconnect(data.get("reconnect", {}))
     rate_limit = _parse_rate_limit(data.get("rate_limit", {}))
     logging_settings = _parse_logging(data.get("logging", {}))
+    web_settings = _parse_web(data.get("web", {}))
 
     return AppConfig(
         schema_version=version,
@@ -817,6 +851,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
         reconnect=reconnect,
         rate_limit=rate_limit,
         logging=logging_settings,
+        web=web_settings,
         source_path=source_path,
     )
 

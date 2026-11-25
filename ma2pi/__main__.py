@@ -77,6 +77,43 @@ async def _process_input(
             engine.handle(item)
 
 
+def _status_snapshot(client: Ma2Client) -> dict:
+    """Runtime status for the UI; never contains credentials."""
+    return {
+        "connected": client.connected,
+        "authenticated": client.authenticated,
+        "session": client.session,
+        "queue_depth": len(client.queue),
+        "rate": client.limiter.effective_rate,
+        "frames_sent": client.frames_sent,
+        "last_frame_types": list(client.last_frame_types)[-10:],
+        "reconnects": client.reconnects,
+        "last_error": client.last_error,
+    }
+
+
+async def _start_web(config: AppConfig, client: Ma2Client):
+    """Start the embedded UI; return the runner or ``None`` on failure."""
+    from aiohttp import web as aiohttp_web
+
+    from .web import create_app
+
+    app = create_app(config, status_provider=lambda: _status_snapshot(client))
+    runner = aiohttp_web.AppRunner(app, access_log=None)
+    await runner.setup()
+    site = aiohttp_web.TCPSite(runner, config.web.bind, config.web.port)
+    try:
+        await site.start()
+    except OSError as exc:
+        LOGGER.error(
+            "Web-UI konnte %s:%s nicht binden: %s", config.web.bind, config.web.port, exc
+        )
+        await runner.cleanup()
+        return None
+    LOGGER.info("Web-UI erreichbar unter http://%s:%s/", config.web.bind, config.web.port)
+    return runner
+
+
 async def run_daemon(config: AppConfig, dry_run: bool) -> int:
     level = config.logging.level
     setup_logging(level)
@@ -98,6 +135,7 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
             pass
 
     await client.start()
+    web_runner = await _start_web(config, client)
     encoder_task = asyncio.create_task(engine.run_encoder_loop(), name="ma2pi-encoder")
     hid_task = asyncio.create_task(hid.run(queue), name="ma2pi-hid")
     midi_task = asyncio.create_task(midi.run(queue), name="ma2pi-midi")
@@ -136,6 +174,9 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
             await encoder_task
         engine.cleanup(send=client.authenticated)
         await client.shutdown()
+        if web_runner is not None:
+            with contextlib.suppress(Exception):
+                await web_runner.cleanup()
         await hid.close()
         await midi.close()
     if failure:

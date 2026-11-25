@@ -340,6 +340,10 @@ class Ma2Client:
         return self._queue
 
     @property
+    def limiter(self) -> TokenBucket:
+        return self._limiter
+
+    @property
     def connected(self) -> bool:
         return self._authenticated
 

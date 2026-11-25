@@ -10,6 +10,8 @@ requires-python = ">=3.13"
 dependencies = [
     "websockets>=13",
     "evdev>=1.7; sys_platform == 'linux'",
+    "aiohttp>=3.10",
+    "tomlkit>=0.13",
 ]
 
 [project.optional-dependencies]
@@ -22,7 +24,7 @@ dev = [
 ma2pi = "ma2pi.__main__:main"
 
 [tool.setuptools]
-packages = ["ma2pi"]
+packages = ["ma2pi", "ma2pi.web"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

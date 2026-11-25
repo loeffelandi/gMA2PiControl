@@ -30,6 +30,11 @@ max_pending_delta = 1000
 [logging]
 level = "INFO"
 
+[web]
+bind = "0.0.0.0"            # LAN-Zugriff; Änderung erst nach Dienstneustart
+port = 8080
+pin_enabled = false         # PIN-Sperre ist in v1 noch nicht implementiert
+
 [devices.cherry]
 vendor_id = 0x046a
 product_id = 0x0000        # 0 = beliebiges Produkt dieser Vendor-ID
