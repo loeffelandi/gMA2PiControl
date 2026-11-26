@@ -70,10 +70,19 @@
     return text.toLowerCase().replace(/[\s_+]/g, '');
   }
 
+  function isConfirmed(value: string, label: string): boolean {
+    if (normalize(value) === normalize(label)) return true;
+    const prefix = 'Modifier ';
+    return (
+      value.startsWith(prefix) &&
+      normalize(value.slice(prefix.length)) === normalize(label)
+    );
+  }
+
   function showAssignment(cell: LayoutCell): string | null {
     if (cell.control === null) return null;
     const value = assignments[cell.control] ?? 'frei';
-    if (value !== 'frei' && normalize(value) === normalize(cell.label)) {
+    if (value !== 'frei' && isConfirmed(value, cell.label)) {
       return '✓';
     }
     return value;

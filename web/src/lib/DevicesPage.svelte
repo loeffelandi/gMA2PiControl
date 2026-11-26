@@ -625,7 +625,7 @@
 <style>
   .layout {
     display: grid;
-    grid-template-columns: 11rem minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 1rem;
   }
 
@@ -634,7 +634,8 @@
   }
 
   .device-list {
-    display: grid;
+    display: flex;
+    flex-wrap: wrap;
     gap: 0.4rem;
     padding: 0;
     list-style: none;
@@ -642,7 +643,8 @@
 
   .device-list button {
     display: grid;
-    width: 100%;
+    width: auto;
+    min-width: 11rem;
     gap: 0.15rem;
     padding: 0.5rem;
     text-align: left;

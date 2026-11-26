@@ -80,4 +80,40 @@ describe('DeviceSurface confirmed assignments', () => {
     });
     expect(screen.getByText('✓')).toBeTruthy();
   });
+
+  it('shows a checkmark for a modifier whose hardkey matches the label', () => {
+    const maLayout: DeviceLayout = {
+      ...layout,
+      columns: 1,
+      rows: [
+        {
+          cells: [
+            { label: 'MA', control: 'ma', col_span: 1, row_span: 1, color: 'white', row: 1, col: 1 },
+          ],
+        },
+      ],
+    };
+    render(DeviceSurface, {
+      props: { layout: maLayout, assignments: { ma: 'Modifier MA' } },
+    });
+    expect(screen.getByText('✓')).toBeTruthy();
+  });
+
+  it('keeps the text for a modifier with a different hardkey', () => {
+    const maLayout: DeviceLayout = {
+      ...layout,
+      columns: 1,
+      rows: [
+        {
+          cells: [
+            { label: 'MA', control: 'ma', col_span: 1, row_span: 1, color: 'white', row: 1, col: 1 },
+          ],
+        },
+      ],
+    };
+    render(DeviceSurface, {
+      props: { layout: maLayout, assignments: { ma: 'Modifier FINE' } },
+    });
+    expect(screen.getByText('Modifier FINE')).toBeTruthy();
+  });
 });
