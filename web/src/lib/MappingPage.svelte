@@ -40,6 +40,9 @@
   let { api, learnStore }: { api: ApiClient; learnStore?: StatusStore } = $props();
 
   let devices = $state<DeviceEntry[]>([]);
+  let detectedDevices = $derived(
+    devices.filter((device) => device.detected !== null),
+  );
   let keyRows = $state<KeyRow[]>([]);
   let encoderRows = $state<EncoderRow[]>([]);
   let modifierRows = $state<ModifierRow[]>([]);
@@ -456,7 +459,7 @@
   {:else}
     <h2>Erkannte Geräte</h2>
     <ul class="devices">
-      {#each devices as device (device.name)}
+      {#each detectedDevices as device (device.name)}
         <li>
           <strong>{device.name}</strong>
           <span class="muted">
