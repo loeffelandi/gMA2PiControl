@@ -96,6 +96,8 @@ class MappingEngine:
         self._press_targets: dict[str, tuple[int, bool]] = {}
         self.modifier_hook: Callable[[str, bool], None] | None = None
         self._encoders: dict[int, EncoderState] = {}
+        self._bank_encoder_states: dict[tuple[str, int, int], EncoderState] = {}
+        self._encoder_profiles: dict[int, EncoderProfile | MidiEncoderProfile] = {}
         self._stop = asyncio.Event()
         self._frozen = False
         self._build_encoders()
@@ -107,11 +109,36 @@ class MappingEngine:
                 profiles.setdefault(encoder.id, encoder)
             for encoder in profile.midi_encoders:
                 profiles.setdefault(encoder.id, encoder)
+        self._encoder_profiles = profiles
         for mapping in self.config.mapping.encoders:
             profile = profiles.get(mapping.id)
             if profile is None:  # already validated, defensive
                 continue
             self._encoders[mapping.id] = EncoderState(profile=profile, mapping=mapping)
+
+    def _all_states(self):
+        yield from self._encoders.values()
+        yield from self._bank_encoder_states.values()
+
+    def _bank_layer(self, device: str, bank: int):
+        settings = self.config.mapping.device_banks.get(device)
+        if settings is None:
+            return None
+        return settings.banks.get(bank)
+
+    def _key_mapping(self, control: str, device: str, bank: int) -> KeyMapping | None:
+        layer = self._bank_layer(device, bank)
+        if layer is not None and control in layer.keys:
+            return layer.keys[control]
+        return self.config.mapping.keys.get(control)
+
+    def _bank_encoder_override(
+        self, device: str, bank: int, encoder_id: int
+    ) -> EncoderMapping | None:
+        layer = self._bank_layer(device, bank)
+        if layer is None:
+            return None
+        return layer.encoders.get(encoder_id)
 
     # -- input ------------------------------------------------------------
 
@@ -124,22 +151,24 @@ class MappingEngine:
         moment = self._clock() if now is None else now
         if event.kind == "key":
             if event.value == 1:
-                self._press(event.control, event.device, moment)
+                self._press(event.control, event.device, moment, event.bank)
             elif event.value == 0:
                 self._release(event.control, event.device, moment)
             else:
                 LOGGER.debug("ignoriere Key-Wert %s für %s", event.value, event.control)
         elif event.kind == "encoder":
-            self._feed_encoder(event.control, event.value, moment)
+            self._feed_encoder(
+                event.control, event.value, moment, event.device, event.bank
+            )
         else:
             LOGGER.debug("ignoriere unbekannten Event-Typ %s", event.kind)
 
-    def _press(self, control: str, device: str, now: float) -> None:
+    def _press(self, control: str, device: str, now: float, bank: int = 1) -> None:
         if control in self._held:
             LOGGER.debug("Doppel-Press ignoriert: %s", control)
             return
         modifier = self.config.mapping.modifiers.get(control)
-        key = self.config.mapping.keys.get(control)
+        key = self._key_mapping(control, device, bank)
 
         if modifier is None and key is None:
             LOGGER.debug("unmapptes Control ignoriert: %s", control)
@@ -211,6 +240,16 @@ class MappingEngine:
         held = self._held.get(control)
         if held is None:
             LOGGER.debug("Release ohne Press ignoriert: %s", control)
+            return
+        if device and held.device and held.device != device:
+            # The control name is shared between devices; a release from a
+            # different device must not end the hold of the one that pressed.
+            LOGGER.debug(
+                "Release von %s ignoriert, %s wird von %s gehalten",
+                device,
+                control,
+                held.device,
+            )
             return
         if held.is_local_modifier:
             self.flush_all(now)
@@ -305,7 +344,7 @@ class MappingEngine:
         self.clear_encoder_pending()
 
     def clear_encoder_pending(self) -> None:
-        for state in self._encoders.values():
+        for state in self._all_states():
             state.pending = 0.0
             state.first_feed = None
             state.last_feed = None
@@ -336,6 +375,7 @@ class MappingEngine:
 
         self.config = config
         self._encoders.clear()
+        self._bank_encoder_states.clear()
         self._build_encoders()
 
     # -- resolution -------------------------------------------------------
@@ -359,7 +399,9 @@ class MappingEngine:
         ma = hardkeys.resolve(SCREEN_ENCODER_MODIFIER)
         return any(held.keyname == ma for held in self._held.values())
 
-    def _feed_encoder(self, control: str, delta: int, now: float) -> None:
+    def _feed_encoder(
+        self, control: str, delta: int, now: float, device: str = "", bank: int = 1
+    ) -> None:
         if not control.startswith(ENCODER_PREFIX):
             LOGGER.debug("unbekanntes Encoder-Control %s", control)
             return
@@ -369,6 +411,17 @@ class MappingEngine:
             LOGGER.debug("ungültiges Encoder-Control %s", control)
             return
         state = self._encoders.get(encoder_id)
+        override = self._bank_encoder_override(device, bank, encoder_id)
+        if override is not None:
+            key = (device, bank, encoder_id)
+            state = self._bank_encoder_states.get(key)
+            if state is None:
+                profile = self._encoder_profiles.get(encoder_id)
+                if profile is None:
+                    LOGGER.debug("Encoder %s ist nicht gemappt", encoder_id)
+                    return
+                state = EncoderState(profile=profile, mapping=override)
+                self._bank_encoder_states[key] = state
         if state is None:
             LOGGER.debug("Encoder %s ist nicht gemappt", encoder_id)
             return
@@ -428,7 +481,7 @@ class MappingEngine:
 
     @property
     def active_encoders(self) -> int:
-        return sum(1 for state in self._encoders.values() if state.pending != 0)
+        return sum(1 for state in self._all_states() if state.pending != 0)
 
     def flush_due(self, now: float) -> int:
         """Flush every encoder whose interval or idle deadline is due."""
@@ -442,8 +495,7 @@ class MappingEngine:
         idle_interval = rate.encoder_idle_base + rate.encoder_idle_penalty * active
         flush_interval = rate.encoder_idle_base
 
-        for encoder_id in sorted(self._encoders):
-            state = self._encoders[encoder_id]
+        for state in self._all_states():
             if state.pending == 0 or state.last_feed is None:
                 continue
             since_last = now - state.last_send
@@ -467,8 +519,7 @@ class MappingEngine:
         if self._frozen:
             return 0
         sent = 0
-        for encoder_id in sorted(self._encoders):
-            state = self._encoders[encoder_id]
+        for state in self._all_states():
             if state.pending != 0 and self._flush_state(state, now):
                 sent += 1
         return sent

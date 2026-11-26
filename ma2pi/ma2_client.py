@@ -27,6 +27,9 @@ from .actions import (
     EncoderAttribute,
     ToggleScreenMode,
     EncoderSlot,
+    PlaybackButton,
+    PlaybackFader,
+    PlaybacksRequest,
     Press,
     Release,
     EncoderPress,
@@ -286,11 +289,12 @@ async def check_connection(
 
 
 class SendQueue:
-    """One queue, two priorities; encoder actions coalesce per target."""
+    """One queue, three priorities; encoders and faders coalesce per target."""
 
     def __init__(self) -> None:
         self._control: deque[Action] = deque()
         self._encoder: OrderedDict[tuple[str, str | int], EncoderAction] = OrderedDict()
+        self._playback: OrderedDict[tuple[int, int], PlaybackFader] = OrderedDict()
         self._ready = asyncio.Event()
         self.closed = False
 
@@ -309,6 +313,9 @@ class SendQueue:
                     self._encoder.pop(key, None)
                 else:
                     self._encoder[key] = merged
+        elif isinstance(action, PlaybackFader):
+            # Absolute values: only the latest value per executor matters.
+            self._playback[(action.page, action.executor)] = action
         else:
             self._control.append(action)
         self._ready.set()
@@ -320,12 +327,16 @@ class SendQueue:
             if self._encoder:
                 _, action = self._encoder.popitem(last=False)
                 return action
+            if self._playback:
+                _, action = self._playback.popitem(last=False)
+                return action
             self._ready.clear()
             await self._ready.wait()
 
     def clear(self) -> None:
         self._control.clear()
         self._encoder.clear()
+        self._playback.clear()
 
     @property
     def control_depth(self) -> int:
@@ -333,7 +344,7 @@ class SendQueue:
 
     @property
     def total_depth(self) -> int:
-        return len(self._control) + len(self._encoder)
+        return len(self._control) + len(self._encoder) + len(self._playback)
 
     def __len__(self) -> int:
         return self.total_depth
@@ -451,6 +462,9 @@ class Ma2Client:
         self._keepalive_task: asyncio.Task[None] | None = None
         self._backpressure_task: asyncio.Task[None] | None = None
         self._connection_lost_callbacks: list[Callable[[], None]] = []
+        self._playback_responses: asyncio.Queue[dict[str, Any]] = asyncio.Queue(
+            maxsize=16
+        )
         self._page = EncoderPage()
         self._page_task: asyncio.Task[None] | None = None
         self._screen_mode = False
@@ -496,6 +510,12 @@ class Ma2Client:
     def add_connection_lost_callback(self, callback: Callable[[], None]) -> None:
         self._connection_lost_callbacks.append(callback)
 
+    @property
+    def playback_responses(self) -> "asyncio.Queue[dict[str, Any]]":
+        """Playback snapshots pushed by the console, in arrival order."""
+
+        return self._playback_responses
+
     # -- action entry points ---------------------------------------------
 
     def press(self, keyname: str, hold: bool = False) -> None:
@@ -526,6 +546,28 @@ class Ma2Client:
 
     def encoder_resolution(self, slot: int, screen: bool = False) -> None:
         self._submit(EncoderResolution(slot, screen=screen))
+
+    def playback_button(
+        self, page: int, executor: int, button: int, pressed: bool
+    ) -> None:
+        self._submit(
+            PlaybackButton(page, executor, button, pressed, released=not pressed)
+        )
+
+    def playback_fader(self, page: int, executor: int, value: float) -> None:
+        self._submit(PlaybackFader(page, executor, value))
+
+    def request_playbacks(
+        self,
+        page: int | str,
+        start: int,
+        count: int,
+        items_type: int,
+        view: int,
+    ) -> None:
+        """Ask for the executor states of one page block."""
+
+        self._submit(PlaybacksRequest(page, start, count, items_type, view))
 
     def screen_shortcut(self, screen: int) -> None:
         """Select an onPC screen via the PC-keyboard helper (not the WebSocket)."""
@@ -698,8 +740,23 @@ class Ma2Client:
     async def _read_loop(self) -> None:
         while not self._shutting_down:
             message = await self._recv_json(None)
+            if message.get("responseType") == "playbacks":
+                self._deliver_playbacks(message)
+                continue
             if not self._page.update(message):
                 LOGGER.debug("rx message type=%s", frames.frame_type(message))
+
+    def _deliver_playbacks(self, message: dict[str, Any]) -> None:
+        """Hand a playback snapshot to the feedback task, dropping stale ones."""
+
+        try:
+            self._playback_responses.put_nowait(message)
+        except asyncio.QueueFull:
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self._playback_responses.get_nowait()
+            with contextlib.suppress(asyncio.QueueFull):
+                self._playback_responses.put_nowait(message)
+            LOGGER.debug("Playback-Antwort verworfen: Warteschlange voll")
 
     async def _recv_json(self, timeout: float | None) -> dict[str, Any]:
         return await _read_json(self._transport, timeout)
@@ -729,6 +786,11 @@ class Ma2Client:
             self._keepalive_task = None
         self._rest.clear()
         self._queue.clear()
+        while True:
+            try:
+                self._playback_responses.get_nowait()
+            except asyncio.QueueEmpty:
+                break
         if was_connected:
             LOGGER.warning("Session beendet: %s", reason)
             for callback in list(self._connection_lost_callbacks):
@@ -846,6 +908,34 @@ class Ma2Client:
         elif isinstance(action, Command):
             frame = frames.command_frame(action.text, session)
             kind = "command"
+        elif isinstance(action, PlaybackButton):
+            frame = frames.playbacks_user_input_button(
+                action.page,
+                action.executor,
+                action.button,
+                action.pressed,
+                action.released,
+                session,
+            )
+            kind = "playbackButton"
+        elif isinstance(action, PlaybackFader):
+            frame = frames.playbacks_user_input_fader(
+                action.page,
+                action.executor,
+                max(0.0, min(1.0, action.value)),
+                session,
+            )
+            kind = "playbackFader"
+        elif isinstance(action, PlaybacksRequest):
+            frame = frames.playbacks_request(
+                action.start,
+                action.count,
+                action.page,
+                action.items_type,
+                action.view,
+                session,
+            )
+            kind = "playbacksRequest"
         elif isinstance(action, EncoderAttribute):
             frame = frames.encoder_attribute_frame(action.name, action.value, session)
             kind = "encoderAttribute"

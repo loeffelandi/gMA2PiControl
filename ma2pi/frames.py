@@ -140,6 +140,81 @@ def preset_types_frame(kind: str, session: int) -> dict[str, Any]:
     }
 
 
+def playbacks_user_input_button(
+    page: int | str,
+    executor: int,
+    button: int,
+    pressed: bool,
+    released: bool,
+    session: int,
+) -> dict[str, Any]:
+    """Press or release an executor button.
+
+    ``page`` is a 1-based page number or ``"current"`` for the active master
+    page.  ``executor`` and ``button`` are 1-based; the Web Remote expects
+    0-based indices, and ``"current"`` is sent as ``-1``.
+    """
+
+    return {
+        "requestType": "playbacks_userInput",
+        "execIndex": executor - 1,
+        "pageIndex": _page_index(page),
+        "buttonId": button - 1,
+        "pressed": pressed,
+        "released": released,
+        "type": 0,
+        "session": session,
+    }
+
+
+def playbacks_user_input_fader(
+    page: int | str, executor: int, value: float, session: int
+) -> dict[str, Any]:
+    """Set an executor fader to an absolute value between 0.0 and 1.0."""
+
+    return {
+        "requestType": "playbacks_userInput",
+        "execIndex": executor - 1,
+        "pageIndex": _page_index(page),
+        "faderValue": value,
+        "type": 1,
+        "session": session,
+    }
+
+
+def playbacks_request(
+    start: int,
+    count: int,
+    page: int | str,
+    items_type: int,
+    view: int,
+    session: int,
+) -> dict[str, Any]:
+    """Ask for executor states of one page and one Web Remote view.
+
+    The arrays carry a single block each; ``start`` is 0-based and should be a
+    multiple of five because the console groups executors in blocks of five.
+    ``items_type``/``view`` are 2 for executors below 100 and 3 for button or
+    floating executors.  This mirrors the requests midimonster and the Q-SYS
+    MA2 driver use.
+    """
+
+    return {
+        "requestType": "playbacks",
+        "startIndex": [start],
+        "itemsCount": [count],
+        "pageIndex": _page_index(page),
+        "itemsType": [items_type],
+        "view": view,
+        "execButtonViewMode": 2,
+        "buttonsViewMode": 0,
+        "session": session,
+    }
+
+
+def _page_index(page: int | str) -> int:
+    return -1 if page == "current" else page - 1
+
 def close_frame(session: int) -> dict[str, Any]:
     return {"requestType": "close", "session": session, "maxRequests": 1}
 

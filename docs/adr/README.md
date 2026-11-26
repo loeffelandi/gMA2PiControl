@@ -18,3 +18,6 @@
 * [0016. Hardkey-Injection über gma.canbus.hardkey im Command-Line-Modus](0016-hardkey-injection-ueber-gma-canbus-hardkey-im-command-line-modus.md)
 * [0017. Netzwerkkonfiguration über NetworkManager mit Bestätigung und Rollback](0017-netzwerkkonfiguration-ueber-networkmanager-mit-rollback.md)
 * [0018. Rettungs-WLAN als NetworkManager-Hotspot](0018-rettungs-wlan-als-networkmanager-hotspot.md)
+* [0019. Absolute MIDI-Werte und Executor-Ziele über den Web Remote](0019-absolute-midi-werte-und-executor-ziele-ueber-den-web-remote.md)
+* [0020. Virtueller Wert und Ratenbeschleunigung für absolute MIDI-Encoder](0020-virtueller-wert-und-ratenbeschleunigung-fuer-absolute-midi-encoder.md)
+* [0021. Executor-Feedback über Playback-Polling und MIDI-Duplex-Ausgabe](0021-executor-feedback-ueber-playback-polling-und-midi-duplex-ausgabe.md)

@@ -90,6 +90,12 @@ class ConfigStore:
         )
         self._lock = asyncio.Lock()
         self._generation = 0
+        self._activate_hooks: list[Callable[[AppConfig], None]] = []
+
+    def add_activate_hook(self, hook: Callable[[AppConfig], None]) -> None:
+        """Register a callback that receives every successfully applied config."""
+
+        self._activate_hooks.append(hook)
 
     @property
     def config(self) -> AppConfig:
@@ -208,6 +214,8 @@ class ConfigStore:
         self._engine.swap_config(candidate)
         self._config = candidate
         self._generation += 1
+        for hook in self._activate_hooks:
+            hook(candidate)
         if self._client is not None:
             self._client.apply_config(candidate)
         LOGGER.info("Konfiguration angewendet, Generation %d", self._generation)

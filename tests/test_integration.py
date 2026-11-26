@@ -221,3 +221,105 @@ async def test_encoder_stress_against_mock_server(config):
         engine.cleanup(send=False)
         await client.shutdown()
         await server.stop()
+
+
+async def test_playbacks_polling_round_trip(config):
+    def answer(frame):
+        items_type = frame["itemsType"][0]
+        start = frame["startIndex"][0]
+        count = frame["itemsCount"][0]
+        return {
+            "responseType": "playbacks",
+            "iPage": 1,
+            "itemGroups": [
+                {
+                    "itemsType": items_type,
+                    "items": [
+                        [
+                            {
+                                "iExec": start + index,
+                                "isRun": index == 0,
+                                "bC": "#ff0000",
+                            }
+                            for index in range(count)
+                        ]
+                    ],
+                }
+            ],
+        }
+
+    server = await MockMa2Server().start()
+    server.playbacks = answer
+    cfg = client_config(config, server.port)
+    client = Ma2Client(cfg)
+    try:
+        await client.start()
+        await wait_until(lambda: client.authenticated)
+        client.request_playbacks("current", 100, 5, 3, 3)
+        snapshot = await asyncio.wait_for(client.playback_responses.get(), timeout=2.0)
+        assert snapshot["iPage"] == 1
+        assert snapshot["itemGroups"][0]["itemsType"] == 3
+        assert snapshot["itemGroups"][0]["items"][0][0]["iExec"] == 100
+    finally:
+        await client.shutdown()
+        await server.stop()
+
+
+class _RecordingMidi:
+    def __init__(self) -> None:
+        self.open_devices = {"midicraft": "/dev/snd/midiC4D0"}
+        self.sent: list[bytes] = []
+
+    def send(self, device: str, data: bytes) -> bool:
+        assert device == "midicraft"
+        self.sent.append(data)
+        return True
+
+
+async def test_feedback_polls_and_resets_on_disconnect(config):
+    from ma2pi.feedback import ExecutorFeedback
+
+    def answer(frame):
+        start = frame["startIndex"][0]
+        count = frame["itemsCount"][0]
+        items_type = frame["itemsType"][0]
+        return {
+            "responseType": "playbacks",
+            "iPage": 1,
+            "itemGroups": [
+                {
+                    "itemsType": items_type,
+                    "items": [
+                        [
+                            {
+                                "iExec": start + index,
+                                "isRun": index == 0,
+                                "bC": "#ff0000",
+                            }
+                            for index in range(count)
+                        ]
+                    ],
+                }
+            ],
+        }
+
+    server = await MockMa2Server().start()
+    server.playbacks = answer
+    cfg = client_config(config, server.port)
+    client = Ma2Client(cfg)
+    midi = _RecordingMidi()
+    feedback = ExecutorFeedback(cfg, client, midi)
+    client.add_connection_lost_callback(feedback.reset)
+    try:
+        await client.start()
+        await wait_until(lambda: client.authenticated)
+        await asyncio.wait_for(feedback.step(), timeout=3.0)
+
+        assert len(midi.sent) == 15
+        assert feedback._last
+
+        await client._handle_disconnect("test")
+        assert feedback._last == {}
+    finally:
+        await client.shutdown()
+        await server.stop()

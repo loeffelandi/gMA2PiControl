@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from typing import Any, Iterable
 
 from ..config import AppConfig, DeviceConfig, ProfileConfig
@@ -43,18 +44,68 @@ def _controls(profile: ProfileConfig) -> dict[str, Any]:
         }
         for encoder in profile.midi_encoders
     ]
+    values = [
+        {"control": value.control, "note": value.note, "kind": value.kind}
+        for value in profile.midi_values
+    ]
+    inventory = [
+        {"id": control.id, "kind": control.kind, "label": control.label}
+        for control in profile.controls
+    ]
+    declared = {control["id"] for control in inventory}
+    for control_id, kind in sorted(profile.control_kinds.items()):
+        if control_id not in declared:
+            inventory.append({"id": control_id, "kind": kind, "label": None})
+    banks = [
+        {
+            "number": bank.number,
+            "channel": bank.channel,
+            "notes": {str(note): control for note, control in bank.notes.items()},
+        }
+        for bank in profile.banks
+    ]
     logical = sorted(
         {entry["control"] for entry in keys}
         | {entry["control"] for entry in notes}
         | {entry["control"] for entry in encoders}
         | {entry["control"] for entry in midi_encoders}
+        | {entry["control"] for entry in values}
+        | {control["id"] for control in inventory}
     )
     return {
         "keys": keys,
         "notes": notes,
         "encoders": encoders,
         "midi_encoders": midi_encoders,
+        "values": values,
+        "inventory": inventory,
+        "banks": banks,
         "logical": logical,
+    }
+
+
+def _bank_size(config: AppConfig, name: str, profile: ProfileConfig) -> int:
+    settings = config.mapping.device_banks.get(name)
+    if settings is not None and settings.bank_size is not None:
+        return settings.bank_size
+    kinds = profile.control_kinds
+    faders = sum(1 for kind in kinds.values() if kind == "fader")
+    if faders:
+        return faders
+    buttons = sum(1 for kind in kinds.values() if kind == "button")
+    return max(1, buttons)
+
+
+def _layout(config: AppConfig, device: DeviceConfig) -> dict[str, Any] | None:
+    layout = config.layouts.get(device.profile)
+    if layout is None:
+        return None
+    return {
+        "profile": layout.profile,
+        "columns": layout.columns,
+        "rows": [
+            {"cells": [asdict(cell) for cell in row.cells]} for row in layout.rows
+        ],
     }
 
 
@@ -77,6 +128,9 @@ def _entry(
     device: DeviceConfig,
     profile: ProfileConfig,
     match: DeviceInfo | None,
+    *,
+    layout: dict[str, Any] | None = None,
+    bank_size: int = 1,
 ) -> dict[str, Any]:
     return {
         "name": name,
@@ -88,6 +142,8 @@ def _entry(
         "name_contains": device.name_contains,
         "detected": _detected(match) if match is not None else None,
         "controls": _controls(profile),
+        "layout": layout,
+        "bank_size": bank_size,
     }
 
 
@@ -109,7 +165,16 @@ def device_summary(
             None,
         )
         profile = config.profiles[device.profile]
-        result.append(_entry(name, device, profile, match))
+        result.append(
+            _entry(
+                name,
+                device,
+                profile,
+                match,
+                layout=_layout(config, device),
+                bank_size=_bank_size(config, name, profile),
+            )
+        )
     return result
 
 

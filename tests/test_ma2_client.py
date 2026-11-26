@@ -12,6 +12,9 @@ from ma2pi import frames, wheel_protocol
 from ma2pi.actions import (
     EncoderAttribute,
     EncoderSlot,
+    PlaybackButton,
+    PlaybackFader,
+    PlaybacksRequest,
     Press,
     Release,
     EncoderPress,
@@ -126,6 +129,29 @@ def test_frame_builders_exact():
         "session": 4,
         "maxRequests": 1,
     }
+    assert frames.playbacks_user_input_button(2, 7, 3, True, False, 4) == {
+        "requestType": "playbacks_userInput",
+        "execIndex": 6,
+        "pageIndex": 1,
+        "buttonId": 2,
+        "pressed": True,
+        "released": False,
+        "type": 0,
+        "session": 4,
+    }
+    assert frames.playbacks_user_input_button(1, 1, 1, False, True, 4)["released"] is True
+    assert frames.playbacks_user_input_button("current", 3, 1, True, False, 4)[
+        "pageIndex"
+    ] == -1
+    assert frames.playbacks_user_input_fader(1, 3, 0.5, 4) == {
+        "requestType": "playbacks_userInput",
+        "execIndex": 2,
+        "pageIndex": 0,
+        "faderValue": 0.5,
+        "type": 1,
+        "session": 4,
+    }
+    assert frames.playbacks_user_input_fader("current", 3, 0.5, 4)["pageIndex"] == -1
     assert frames.close_frame(4) == {"requestType": "close", "session": 4, "maxRequests": 1}
 
 
@@ -178,6 +204,26 @@ async def test_queue_coalesces_encoder_targets():
     second = await queue.get()
     assert first == EncoderSlot(1, 5)
     assert second == EncoderAttribute("Dimmer", pytest.approx(0.3))
+
+
+async def test_queue_coalesces_playback_faders_per_executor():
+    queue = SendQueue()
+    queue.put(PlaybackFader(1, 3, 0.2))
+    queue.put(PlaybackFader(1, 3, 0.7))
+    queue.put(PlaybackFader(1, 4, 0.1))
+    assert queue.total_depth == 2
+    assert await queue.get() == PlaybackFader(1, 3, 0.7)
+    assert await queue.get() == PlaybackFader(1, 4, 0.1)
+
+
+async def test_queue_keeps_playback_buttons_in_order():
+    queue = SendQueue()
+    queue.put(PlaybackFader(1, 3, 0.5))
+    queue.put(PlaybackButton(1, 3, 1, True, False))
+    queue.put(PlaybackButton(1, 3, 1, False, True))
+    assert await queue.get() == PlaybackButton(1, 3, 1, True, False)
+    assert await queue.get() == PlaybackButton(1, 3, 1, False, True)
+    assert await queue.get() == PlaybackFader(1, 3, 0.5)
 
 
 async def test_queue_keeps_screen_and_attribute_targets_separate():
@@ -509,6 +555,24 @@ async def test_native_dispatch_uses_keyname(make_config):
     assert transport.sent[0]["keyname"] == "STORE"
 
 
+async def test_playback_dispatch(make_config):
+    cfg = _lua_config(make_config)
+    transport = MockTransport()
+    client = Ma2Client(cfg, transport=transport)
+    client._session = 4
+    client._authenticated = True
+    await client._dispatch(PlaybackButton(2, 7, 3, True, False))
+    await client._dispatch(PlaybackButton(2, 7, 3, False, True))
+    await client._dispatch(PlaybackFader(1, 3, 0.5))
+    await client._dispatch(PlaybackFader(1, 3, 2.0))
+    assert transport.sent == [
+        frames.playbacks_user_input_button(2, 7, 3, True, False, 4),
+        frames.playbacks_user_input_button(2, 7, 3, False, True, 4),
+        frames.playbacks_user_input_fader(1, 3, 0.5, 4),
+        frames.playbacks_user_input_fader(1, 3, 1.0, 4),
+    ]
+
+
 async def test_unverified_hardkey_is_not_sent(make_config, caplog):
     cfg = _lua_config(make_config, verified=False)
     transport = MockTransport()
@@ -745,3 +809,67 @@ async def test_resolution_action_without_attribute_warns(make_config, caplog):
         await client._dispatch(EncoderResolution(1))
     assert transport.sent == []
     assert "kein Attribut" in caplog.text
+
+
+def test_playbacks_request_frame_exact():
+    assert frames.playbacks_request(0, 5, "current", 2, 2, 4) == {
+        "requestType": "playbacks",
+        "startIndex": [0],
+        "itemsCount": [5],
+        "pageIndex": -1,
+        "itemsType": [2],
+        "view": 2,
+        "execButtonViewMode": 2,
+        "buttonsViewMode": 0,
+        "session": 4,
+    }
+    assert frames.playbacks_request(100, 5, 2, 3, 3, 4)["pageIndex"] == 1
+
+
+async def test_playbacks_request_dispatch(make_config):
+    cfg = _lua_config(make_config)
+    transport = MockTransport()
+    client = Ma2Client(cfg, transport=transport)
+    client._session = 4
+    client._authenticated = True
+    await client._dispatch(PlaybacksRequest("current", 100, 5, 3, 3))
+    assert transport.sent == [frames.playbacks_request(100, 5, "current", 3, 3, 4)]
+
+
+async def test_read_loop_routes_playbacks(make_config):
+    cfg = _lua_config(make_config)
+    transport = MockTransport()
+    client = Ma2Client(cfg, transport=transport)
+    payload = {
+        "responseType": "playbacks",
+        "iPage": 1,
+        "itemGroups": [{"itemsType": 2, "items": [[{"iExec": 0, "isRun": True}]]}],
+    }
+    await transport.incoming.put(json.dumps(payload))
+    task = asyncio.create_task(client._read_loop())
+    try:
+        received = await asyncio.wait_for(client.playback_responses.get(), timeout=1.0)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert received == payload
+
+
+async def test_playback_queue_keeps_newest(make_config):
+    cfg = _lua_config(make_config)
+    client = Ma2Client(cfg, transport=MockTransport())
+    for index in range(20):
+        client._deliver_playbacks({"iPage": index})
+    assert client.playback_responses.qsize() == 16
+    first = client.playback_responses.get_nowait()
+    assert first["iPage"] == 4
+
+
+async def test_disconnect_clears_playback_responses(make_config):
+    cfg = _lua_config(make_config)
+    client = Ma2Client(cfg, transport=MockTransport())
+    client._deliver_playbacks({"iPage": 1})
+    assert not client.playback_responses.empty()
+    await client._handle_disconnect("test")
+    assert client.playback_responses.empty()

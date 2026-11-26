@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ApiError, type ApiClient, type DeviceEntry, type LearnResult } from './api';
@@ -48,6 +48,27 @@ const devices = [
       logical: ['asl_click_1', 'encoder.1', 'encoder.2', 'encoder.3', 'encoder.4'],
     },
   },
+  {
+    name: 'midicraft',
+    backend: 'midi',
+    profile: 'midicraft-enc',
+    vendor_id: 0x04d8,
+    product_id: 0xe78c,
+    vendor_product: '04d8:e78c',
+    name_contains: 'MIDICRAFT ENC',
+    detected: { path: '/dev/snd/midiC4D0' },
+    controls: {
+      keys: [],
+      notes: [{ note: 55, control: 'mc_click_1' }],
+      encoders: [],
+      midi_encoders: [],
+      values: [
+        { control: 'mc_fader_1', note: 70, kind: 'fader' },
+        { control: 'mc_encoder_1', note: 60, kind: 'encoder' },
+      ],
+      logical: ['mc_click_1', 'mc_fader_1', 'mc_encoder_1'],
+    },
+  },
 ] as unknown as DeviceEntry[];
 
 const config = {
@@ -64,6 +85,10 @@ const config = {
     ],
     modifiers: { ma: { hardkey: 'MA' } },
     screen_encoders: { '1': 5, '2': 6, '3': 7, '4': 8 },
+    playbacks: {
+      mc_fader_1: { page: 1, executor: 2, kind: 'fader' },
+      mc_click_1: { page: 1, executor: 1, kind: 'button', button: 2 },
+    },
   },
 };
 
@@ -81,6 +106,14 @@ async function renderPage(api: ApiClient) {
   await waitFor(() => {
     expect(screen.getByDisplayValue('Fix')).toBeTruthy();
   });
+}
+
+function playbackRow(control: string): HTMLTableRowElement {
+  const row = document.querySelector(`tr[data-control="${control}"]`);
+  if (!(row instanceof HTMLTableRowElement)) {
+    throw new Error(`Playback-Zeile für ${control} nicht gefunden`);
+  }
+  return row;
 }
 
 describe('MappingPage', () => {
@@ -204,5 +237,154 @@ describe('MappingPage', () => {
 
     await fireEvent.click(screen.getAllByTestId('encoder-learn')[0]);
     expect(api.startLearn).toHaveBeenNthCalledWith(2, 'encoder', 'asl');
+  });
+
+  it('enables an absolute control as a fader playback target', async () => {
+    const api = fakeApi();
+    await renderPage(api);
+
+    const row = playbackRow('mc_encoder_1');
+    expect(within(row).queryByTestId('playback-button')).toBeNull();
+    await fireEvent.click(within(row).getByTestId('playback-enabled'));
+    await fireEvent.input(within(row).getByTestId('playback-page'), {
+      target: { value: '2' },
+    });
+    await fireEvent.input(within(row).getByTestId('playback-executor'), {
+      target: { value: '4' },
+    });
+    await fireEvent.click(screen.getByText('Speichern'));
+
+    await waitFor(() => {
+      expect(api.updateConfig).toHaveBeenCalledWith({
+        mapping: expect.objectContaining({
+          playbacks: expect.objectContaining({
+            mc_encoder_1: {
+              page: 2,
+              executor: 4,
+              kind: 'fader',
+              accelerated: false,
+            },
+          }),
+        }),
+      });
+    });
+  });
+
+  it('saves current as a page-relative playback target', async () => {
+    const api = fakeApi();
+    await renderPage(api);
+
+    const row = playbackRow('mc_encoder_1');
+    await fireEvent.click(within(row).getByTestId('playback-enabled'));
+    await fireEvent.input(within(row).getByTestId('playback-page'), {
+      target: { value: 'current' },
+    });
+    await fireEvent.input(within(row).getByTestId('playback-executor'), {
+      target: { value: '4' },
+    });
+    await fireEvent.click(screen.getByText('Speichern'));
+
+    await waitFor(() => {
+      expect(api.updateConfig).toHaveBeenCalledWith({
+        mapping: expect.objectContaining({
+          playbacks: expect.objectContaining({
+            mc_encoder_1: {
+              page: 'current',
+              executor: 4,
+              kind: 'fader',
+              accelerated: false,
+            },
+          }),
+        }),
+      });
+    });
+  });
+
+  it('shows acceleration only for absolute encoders', async () => {
+    const api = fakeApi();
+    await renderPage(api);
+
+    expect(
+      within(playbackRow('mc_encoder_1')).getByTestId('playback-accelerated'),
+    ).toBeTruthy();
+    expect(
+      within(playbackRow('mc_fader_1')).queryByTestId('playback-accelerated'),
+    ).toBeNull();
+    expect(
+      within(playbackRow('mc_click_1')).queryByTestId('playback-accelerated'),
+    ).toBeNull();
+  });
+
+  it('loads the saved acceleration state', async () => {
+    const api = fakeApi();
+    (api.config as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...config,
+      mapping: {
+        ...config.mapping,
+        playbacks: {
+          ...config.mapping.playbacks,
+          mc_encoder_1: {
+            page: 1,
+            executor: 2,
+            kind: 'fader',
+            accelerated: true,
+          },
+        },
+      },
+    });
+    await renderPage(api);
+
+    const checkbox = within(playbackRow('mc_encoder_1')).getByTestId(
+      'playback-accelerated',
+    ) as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+  });
+
+  it('saves acceleration for an absolute encoder', async () => {
+    const api = fakeApi();
+    await renderPage(api);
+
+    const row = playbackRow('mc_encoder_1');
+    await fireEvent.click(within(row).getByTestId('playback-enabled'));
+    await fireEvent.click(within(row).getByTestId('playback-accelerated'));
+    await fireEvent.input(within(row).getByTestId('playback-page'), {
+      target: { value: '1' },
+    });
+    await fireEvent.input(within(row).getByTestId('playback-executor'), {
+      target: { value: '2' },
+    });
+    await fireEvent.click(screen.getByText('Speichern'));
+
+    await waitFor(() => {
+      expect(api.updateConfig).toHaveBeenCalledWith({
+        mapping: expect.objectContaining({
+          playbacks: expect.objectContaining({
+            mc_encoder_1: {
+              page: 1,
+              executor: 2,
+              kind: 'fader',
+              accelerated: true,
+            },
+          }),
+        }),
+      });
+    });
+  });
+
+  it('blocks saving an invalid playback page', async () => {
+    const api = fakeApi();
+    await renderPage(api);
+
+    const row = playbackRow('mc_encoder_1');
+    await fireEvent.click(within(row).getByTestId('playback-enabled'));
+    await fireEvent.input(within(row).getByTestId('playback-page'), {
+      target: { value: '0' },
+    });
+    await fireEvent.click(screen.getByText('Speichern'));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('Zahl ab 1 oder "current"');
+    });
+    expect(api.updateConfig).not.toHaveBeenCalled();
   });
 });

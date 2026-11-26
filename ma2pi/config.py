@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from . import hardkeys
+from .acceleration import ValueAccelerationSettings
 from .led_output import LedSettings, parse_color
+from .feedback import PALETTE
 
 DEFAULT_CONFIG_PATHS = (
     Path("/var/lib/ma2pi/config.toml"),
@@ -136,11 +138,104 @@ class MidiEncoderProfile:
 
 
 @dataclass(frozen=True, slots=True)
+class MidiValueProfile:
+    control: str
+    note: int
+    kind: str = "fader"
+
+
+@dataclass(frozen=True, slots=True)
+class ControlProfile:
+    """Physical control declared independently of its learned note."""
+
+    id: str
+    kind: str = "button"
+    label: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BankProfile:
+    """One device bank: its MIDI channel and note-to-control bindings."""
+
+    number: int
+    channel: int
+    notes: Mapping[int, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class LayoutCell:
+    label: str = ""
+    control: str | None = None
+    col_span: int = 1
+    row_span: int = 1
+    color: str | None = None
+    row: int | None = None
+    col: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LayoutRow:
+    cells: tuple[LayoutCell, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceLayout:
+    profile: str
+    columns: int
+    rows: tuple[LayoutRow, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class LedFeedbackProfile:
+    """How a profile's controls report executor state as LED frames.
+
+    ``notes`` restricts feedback to notes that actually have an LED; ``None``
+    means every button note of the profile is LED-capable.
+    """
+
+    protocol: str = "midicraft-v2"
+    notes: tuple[int, ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ProfileConfig:
     keys: Mapping[str, str] = field(default_factory=dict)
     encoders: tuple[EncoderProfile, ...] = ()
     notes: Mapping[int, str] = field(default_factory=dict)
     midi_encoders: tuple[MidiEncoderProfile, ...] = ()
+    midi_values: tuple[MidiValueProfile, ...] = ()
+    controls: tuple[ControlProfile, ...] = ()
+    banks: tuple[BankProfile, ...] = ()
+    led_feedback: LedFeedbackProfile | None = None
+
+    @property
+    def control_kinds(self) -> dict[str, str]:
+        """Logical control name to semantic kind, independent of bindings."""
+
+        kinds: dict[str, str] = {}
+        for control in self.controls:
+            kinds[control.id] = control.kind
+        for control in self.keys.values():
+            kinds.setdefault(control, "button")
+        for control in self.notes.values():
+            kinds.setdefault(control, "button")
+        for value in self.midi_values:
+            kinds.setdefault(value.control, value.kind)
+        for enc in self.midi_encoders:
+            kinds.setdefault(f"encoder.{enc.id}", "relative-encoder")
+        for enc in self.encoders:
+            kinds.setdefault(f"encoder.{enc.id}", "relative-encoder")
+        return kinds
+
+    @property
+    def control_names(self) -> set[str]:
+        return set(self.control_kinds)
+
+    def bank(self, number: int) -> BankProfile | None:
+        return next((bank for bank in self.banks if bank.number == number), None)
+
+    def bank_for_channel(self, channel: int) -> BankProfile | None:
+        return next((bank for bank in self.banks if bank.channel == channel), None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +269,26 @@ class EncoderMapping:
 
 
 @dataclass(frozen=True, slots=True)
+class PlaybackMapping:
+    page: int | str
+    executor: int
+    kind: str = "button"
+    button: int = 1
+    accelerated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PlaybackOverride:
+    """Partial playback target used by a bank layer."""
+
+    page: int | str | None = None
+    executor: int | None = None
+    kind: str | None = None
+    button: int | None = None
+    accelerated: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class AccelerationSettings:
     curve: str = "none"
     window: float = 0.10
@@ -197,12 +312,33 @@ class ResolutionSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class DeviceBankMapping:
+    """Bank specific overrides for keys, encoders and playbacks."""
+
+    ma_page: int | None = None
+    keys: Mapping[str, KeyMapping] = field(default_factory=dict)
+    encoders: Mapping[int, EncoderMapping] = field(default_factory=dict)
+    playbacks: Mapping[str, PlaybackOverride] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceBankSettings:
+    bank_size: int | None = None
+    banks: Mapping[int, DeviceBankMapping] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class MappingSettings:
     modifiers: Mapping[str, ModifierMapping] = field(default_factory=dict)
     keys: Mapping[str, KeyMapping] = field(default_factory=dict)
     encoders: tuple[EncoderMapping, ...] = ()
     screen_encoders: Mapping[int, int] = field(default_factory=dict)
+    playbacks: Mapping[str, PlaybackMapping] = field(default_factory=dict)
+    device_banks: Mapping[str, DeviceBankSettings] = field(default_factory=dict)
     acceleration: AccelerationSettings = field(default_factory=AccelerationSettings)
+    value_acceleration: ValueAccelerationSettings = field(
+        default_factory=ValueAccelerationSettings
+    )
     resolution: ResolutionSettings = field(default_factory=ResolutionSettings)
 
 
@@ -216,6 +352,16 @@ class ScreenHelperSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class FeedbackSettings:
+    """Globale Einstellungen für das Executor-Feedback an MIDI-LEDs."""
+
+    enabled: bool = False
+    interval_ms: int = 250
+    off_state: str = "dark"
+    fallback_color: str = "white"
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     schema_version: int
     ma2: Ma2Settings
@@ -223,23 +369,30 @@ class AppConfig:
     profiles: Mapping[str, ProfileConfig]
     mapping: MappingSettings
     hardkeys: Mapping[str, HardkeyCode] = field(default_factory=dict)
+    layouts: Mapping[str, DeviceLayout] = field(default_factory=dict)
     reconnect: ReconnectSettings = field(default_factory=ReconnectSettings)
     rate_limit: RateLimitSettings = field(default_factory=RateLimitSettings)
     logging: LoggingSettings = field(default_factory=LoggingSettings)
     web: WebSettings = field(default_factory=WebSettings)
     led: LedSettings = field(default_factory=LedSettings)
+    feedback: FeedbackSettings = field(default_factory=FeedbackSettings)
     screen_helper: ScreenHelperSettings = field(default_factory=ScreenHelperSettings)
     source_path: str = ""
 
     def profile_for_device(self, name: str) -> ProfileConfig:
         return self.profiles[self.devices[name].profile]
 
+    def layout_for_device(self, name: str) -> DeviceLayout | None:
+        device = self.devices.get(name)
+        if device is None:
+            return None
+        return self.layouts.get(device.profile)
+
     @property
     def mapped_controls(self) -> set[str]:
         controls: set[str] = set()
         for profile in self.profiles.values():
-            controls.update(profile.keys.values())
-            controls.update(profile.notes.values())
+            controls.update(profile.control_names)
         return controls
 
     def logical_to_hardkey(self, control: str) -> str | None:
@@ -591,6 +744,30 @@ def _parse_led(raw: Any) -> LedSettings:
     )
 
 
+def _parse_feedback(raw: Any) -> FeedbackSettings:
+    path = "feedback"
+    data = _table(raw, path)
+    _reject_unknown(
+        data, {"enabled", "interval_ms", "off_state", "fallback_color"}, path
+    )
+    enabled = _bool(data.get("enabled", False), f"{path}.enabled")
+    interval_ms = _int(data.get("interval_ms", 250), f"{path}.interval_ms")
+    if not 100 <= interval_ms <= 2000:
+        raise ConfigError(f"{path}.interval_ms", "muss zwischen 100 und 2000 liegen")
+    off_state = _choice(
+        data.get("off_state", "dark"), f"{path}.off_state", {"off", "dark"}
+    )
+    fallback_color = _string(
+        data.get("fallback_color", "white"), f"{path}.fallback_color"
+    )
+    if fallback_color not in PALETTE:
+        raise ConfigError(
+            f"{path}.fallback_color",
+            f"unbekannte Farbe {fallback_color!r}; erlaubt: {', '.join(PALETTE)}",
+        )
+    return FeedbackSettings(enabled, interval_ms, off_state, fallback_color)
+
+
 def _parse_web(raw: Any) -> WebSettings:
     path = "web"
     data = _table(raw, path)
@@ -676,15 +853,57 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
         raise ConfigError(path, "mindestens ein Profil konfigurieren")
     profiles: dict[str, ProfileConfig] = {}
     global_encoder_ids: set[int] = set()
+    control_owner: dict[str, str] = {}
     for name, entry in data.items():
         item_path = f"{path}.{name}"
         item = _table(entry, item_path)
-        _reject_unknown(item, {"keys", "encoders", "notes", "midi_encoders"}, item_path)
+        _reject_unknown(
+            item,
+            {
+                "keys",
+                "encoders",
+                "notes",
+                "midi_encoders",
+                "midi_values",
+                "controls",
+                "banks",
+                "led_feedback",
+            },
+            item_path,
+        )
         keys_raw = _table(item.get("keys", {}), f"{item_path}.keys")
         keys: dict[str, str] = {}
         for code, control in keys_raw.items():
             control = _string(control, f"{item_path}.keys.{code}")
             keys[code] = control
+
+        controls_raw = item.get("controls", [])
+        if not isinstance(controls_raw, list):
+            raise ConfigError(f"{item_path}.controls", "muss ein Array of Tables sein")
+        controls: list[ControlProfile] = []
+        seen_control_ids: set[str] = set()
+        for index, raw_control in enumerate(controls_raw):
+            control_path = f"{item_path}.controls[{index}]"
+            control_item = _table(raw_control, control_path)
+            _reject_unknown(control_item, {"id", "kind", "label"}, control_path)
+            control_id = _string(
+                _require(control_item, "id", control_path), f"{control_path}.id"
+            )
+            if control_id in seen_control_ids:
+                raise ConfigError(
+                    f"{control_path}.id", f"Control {control_id!r} doppelt im Profil"
+                )
+            seen_control_ids.add(control_id)
+            kind = _choice(
+                control_item.get("kind", "button"),
+                f"{control_path}.kind",
+                {"button", "fader", "poti", "encoder", "relative-encoder"},
+            )
+            label = control_item.get("label")
+            if label is not None:
+                label = _string(label, f"{control_path}.label", allow_empty=True)
+            controls.append(ControlProfile(control_id, kind, label))
+        declared_controls = {control.id for control in controls}
         encoders_raw = item.get("encoders", [])
         if not isinstance(encoders_raw, list):
             raise ConfigError(f"{item_path}.encoders", "muss ein Array of Tables sein")
@@ -736,7 +955,12 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
             note = _midi_note(note_key, note_path)
             if note in notes:
                 raise ConfigError(note_path, f"MIDI-Note {note} ist doppelt")
-            notes[note] = _string(control, note_path)
+            control = _string(control, note_path)
+            if declared_controls and control not in declared_controls:
+                raise ConfigError(
+                    note_path, f"Control {control!r} fehlt im Control-Inventar"
+                )
+            notes[note] = control
 
         midi_encoders_raw = item.get("midi_encoders", [])
         if not isinstance(midi_encoders_raw, list):
@@ -786,13 +1010,280 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
                 )
             )
 
+        midi_values_raw = item.get("midi_values", [])
+        if not isinstance(midi_values_raw, list):
+            raise ConfigError(f"{item_path}.midi_values", "muss ein Array of Tables sein")
+        midi_values: list[MidiValueProfile] = []
+        value_controls: set[str] = set()
+        for index, raw_value in enumerate(midi_values_raw):
+            value_path = f"{item_path}.midi_values[{index}]"
+            value = _table(raw_value, value_path)
+            _reject_unknown(value, {"control", "note", "kind"}, value_path)
+            control = _string(_require(value, "control", value_path), f"{value_path}.control")
+            if control in value_controls:
+                raise ConfigError(value_path, f"Control {control!r} doppelt im Profil")
+            if declared_controls and control not in declared_controls:
+                raise ConfigError(
+                    value_path, f"Control {control!r} fehlt im Control-Inventar"
+                )
+            value_controls.add(control)
+            note = _midi_note(_require(value, "note", value_path), f"{value_path}.note")
+            if note in used_notes:
+                raise ConfigError(
+                    value_path,
+                    f"MIDI-Note {note} wird bereits von einer Taste oder einem Encoder verwendet",
+                )
+            used_notes.add(note)
+            kind = _choice(value.get("kind", "fader"), f"{value_path}.kind", {"fader", "encoder"})
+            midi_values.append(MidiValueProfile(control, note, kind))
+
+        banks_raw = item.get("banks", [])
+        if not isinstance(banks_raw, list):
+            raise ConfigError(f"{item_path}.banks", "muss ein Array of Tables sein")
+        banks: list[BankProfile] = []
+        seen_bank_numbers: set[int] = set()
+        seen_channels: set[int] = set()
+        for index, raw_bank in enumerate(banks_raw):
+            bank_path = f"{item_path}.banks[{index}]"
+            bank_item = _table(raw_bank, bank_path)
+            _reject_unknown(bank_item, {"number", "channel", "notes"}, bank_path)
+            number = _int(_require(bank_item, "number", bank_path), f"{bank_path}.number")
+            if not 1 <= number <= 16:
+                raise ConfigError(f"{bank_path}.number", "muss zwischen 1 und 16 liegen")
+            if number in seen_bank_numbers:
+                raise ConfigError(f"{bank_path}.number", f"Bank {number} ist doppelt")
+            seen_bank_numbers.add(number)
+            channel = _int(bank_item.get("channel", number), f"{bank_path}.channel")
+            if not 1 <= channel <= 16:
+                raise ConfigError(f"{bank_path}.channel", "muss zwischen 1 und 16 liegen")
+            if channel in seen_channels:
+                raise ConfigError(
+                    f"{bank_path}.channel",
+                    f"MIDI-Kanal {channel} wird bereits von einer anderen Bank verwendet",
+                )
+            seen_channels.add(channel)
+            if not controls:
+                raise ConfigError(
+                    bank_path, "eine Bank erfordert ein Control-Inventar im Profil"
+                )
+            bank_notes_raw = _table(bank_item.get("notes", {}), f"{bank_path}.notes")
+            bank_notes: dict[int, str] = {}
+            for note_key, control in bank_notes_raw.items():
+                note_path = f"{bank_path}.notes.{note_key}"
+                note = _midi_note(note_key, note_path)
+                if note in bank_notes:
+                    raise ConfigError(note_path, f"MIDI-Note {note} ist doppelt")
+                control = _string(control, note_path)
+                if control not in declared_controls:
+                    raise ConfigError(
+                        note_path, f"Control {control!r} fehlt im Control-Inventar"
+                    )
+                bank_notes[note] = control
+            banks.append(BankProfile(number, channel, bank_notes))
+
+        if banks and (notes or midi_encoders or midi_values):
+            raise ConfigError(
+                item_path,
+                "Bänke und flache Noten schließen sich aus; Noten je Bank definieren",
+            )
+
+        led_feedback: LedFeedbackProfile | None = None
+        if "led_feedback" in item:
+            fb_path = f"{item_path}.led_feedback"
+            fb_raw = _table(item["led_feedback"], fb_path)
+            _reject_unknown(fb_raw, {"protocol", "led_notes"}, fb_path)
+            protocol = _choice(
+                fb_raw.get("protocol", "midicraft-v2"),
+                f"{fb_path}.protocol",
+                {"midicraft-v2"},
+            )
+            led_notes_raw = fb_raw.get("led_notes")
+            led_notes: tuple[int, ...] | None = None
+            if led_notes_raw is not None:
+                if not isinstance(led_notes_raw, list):
+                    raise ConfigError(f"{fb_path}.led_notes", "muss ein Array sein")
+                profile_notes = set(notes)
+                for bank in banks:
+                    profile_notes.update(bank.notes)
+                parsed: list[int] = []
+                seen_led_notes: set[int] = set()
+                for index, raw_note in enumerate(led_notes_raw):
+                    note_path = f"{fb_path}.led_notes[{index}]"
+                    note = _midi_note(raw_note, note_path)
+                    if note in seen_led_notes:
+                        raise ConfigError(note_path, f"MIDI-Note {note} ist doppelt")
+                    if note not in profile_notes:
+                        raise ConfigError(
+                            note_path, f"MIDI-Note {note} gehört nicht zum Profil"
+                        )
+                    seen_led_notes.add(note)
+                    parsed.append(note)
+                led_notes = tuple(parsed)
+            led_feedback = LedFeedbackProfile(protocol, led_notes)
+
+        if not controls:
+            derived: dict[str, str] = {}
+            for control in keys.values():
+                derived.setdefault(control, "button")
+            for control in notes.values():
+                derived.setdefault(control, "button")
+            for value in midi_values:
+                derived.setdefault(value.control, value.kind)
+            for encoder in midi_encoders:
+                derived.setdefault(f"encoder.{encoder.id}", "relative-encoder")
+            for encoder in encoders:
+                derived.setdefault(f"encoder.{encoder.id}", "relative-encoder")
+            controls = [
+                ControlProfile(control_id, kind) for control_id, kind in derived.items()
+            ]
+
+        profile_controls = {control.id for control in controls}
+        profile_controls.update(keys.values())
+        profile_controls.update(notes.values())
+        profile_controls.update(value.control for value in midi_values)
+        for control_id in sorted(profile_controls):
+            previous = control_owner.get(control_id)
+            if previous is not None:
+                raise ConfigError(
+                    f"{item_path}.controls",
+                    f"Control {control_id!r} ist bereits in Profil {previous!r} definiert",
+                )
+            control_owner[control_id] = name
+
         profiles[name] = ProfileConfig(
             keys=keys,
             encoders=tuple(encoders),
             notes=notes,
             midi_encoders=tuple(midi_encoders),
+            midi_values=tuple(midi_values),
+            controls=tuple(controls),
+            banks=tuple(banks),
+            led_feedback=led_feedback,
         )
     return profiles
+
+
+def _parse_layouts(
+    raw: Any, profiles: Mapping[str, ProfileConfig]
+) -> Mapping[str, DeviceLayout]:
+    path = "layouts"
+    if raw is None:
+        return {}
+    data = _table(raw, path)
+    layouts: dict[str, DeviceLayout] = {}
+    colors = {"green", "blue", "red", "yellow", "grey", "black", "white"}
+    for name, entry in data.items():
+        item_path = f"{path}.{name}"
+        item = _table(entry, item_path)
+        _reject_unknown(item, {"profile", "columns", "rows"}, item_path)
+        profile_name = _string(
+            _require(item, "profile", item_path), f"{item_path}.profile"
+        )
+        profile = profiles.get(profile_name)
+        if profile is None:
+            raise ConfigError(
+                f"{item_path}.profile", f"unbekanntes Profil {profile_name!r}"
+            )
+        if profile_name in layouts:
+            raise ConfigError(
+                f"{item_path}.profile",
+                f"Profil {profile_name!r} hat bereits ein Layout",
+            )
+        columns = _int(item.get("columns", 1), f"{item_path}.columns")
+        if columns < 1:
+            raise ConfigError(f"{item_path}.columns", "muss mindestens 1 sein")
+        rows_raw = item.get("rows", [])
+        if not isinstance(rows_raw, list):
+            raise ConfigError(f"{item_path}.rows", "muss ein Array of Tables sein")
+        rows: list[LayoutRow] = []
+        seen_controls: set[str] = set()
+        for row_index, raw_row in enumerate(rows_raw):
+            row_path = f"{item_path}.rows[{row_index}]"
+            row_item = _table(raw_row, row_path)
+            _reject_unknown(row_item, {"cells"}, row_path)
+            cells_raw = row_item.get("cells", [])
+            if not isinstance(cells_raw, list):
+                raise ConfigError(f"{row_path}.cells", "muss ein Array sein")
+            cells: list[LayoutCell] = []
+            for cell_index, raw_cell in enumerate(cells_raw):
+                cell_path = f"{row_path}.cells[{cell_index}]"
+                cell_item = _table(raw_cell, cell_path)
+                _reject_unknown(
+                    cell_item,
+                    {"label", "control", "col_span", "row_span", "color", "row", "col"},
+                    cell_path,
+                )
+                label = _string(
+                    cell_item.get("label", ""),
+                    f"{cell_path}.label",
+                    allow_empty=True,
+                )
+                control = cell_item.get("control")
+                if control is not None:
+                    control = _string(control, f"{cell_path}.control")
+                    if control not in profile.control_names:
+                        raise ConfigError(
+                            f"{cell_path}.control",
+                            f"Control {control!r} kommt im Profil {profile_name!r} nicht vor",
+                        )
+                    if control in seen_controls:
+                        raise ConfigError(
+                            f"{cell_path}.control",
+                            f"Control {control!r} ist doppelt im Layout",
+                        )
+                    seen_controls.add(control)
+                col_span = _int(cell_item.get("col_span", 1), f"{cell_path}.col_span")
+                row_span = _int(cell_item.get("row_span", 1), f"{cell_path}.row_span")
+                if col_span < 1 or row_span < 1:
+                    raise ConfigError(cell_path, "Spannen müssen mindestens 1 sein")
+                color = cell_item.get("color")
+                if color is not None:
+                    color = _choice(color, f"{cell_path}.color", colors)
+                row = cell_item.get("row")
+                if row is not None:
+                    row = _int(row, f"{cell_path}.row")
+                    if row < 1:
+                        raise ConfigError(f"{cell_path}.row", "muss mindestens 1 sein")
+                col = cell_item.get("col")
+                if col is not None:
+                    col = _int(col, f"{cell_path}.col")
+                    if col < 1:
+                        raise ConfigError(f"{cell_path}.col", "muss mindestens 1 sein")
+                    if col + col_span - 1 > columns:
+                        raise ConfigError(
+                            f"{cell_path}.col",
+                            "Zelle ragt über die Bezugsbreite hinaus",
+                        )
+                if (row is None) != (col is None):
+                    raise ConfigError(
+                        cell_path, "row und col müssen gemeinsam angegeben werden"
+                    )
+                cells.append(
+                    LayoutCell(label, control, col_span, row_span, color, row, col)
+                )
+            if cells and all(cell.row is None for cell in cells):
+                total_span = sum(cell.col_span for cell in cells)
+                if total_span > columns:
+                    raise ConfigError(
+                        row_path,
+                        f"Zellen benötigen {total_span} Spalten, Layout hat {columns}",
+                    )
+            rows.append(LayoutRow(tuple(cells)))
+        occupied: set[tuple[int, int]] = set()
+        for layout_row in rows:
+            for cell in layout_row.cells:
+                if cell.row is None or cell.col is None:
+                    continue
+                for grid_row in range(cell.row, cell.row + cell.row_span):
+                    for grid_col in range(cell.col, cell.col + cell.col_span):
+                        if (grid_row, grid_col) in occupied:
+                            raise ConfigError(
+                                item_path,
+                                f"Zellen überlappen sich bei Zeile {grid_row}, Spalte {grid_col}",
+                            )
+                        occupied.add((grid_row, grid_col))
+        layouts[profile_name] = DeviceLayout(profile_name, columns, tuple(rows))
+    return layouts
 
 
 def _parse_hardkeys(raw: Any) -> Mapping[str, HardkeyCode]:
@@ -842,7 +1333,77 @@ def _require_hardkey_codes(
             )
 
 
-def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSettings:
+def _parse_key_mapping(
+    item: Mapping[str, Any],
+    item_path: str,
+    control: str,
+    controls: set[str],
+) -> KeyMapping:
+    _reject_unknown(
+        item, {"hardkey", "command", "screen_mode", "encoder_press", "screen"}, item_path
+    )
+    if control not in controls:
+        raise ConfigError(item_path, f"Control {control!r} kommt in keinem Profil vor")
+    kinds = [
+        name
+        for name in ("hardkey", "command", "screen_mode", "encoder_press", "screen")
+        if name in item
+    ]
+    if len(kinds) != 1:
+        raise ConfigError(
+            item_path,
+            "genau eines von hardkey, command, screen_mode, encoder_press oder screen angeben",
+        )
+    kind = kinds[0]
+    if kind == "hardkey":
+        _validate_hardkey(item["hardkey"], f"{item_path}.hardkey")
+        return KeyMapping(hardkey=item["hardkey"])
+    if kind == "command":
+        return KeyMapping(command=_string(item["command"], f"{item_path}.command"))
+    if kind == "screen_mode":
+        return KeyMapping(
+            screen_mode=_bool(item["screen_mode"], f"{item_path}.screen_mode")
+        )
+    if kind == "screen":
+        screen = _int(item["screen"], f"{item_path}.screen")
+        if not 1 <= screen <= 6:
+            raise ConfigError(f"{item_path}.screen", "muss zwischen 1 und 6 liegen")
+        return KeyMapping(screen=screen)
+    slot = _int(item["encoder_press"], f"{item_path}.encoder_press")
+    if not 1 <= slot <= 8:
+        raise ConfigError(f"{item_path}.encoder_press", "muss zwischen 1 und 8 liegen")
+    return KeyMapping(encoder_press=slot)
+
+
+def _parse_encoder_mapping(
+    item: Mapping[str, Any], item_path: str, encoder_ids: set[int]
+) -> EncoderMapping:
+    _reject_unknown(item, {"id", "slot", "attribute"}, item_path)
+    enc_id = _int(_require(item, "id", item_path), f"{item_path}.id")
+    if enc_id <= 0:
+        raise ConfigError(f"{item_path}.id", "muss größer 0 sein")
+    if enc_id not in encoder_ids:
+        raise ConfigError(
+            f"{item_path}.id", f"Encoder-ID {enc_id} kommt in keinem Profil vor"
+        )
+    has_slot = "slot" in item
+    has_attribute = "attribute" in item
+    if has_slot == has_attribute:
+        raise ConfigError(item_path, "genau eines von slot oder attribute angeben")
+    if has_slot:
+        slot = _int(item["slot"], f"{item_path}.slot")
+        if not 1 <= slot <= 8:
+            raise ConfigError(f"{item_path}.slot", "muss zwischen 1 und 8 liegen")
+        return EncoderMapping(id=enc_id, slot=slot)
+    attribute = _string(item["attribute"], f"{item_path}.attribute")
+    return EncoderMapping(id=enc_id, attribute=attribute)
+
+
+def _parse_mapping(
+    raw: Any,
+    profiles: Mapping[str, ProfileConfig],
+    devices: Mapping[str, DeviceConfig] | None = None,
+) -> MappingSettings:
     path = "mapping"
     data = _table(raw, path)
     _reject_unknown(
@@ -852,16 +1413,20 @@ def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSe
             "keys",
             "encoders",
             "screen_encoders",
+            "playbacks",
+            "device_banks",
             "encoder_acceleration",
+            "value_acceleration",
             "encoder_resolution",
         },
         path,
     )
     controls: set[str] = set()
+    value_kinds: dict[str, str] = {}
     encoder_ids: set[int] = set()
     for profile in profiles.values():
-        controls.update(profile.keys.values())
-        controls.update(profile.notes.values())
+        controls.update(profile.control_names)
+        value_kinds.update(profile.control_kinds)
         encoder_ids.update(enc.id for enc in profile.encoders)
         encoder_ids.update(enc.id for enc in profile.midi_encoders)
 
@@ -886,44 +1451,9 @@ def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSe
     keys: dict[str, KeyMapping] = {}
     for control, entry in keys_raw.items():
         item_path = f"{path}.keys.{control}"
-        item = _table(entry, item_path)
-        _reject_unknown(
-            item, {"hardkey", "command", "screen_mode", "encoder_press", "screen"}, item_path
+        keys[control] = _parse_key_mapping(
+            _table(entry, item_path), item_path, control, controls
         )
-        if control not in controls:
-            raise ConfigError(item_path, f"Control {control!r} kommt in keinem Profil vor")
-        kinds = [
-            name
-            for name in ("hardkey", "command", "screen_mode", "encoder_press", "screen")
-            if name in item
-        ]
-        if len(kinds) != 1:
-            raise ConfigError(
-                item_path,
-                "genau eines von hardkey, command, screen_mode, encoder_press oder screen angeben",
-            )
-        kind = kinds[0]
-        if kind == "hardkey":
-            _validate_hardkey(item["hardkey"], f"{item_path}.hardkey")
-            keys[control] = KeyMapping(hardkey=item["hardkey"])
-        elif kind == "command":
-            keys[control] = KeyMapping(
-                command=_string(item["command"], f"{item_path}.command")
-            )
-        elif kind == "screen_mode":
-            keys[control] = KeyMapping(
-                screen_mode=_bool(item["screen_mode"], f"{item_path}.screen_mode")
-            )
-        elif kind == "screen":
-            screen = _int(item["screen"], f"{item_path}.screen")
-            if not 1 <= screen <= 6:
-                raise ConfigError(f"{item_path}.screen", "muss zwischen 1 und 6 liegen")
-            keys[control] = KeyMapping(screen=screen)
-        else:
-            slot = _int(item["encoder_press"], f"{item_path}.encoder_press")
-            if not 1 <= slot <= 8:
-                raise ConfigError(f"{item_path}.encoder_press", "muss zwischen 1 und 8 liegen")
-            keys[control] = KeyMapping(encoder_press=slot)
 
     encoders_raw = data.get("encoders", [])
     if not isinstance(encoders_raw, list):
@@ -932,28 +1462,13 @@ def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSe
     seen_ids: set[int] = set()
     for index, raw_encoder in enumerate(encoders_raw):
         item_path = f"{path}.encoders[{index}]"
-        item = _table(raw_encoder, item_path)
-        _reject_unknown(item, {"id", "slot", "attribute"}, item_path)
-        enc_id = _int(_require(item, "id", item_path), f"{item_path}.id")
-        if enc_id <= 0:
-            raise ConfigError(f"{item_path}.id", "muss größer 0 sein")
-        if enc_id in seen_ids:
-            raise ConfigError(f"{item_path}.id", f"doppelte Encoder-ID {enc_id}")
-        seen_ids.add(enc_id)
-        if enc_id not in encoder_ids:
-            raise ConfigError(f"{item_path}.id", f"Encoder-ID {enc_id} kommt in keinem Profil vor")
-        has_slot = "slot" in item
-        has_attribute = "attribute" in item
-        if has_slot == has_attribute:
-            raise ConfigError(item_path, "genau eines von slot oder attribute angeben")
-        if has_slot:
-            slot = _int(item["slot"], f"{item_path}.slot")
-            if not 1 <= slot <= 8:
-                raise ConfigError(f"{item_path}.slot", "muss zwischen 1 und 8 liegen")
-            encoders.append(EncoderMapping(id=enc_id, slot=slot))
-        else:
-            attribute = _string(item["attribute"], f"{item_path}.attribute")
-            encoders.append(EncoderMapping(id=enc_id, attribute=attribute))
+        mapping = _parse_encoder_mapping(
+            _table(raw_encoder, item_path), item_path, encoder_ids
+        )
+        if mapping.id in seen_ids:
+            raise ConfigError(f"{item_path}.id", f"doppelte Encoder-ID {mapping.id}")
+        seen_ids.add(mapping.id)
+        encoders.append(mapping)
 
     screen_raw = _table(data.get("screen_encoders", {}), f"{path}.screen_encoders")
     screen_encoders: dict[int, int] = {}
@@ -973,13 +1488,227 @@ def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSe
         screen_encoders[slot] = number
 
     acceleration = _parse_acceleration(data.get("encoder_acceleration"))
+    value_acceleration = _parse_value_acceleration(data.get("value_acceleration"))
     resolution = _parse_resolution(data.get("encoder_resolution"), modifiers)
+
+    playbacks_raw = _table(data.get("playbacks", {}), f"{path}.playbacks")
+    playbacks: dict[str, PlaybackMapping] = {}
+    for control, entry in playbacks_raw.items():
+        item_path = f"{path}.playbacks.{control}"
+        item = _table(entry, item_path)
+        _reject_unknown(item, {"page", "executor", "kind", "button", "accelerated"}, item_path)
+        if control not in controls:
+            raise ConfigError(item_path, f"Control {control!r} kommt in keinem Profil vor")
+        page_raw = _require(item, "page", item_path)
+        if page_raw == "current":
+            page: int | str = "current"
+        else:
+            page = _int(page_raw, f"{item_path}.page")
+            if page < 1:
+                raise ConfigError(f"{item_path}.page", "muss mindestens 1 sein oder \"current\"")
+        executor = _int(_require(item, "executor", item_path), f"{item_path}.executor")
+        if executor < 1:
+            raise ConfigError(f"{item_path}.executor", "muss mindestens 1 sein")
+        kind = _choice(item.get("kind", "button"), f"{item_path}.kind", {"button", "fader"})
+        if kind == "fader":
+            if "button" in item:
+                raise ConfigError(
+                    f"{item_path}.button", "button ist nur bei kind = \"button\" erlaubt"
+                )
+            button = 1
+        else:
+            button = _int(item.get("button", 1), f"{item_path}.button")
+            if not 1 <= button <= 3:
+                raise ConfigError(f"{item_path}.button", "muss zwischen 1 und 3 liegen")
+        accelerated = _bool(
+            item.get("accelerated", False), f"{item_path}.accelerated"
+        )
+        if accelerated:
+            if kind != "fader":
+                raise ConfigError(
+                    f"{item_path}.accelerated",
+                    'nur bei kind = "fader" erlaubt',
+                )
+            if value_kinds.get(control) != "encoder":
+                raise ConfigError(
+                    f"{item_path}.accelerated",
+                    "nur für absolute Encoder erlaubt",
+                )
+        playbacks[control] = PlaybackMapping(page, executor, kind, button, accelerated)
+
+    device_banks: dict[str, DeviceBankSettings] = {}
+    banks_raw = _table(data.get("device_banks", {}), f"{path}.device_banks")
+    for device_name, raw_device in banks_raw.items():
+        device_path = f"{path}.device_banks.{device_name}"
+        device_item = _table(raw_device, device_path)
+        if not devices or device_name not in devices:
+            raise ConfigError(device_path, f"unbekanntes Gerät {device_name!r}")
+        profile = profiles[devices[device_name].profile]
+        valid_banks = {bank.number for bank in profile.banks} or {1}
+        for key in device_item:
+            if key != "bank_size":
+                try:
+                    int(key)
+                except (TypeError, ValueError) as exc:
+                    raise ConfigError(
+                        device_path, f"unbekannter Schlüssel: {key}"
+                    ) from exc
+        bank_size: int | None = None
+        if "bank_size" in device_item:
+            bank_size = _int(device_item["bank_size"], f"{device_path}.bank_size")
+            if bank_size < 1:
+                raise ConfigError(f"{device_path}.bank_size", "muss mindestens 1 sein")
+        layers: dict[int, DeviceBankMapping] = {}
+        for key, raw_layer in device_item.items():
+            if key == "bank_size":
+                continue
+            number = int(key)
+            layer_path = f"{device_path}.{key}"
+            if not 1 <= number <= 16:
+                raise ConfigError(layer_path, "Bank muss zwischen 1 und 16 liegen")
+            if number not in valid_banks:
+                raise ConfigError(
+                    layer_path, f"Bank {number} ist im Profil nicht definiert"
+                )
+            layer_item = _table(raw_layer, layer_path)
+            _reject_unknown(
+                layer_item, {"ma_page", "keys", "encoders", "playbacks"}, layer_path
+            )
+            ma_page: int | None = None
+            if "ma_page" in layer_item:
+                ma_page = _int(layer_item["ma_page"], f"{layer_path}.ma_page")
+                if ma_page < 1:
+                    raise ConfigError(f"{layer_path}.ma_page", "muss mindestens 1 sein")
+            layer_keys: dict[str, KeyMapping] = {}
+            layer_controls = profile.control_names
+            layer_keys_raw = _table(
+                layer_item.get("keys", {}), f"{layer_path}.keys"
+            )
+            for control, entry in layer_keys_raw.items():
+                item_path = f"{layer_path}.keys.{control}"
+                layer_keys[control] = _parse_key_mapping(
+                    _table(entry, item_path), item_path, control, layer_controls
+                )
+            layer_encoders: dict[int, EncoderMapping] = {}
+            profile_encoder_ids = {encoder.id for encoder in profile.encoders}
+            profile_encoder_ids.update(
+                encoder.id for encoder in profile.midi_encoders
+            )
+            layer_encoders_raw = layer_item.get("encoders", [])
+            if not isinstance(layer_encoders_raw, list):
+                raise ConfigError(
+                    f"{layer_path}.encoders", "muss ein Array of Tables sein"
+                )
+            for index, raw_encoder in enumerate(layer_encoders_raw):
+                item_path = f"{layer_path}.encoders[{index}]"
+                mapping = _parse_encoder_mapping(
+                    _table(raw_encoder, item_path),
+                    item_path,
+                    profile_encoder_ids,
+                )
+                if mapping.id in layer_encoders:
+                    raise ConfigError(
+                        f"{item_path}.id", f"doppelte Encoder-ID {mapping.id}"
+                    )
+                layer_encoders[mapping.id] = mapping
+            layer_playbacks: dict[str, PlaybackOverride] = {}
+            layer_playbacks_raw = _table(
+                layer_item.get("playbacks", {}), f"{layer_path}.playbacks"
+            )
+            for control, entry in layer_playbacks_raw.items():
+                item_path = f"{layer_path}.playbacks.{control}"
+                item = _table(entry, item_path)
+                _reject_unknown(
+                    item,
+                    {"page", "executor", "kind", "button", "accelerated"},
+                    item_path,
+                )
+                if control not in layer_controls:
+                    raise ConfigError(
+                        item_path,
+                        f"Control {control!r} kommt im Profil {device_name!r} nicht vor",
+                    )
+                if not item:
+                    raise ConfigError(item_path, "mindestens ein Feld angeben")
+                page: int | str | None = None
+                if "page" in item:
+                    if item["page"] == "current":
+                        page = "current"
+                    else:
+                        page = _int(item["page"], f"{item_path}.page")
+                        if page < 1:
+                            raise ConfigError(
+                                f"{item_path}.page",
+                                'muss mindestens 1 sein oder "current"',
+                            )
+                executor: int | None = None
+                if "executor" in item:
+                    executor = _int(item["executor"], f"{item_path}.executor")
+                    if executor < 1:
+                        raise ConfigError(
+                            f"{item_path}.executor", "muss mindestens 1 sein"
+                        )
+                kind: str | None = None
+                if "kind" in item:
+                    kind = _choice(
+                        item["kind"], f"{item_path}.kind", {"button", "fader"}
+                    )
+                button: int | None = None
+                if "button" in item:
+                    button = _int(item["button"], f"{item_path}.button")
+                    if not 1 <= button <= 3:
+                        raise ConfigError(
+                            f"{item_path}.button", "muss zwischen 1 und 3 liegen"
+                        )
+                    if kind == "fader":
+                        raise ConfigError(
+                            f"{item_path}.button",
+                            'button ist nur bei kind = "button" erlaubt',
+                        )
+                base = playbacks.get(control)
+                effective_kind = kind or (base.kind if base is not None else "button")
+                if button is not None and effective_kind == "fader":
+                    raise ConfigError(
+                        f"{item_path}.button",
+                        'button ist nur bei kind = "button" erlaubt',
+                    )
+                accelerated: bool | None = None
+                if "accelerated" in item:
+                    accelerated = _bool(
+                        item["accelerated"], f"{item_path}.accelerated"
+                    )
+                    if accelerated:
+                        if effective_kind != "fader":
+                            raise ConfigError(
+                                f"{item_path}.accelerated",
+                                'nur bei kind = "fader" erlaubt',
+                            )
+                        if value_kinds.get(control) != "encoder":
+                            raise ConfigError(
+                                f"{item_path}.accelerated",
+                                "nur für absolute Encoder erlaubt",
+                            )
+                if executor is None and base is None:
+                    raise ConfigError(item_path, "Executor fehlt und es gibt kein globales Ziel")
+                if page is None and base is None:
+                    raise ConfigError(item_path, "Page fehlt und es gibt kein globales Ziel")
+                layer_playbacks[control] = PlaybackOverride(
+                    page, executor, kind, button, accelerated
+                )
+            layers[number] = DeviceBankMapping(
+                ma_page, layer_keys, layer_encoders, layer_playbacks
+            )
+        device_banks[device_name] = DeviceBankSettings(bank_size, layers)
+
     return MappingSettings(
         modifiers=modifiers,
         keys=keys,
         encoders=tuple(encoders),
         screen_encoders=screen_encoders,
+        playbacks=playbacks,
+        device_banks=device_banks,
         acceleration=acceleration,
+        value_acceleration=value_acceleration,
         resolution=resolution,
     )
 
@@ -1011,6 +1740,39 @@ def _parse_acceleration(raw: Any) -> AccelerationSettings:
     if maximum < 1:
         raise ConfigError(f"{path}.max_multiplier", "muss mindestens 1 sein")
     return AccelerationSettings(curve, window, maximum)
+
+
+def _parse_value_acceleration(raw: Any) -> ValueAccelerationSettings:
+    defaults = ValueAccelerationSettings()
+    if raw is None:
+        return defaults
+    path = "mapping.value_acceleration"
+    data = _table(raw, path)
+    _reject_unknown(
+        data, {"curve", "window", "slow_rate", "fast_rate", "max_multiplier"}, path
+    )
+    curve = _choice(
+        data.get("curve", defaults.curve),
+        f"{path}.curve",
+        {"none", "linear", "exponential", "exponentiell"},
+    )
+    if curve == "exponentiell":
+        curve = "exponential"
+    window = _float(data.get("window", defaults.window), f"{path}.window")
+    if window <= 0:
+        raise ConfigError(f"{path}.window", "muss größer 0 sein")
+    slow_rate = _int(data.get("slow_rate", defaults.slow_rate), f"{path}.slow_rate")
+    if slow_rate < 1:
+        raise ConfigError(f"{path}.slow_rate", "muss mindestens 1 sein")
+    fast_rate = _int(data.get("fast_rate", defaults.fast_rate), f"{path}.fast_rate")
+    if fast_rate <= slow_rate:
+        raise ConfigError(f"{path}.fast_rate", "muss größer als slow_rate sein")
+    maximum = _float(
+        data.get("max_multiplier", defaults.max_multiplier), f"{path}.max_multiplier"
+    )
+    if maximum < 1:
+        raise ConfigError(f"{path}.max_multiplier", "muss mindestens 1 sein")
+    return ValueAccelerationSettings(curve, window, slow_rate, fast_rate, maximum)
 
 
 def _parse_resolution(raw: Any, modifiers: Mapping[str, ModifierMapping]) -> ResolutionSettings:
@@ -1074,9 +1836,11 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
             "profiles",
             "mapping",
             "hardkeys",
+            "layouts",
             "encoder",
             "web",
             "led",
+            "feedback",
             "screen_helper",
         },
         "config",
@@ -1088,7 +1852,8 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
     profiles = _parse_profiles(_require(data, "profiles", "config"))
     devices = _parse_devices(_require(data, "devices", "config"), profiles)
     ma2 = _parse_ma2(_require(data, "ma2", "config"))
-    mapping = _parse_mapping(_require(data, "mapping", "config"), profiles)
+    mapping = _parse_mapping(_require(data, "mapping", "config"), profiles, devices)
+    layouts = _parse_layouts(data.get("layouts"), profiles)
     hardkey_codes = _parse_hardkeys(data.get("hardkeys"))
     if ma2.hardkey_transport == "lua":
         _require_hardkey_codes(mapping, hardkey_codes)
@@ -1097,6 +1862,19 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
     logging_settings = _parse_logging(data.get("logging", {}))
     web_settings = _parse_web(data.get("web", {}))
     led_settings = _parse_led(data.get("led", {}))
+    feedback_settings = _parse_feedback(data.get("feedback", {}))
+    midi_devices = [name for name, device in devices.items() if device.backend == "midi"]
+    if led_settings.device is not None and led_settings.device not in devices:
+        raise ConfigError(
+            "led.device",
+            f"unbekanntes Gerät {led_settings.device!r}",
+        )
+    if len(midi_devices) > 1 and led_settings.device is None and led_settings.enabled:
+        raise ConfigError(
+            "led.device",
+            "bei mehreren MIDI-Geräten muss das LED-Gerät explizit gesetzt sein "
+            f"(konfiguriert: {', '.join(sorted(midi_devices))})",
+        )
     screen_helper_settings = _parse_screen_helper(data.get("screen_helper", {}))
 
     return AppConfig(
@@ -1106,11 +1884,13 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
         profiles=profiles,
         mapping=mapping,
         hardkeys=hardkey_codes,
+        layouts=layouts,
         reconnect=reconnect,
         rate_limit=rate_limit,
         logging=logging_settings,
         web=web_settings,
         led=led_settings,
+        feedback=feedback_settings,
         screen_helper=screen_helper_settings,
         source_path=source_path,
     )

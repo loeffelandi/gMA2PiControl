@@ -44,7 +44,18 @@ const devices = [
     vendor_product: '046a:0000',
     name_contains: 'Cherry',
     detected: { path: '/dev/input/event0' },
-    controls: { logical: ['fix'], keys: [], notes: [], encoders: [], midi_encoders: [] },
+    controls: {
+      logical: ['fix'],
+      keys: [],
+      notes: [],
+      encoders: [],
+      midi_encoders: [],
+      values: [],
+      inventory: [],
+      banks: [],
+    },
+    layout: null,
+    bank_size: 1,
   },
 ];
 

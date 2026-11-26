@@ -149,6 +149,51 @@ export interface Ma2Config {
   password_set?: boolean;
 }
 
+export interface DeviceValueControl {
+  control: string;
+  note: number;
+  kind: 'fader' | 'encoder';
+}
+
+export interface DeviceControlInventory {
+  id: string;
+  kind: 'button' | 'fader' | 'poti' | 'encoder' | 'relative-encoder';
+  label: string | null;
+}
+
+export interface DeviceBank {
+  number: number;
+  channel: number;
+  notes: Record<string, string>;
+}
+
+export interface LayoutCell {
+  label: string;
+  control: string | null;
+  col_span: number;
+  row_span: number;
+  color: string | null;
+  row: number | null;
+  col: number | null;
+}
+
+export interface DeviceLayout {
+  profile: string;
+  columns: number;
+  rows: { cells: LayoutCell[] }[];
+}
+
+export interface DeviceControls {
+  keys: { code: string; control: string }[];
+  notes: { note: number; control: string }[];
+  encoders: Record<string, unknown>[];
+  midi_encoders: Record<string, unknown>[];
+  values: DeviceValueControl[];
+  inventory: DeviceControlInventory[];
+  banks: DeviceBank[];
+  logical: string[];
+}
+
 export interface DeviceEntry {
   name: string;
   backend: string;
@@ -158,7 +203,23 @@ export interface DeviceEntry {
   vendor_product: string;
   name_contains: string | null;
   detected: Record<string, unknown> | null;
-  controls: Record<string, unknown>;
+  controls: DeviceControls;
+  layout: DeviceLayout | null;
+  bank_size: number;
+}
+
+export interface DeviceLearnStatus {
+  active: boolean;
+  device?: string;
+  bank?: number;
+  channel?: number;
+  current?: string | null;
+  total?: number;
+  index?: number;
+  captured?: { note: number; control: string }[];
+  paused?: boolean;
+  error?: string | null;
+  elapsed?: number;
 }
 
 export interface BackupEntry {
@@ -326,6 +387,30 @@ export class ApiClient {
   async devices(): Promise<DeviceEntry[]> {
     const body = await this.request<{ devices: DeviceEntry[] }>('GET', '/api/devices');
     return body.devices;
+  }
+
+  deviceLearnStatus(): Promise<DeviceLearnStatus> {
+    return this.request<DeviceLearnStatus>('GET', '/api/device-learn');
+  }
+
+  startDeviceLearn(device: string, bank: number, control?: string): Promise<DeviceLearnStatus> {
+    return this.request<DeviceLearnStatus>('POST', '/api/device-learn/start', {
+      device,
+      bank,
+      ...(control ? { control } : {}),
+    });
+  }
+
+  skipDeviceLearn(): Promise<DeviceLearnStatus> {
+    return this.request<DeviceLearnStatus>('POST', '/api/device-learn/skip', {});
+  }
+
+  cancelDeviceLearn(): Promise<{ cancelled: boolean }> {
+    return this.request<{ cancelled: boolean }>('POST', '/api/device-learn/cancel', {});
+  }
+
+  finishDeviceLearn(): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>('POST', '/api/device-learn/finish', {});
   }
 
   async backups(): Promise<BackupEntry[]> {

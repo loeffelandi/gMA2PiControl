@@ -259,3 +259,36 @@ async def test_connection_test_returns_no_password(tmp_path):
         assert seen["host"] == "10.0.0.9"
     finally:
         await client.close()
+
+
+def test_redacted_config_contains_layouts_profiles_and_bank_layers(make_config):
+    def mutate(data):
+        data["led"]["enabled"] = False
+        data["profiles"]["bank-test"] = {
+            "controls": [{"id": "bt_fader", "kind": "fader"}],
+            "banks": [{"number": 1, "notes": {"70": "bt_fader"}}],
+        }
+        data["devices"]["banktest"] = {
+            "backend": "midi",
+            "vendor_id": 0x04D8,
+            "product_id": 0x1234,
+            "profile": "bank-test",
+        }
+        data["layouts"] = {
+            "surface": {
+                "profile": "bank-test",
+                "columns": 1,
+                "rows": [{"cells": [{"label": "F", "control": "bt_fader"}]}],
+            }
+        }
+        data["mapping"]["device_banks"] = {
+            "banktest": {"bank_size": 5, "1": {"ma_page": 2}}
+        }
+
+    config = make_config(mutate)
+    data = redacted_config(config)
+    assert data["layouts"]["bank-test"]["columns"] == 1
+    assert data["profiles"]["bank-test"]["banks"][0]["notes"] == {70: "bt_fader"}
+    assert data["mapping"]["device_banks"]["banktest"]["bank_size"] == 5
+    assert "password_file" not in data["ma2"]
+    assert "pin" not in data["web"]

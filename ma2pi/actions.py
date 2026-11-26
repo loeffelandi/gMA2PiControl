@@ -88,6 +88,46 @@ class EncoderPress:
     screen: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class PlaybackButton:
+    """Press or release an executor button through ``playbacks_userInput``.
+
+    ``page``, ``executor`` and ``button`` are 1-based like the MA UI; the
+    frame builder converts them to the 0-based Web Remote indices.
+    """
+
+    page: int | str
+    executor: int
+    button: int
+    pressed: bool
+    released: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PlaybackFader:
+    """Set an executor fader to an absolute value between 0.0 and 1.0."""
+
+    page: int | str
+    executor: int
+    value: float
+
+
+@dataclass(frozen=True, slots=True)
+class PlaybacksRequest:
+    """Ask the console for executor states (faders and buttons).
+
+    ``start`` is the 0-based executor index and ``count`` the number of
+    executors to read.  ``items_type`` and ``view`` select the Web Remote view:
+    2 for executors below 100, 3 for button/floating executors.
+    """
+
+    page: int | str
+    start: int
+    count: int
+    items_type: int
+    view: int
+
+
 Action = Union[
     Press,
     Release,
@@ -97,6 +137,9 @@ Action = Union[
     ToggleScreenMode,
     EncoderPress,
     EncoderResolution,
+    PlaybackButton,
+    PlaybackFader,
+    PlaybacksRequest,
 ]
 
 EncoderAction = Union[EncoderSlot, EncoderAttribute]

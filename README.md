@@ -3,7 +3,7 @@
 `ma2pi` is a small Python 3.13 asyncio daemon that maps a Cherry POS Keyboard
 G86-63400EUADAA and an ASL MK2 E4B3 encoder panel to grandMA2 onPC. The only
 transport to onPC is the **Web Remote WebSocket API** (`ws://<host>:<port>/?ma=1`).
-MIDI is used solely as the input transport of the ASL panel; there is no MIDI,
+MIDI is used for controller input and LED output; there is no MIDI,
 OSC, Telnet or Showcockpit path to onPC, and no parameter unlock.
 
 > Status: the software is implemented and the test suite runs on the
@@ -198,11 +198,12 @@ sind erwartet und betreffen nur die Live-Daten, nicht das Laden der Oberfläche.
 ### `[led]`
 
 LED feedback for the ASL mode indicator (protocol verified live on the device).
+Executor LEDs of other controllers are configured with `[feedback]` (see below).
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `enabled` | bool | `false` | Turn LED output on. |
-| `device` | string | auto | Raw MIDI node; default is the configured `midi` device. |
+| `device` | string | auto | Device name of the raw MIDI node. With more than one `midi` device and LED output enabled this key is required; otherwise validation aborts instead of guessing. |
 | `note` | int | `9` | LED note of the button (9–11 = buttons 1–3). |
 | `attribute_color` | name or index | `"red"` | Colour in attribute mode. |
 | `screen_color` | name or index | `"green"` | Colour in screen mode. |
@@ -224,6 +225,66 @@ rightmost ASL button (`nipple_note`, 11) glows soft orange while idle
 `nipple_pressed_brightness = 127`). The middle ASL button (`fine_note`, 10) uses
 `fine_color = 123` at `fine_idle_brightness = 25` and `fine_pressed_brightness = 127`
 while held. Colours are palette indices (0–127).
+
+### `[feedback]`
+
+Mirrors executor state from the grandMA2 onto controller LEDs. `ma2pi` polls
+the Web Remote with `requestType = "playbacks"` for every page that has
+LED-capable button targets and sends one Note On per changed LED. Off by
+default; the shipped `config.toml` enables it.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `enabled` | bool | `false` | Poll executor state and emit LED frames. |
+| `interval_ms` | int | `250` | Poll interval, `100…2000`. |
+| `off_state` | `"dark"` or `"off"` | `"dark"` | Stopped executor: dark shade of its colour, or LED off. |
+| `fallback_color` | palette name | `"white"` | Used when the console reports no usable appearance colour. |
+
+Only controls with a button target in `[mapping.playbacks]` are polled. Bank
+overrides — both `[mapping.device_banks]` and alternate profile banks — are not
+followed yet; feedback uses the first (bank 1) note binding. A `page =
+"current"` target is requested with `pageIndex = -1`, so the LEDs follow page
+changes on the console. The colour is taken from the `bC`/`bdC` fields of the
+response and mapped to the closest of the 13 MIDIcraft palette colours. Pure
+black counts as "no colour"; the fallback applies.
+
+Polling stops while the Web Remote session is down. After a reconnect and after
+a MIDI device is replugged, all LED states are re-sent. `--dry-run` logs the
+intended frames instead of writing them. A running executor becomes bright, a
+stopped one dark (or off); nothing is interpolated, so faders have no feedback.
+
+### `[profiles.<name>.led_feedback]`
+
+Declares that a profile's controls drive LEDs. Validation only accepts the
+protocol it implements:
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `protocol` | string | `"midicraft-v2"` | Currently the only accepted value. |
+| `led_notes` | array of ints | all profile notes with a button target | Notes that actually have an LED. Controls on other notes are never lit. |
+
+```toml
+[profiles.midicraft-enc.led_feedback]
+protocol = "midicraft-v2"
+led_notes = [65, 66, 67, 68, 69, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84]
+```
+
+`midicraft-v2` sends note-on on channel 1 with the note of the button and a
+velocity that encodes mode and colour:
+
+| Velocity | Meaning |
+| --- | --- |
+| `0` | off |
+| `1–13` | static dark, palette index added |
+| `15–27` | static bright, palette index added |
+| `43–55` | flashing dark/off (not used) |
+| `124–127` | colour defined in the device menu (not used) |
+
+Palette order: white, red, orange, yellow, yellow-green, green, sea-green,
+cyan, lavender, blue, violet, magenta, pink. Configuration uses the names
+without hyphens (`yellowgreen`, `seagreen`) for `fallback_color` and in the
+`[led]` section. The encoder clicks (notes 55–59) and the faders of the
+MIDICRAFT.ENC have no LEDs and therefore stay dark.
 
 ### `[devices.<name>]`
 
@@ -262,7 +323,7 @@ KEY_ESC = "ma"
 A profile that references a control the opened device does not advertise aborts
 the daemon with the profile, device and control in the message.
 
-MIDI devices use `notes` and `midi_encoders` instead:
+MIDI devices use `notes`, `midi_encoders` and `midi_values` instead:
 
 ```toml
 [profiles.asl-mk2-e4b3.notes]
@@ -276,6 +337,11 @@ note = 1
 cw_velocity = 127   # default
 ccw_velocity = 1    # default
 direction = 1
+
+[[profiles.midicraft-enc.midi_values]]
+control = "mc_fader_1"
+note = 70
+kind = "fader"
 ```
 
 `notes` maps a MIDI note number (`0…127`) to a logical control. A note-on with
@@ -283,9 +349,17 @@ velocity greater than `1` is a press; velocity `1` or a note-off is a release.
 `midi_encoders` maps exactly one note per encoder; the velocity selects the
 direction, so every note-on counts as one detent and the note-off is ignored.
 `cw_velocity`/`ccw_velocity` must differ and lie between `1` and `127`.
-`direction = -1` swaps the two directions without touching the profile. A note
-may not be used as both a button and an encoder, and encoder IDs are unique
-across all profiles.
+`direction = -1` swaps the two directions without touching the profile.
+
+`midi_values` maps a note to an absolute value (`kind = "fader"` or
+`"encoder"`). Every note-on becomes a value between `0.0` (velocity `0`) and
+`1.0` (velocity `127`); the note-off is ignored and never produces a key
+release. A note may be used in only one of `notes`, `midi_encoders` and
+`midi_values`, and encoder IDs are unique across all profiles.
+
+Each configured MIDI device gets its own permanently open raw-MIDI handle.
+Opening or closing one device does not affect the others, and the handle is not
+reopened per message. A note may not be used as both a button and an encoder.
 
 The verified ASL layout is:
 
@@ -297,6 +371,104 @@ The verified ASL layout is:
 
 So `cw_velocity = 127` and `ccw_velocity = 1` are correct for this hardware;
 use `direction = -1` if a clockwise turn should decrement.
+
+The verified MIDICRAFT ENC layout (USB `04d8:e78c`, MIDI channel 1) is:
+
+| Note | Meaning |
+| --- | --- |
+| 55–59 | Encoder clicks 1–5 (flash) |
+| 60–64 | Absolute encoders 1–5 (`midi_values`, `kind = "encoder"`) |
+| 65–69 | Button row below the encoders (flash) |
+| 70–74 | Faders 1–5 (`midi_values`, `kind = "fader"`) |
+| 75–79 | Middle button row (flash) |
+| 80–84 | Bottom button row (flash) |
+
+Both faders and encoders send their absolute position, not a relative delta.
+The device must be the only reader of `/dev/snd/midiC*`; repeatedly opening and
+closing the raw-MIDI node can leave it silent until the next USB enumeration.
+`ma2pi` keeps the handle open for the daemon lifetime.
+
+The shipped `config.toml` assigns the ENC to executors like this (all `page =
+"current"`):
+
+| Control | Note | Target |
+| --- | --- | --- |
+| `mc_fader_1…5` | 70–74 | Exec 1–5, `fader` |
+| `mc_encoder_1…5` | 60–64 | Exec 6–10, `fader` |
+| `mc_click_1…5` | 55–59 | Exec 6–10, `button = 1` |
+| `mc_row1_1…5` | 65–69 | Exec 1–5, `button = 2` |
+| `mc_row2_1…5` | 75–79 | Exec 1–5, `button = 3` |
+| `mc_row3_1…5` | 80–84 | Floating execs 101–105, `button = 1` |
+
+A page change on the MIDICRAFT changes the MIDI channel and the note assignment
+together. Page 2 was measured as channel 2 with a different map (encoder click 1
+= note 0, fader 1 = note 15). The shipped profile therefore only contains the
+measured bank 1 notes; all other banks are empty and are filled by the learn
+mode. The bank is selected in the UI; it is not inferred from a device event.
+
+| Model | Controls | Bank default |
+| --- | --- | --- |
+| `PUSH²` | 30 buttons | channel = bank number |
+| `FADE²` | 5 faders, 20 buttons | channel = bank number |
+| `TURN²` | 15 buttons, 15 pots | channel = bank number |
+| `MIX²` | 5 faders, 15 buttons, 5 pots | channel = bank number |
+| `ENC` | 5 faders, 20 buttons, 5 absolute encoders | channel = bank number |
+| `SPOT` | 5 faders, 10 buttons, 10 pots | channel = bank number |
+
+#### Control inventory and banks
+
+Devices with freely assignable notes declare their physical controls first and
+bind notes per bank later. This keeps the surface and the learn mode usable
+before the first note is learned:
+
+```toml
+[[profiles.midicraft-enc.controls]]
+id = "mc_fader_1"
+kind = "fader"          # button | fader | poti | encoder | relative-encoder
+label = "Fader 1"       # optional
+
+[[profiles.midicraft-enc.banks]]
+number = 1
+channel = 1             # optional, defaults to number
+[profiles.midicraft-enc.banks.notes]
+55 = "mc_click_1"
+70 = "mc_fader_1"
+
+[[profiles.midicraft-enc.banks]]
+number = 2
+channel = 2
+[profiles.midicraft-enc.banks.notes]
+0 = "mc_click_1"
+15 = "mc_fader_1"
+```
+
+Up to 16 banks are allowed. Banks and channels are unique per profile; notes
+must be unique within a bank and may repeat on another bank channel. A bank
+entry requires the control inventory. Flat `notes`/`midi_encoders`/
+`midi_values` cannot be combined with `banks`; they are treated as bank 1 on
+channel 1. Without an inventory, controls are derived from the legacy
+sections.
+
+### `[layouts.<name>]`
+
+A schematic surface for a profile. Cells reference controls from the profile:
+
+```toml
+[layouts.cherry]
+profile = "cherry-g86"
+columns = 18
+
+[[layouts.cherry.rows]]
+cells = [
+  { label = "Ch Pg+", control = "ch_pg_plus", color = "blue", row_span = 2 },
+  { label = "Pause", control = "pause_big", color = "green", col_span = 4, row_span = 2 },
+  { label = "", col_span = 1 },
+]
+```
+
+`color` is one of `green`, `blue`, `red`, `yellow`, `grey`, `black`, `white`.
+`col_span`/`row_span` must be at least 1; a control may appear only once per
+layout. A layout is optional; without one the table view stays available.
 
 ### `[mapping.modifiers.<control>]`
 
@@ -320,6 +492,81 @@ or `encoder_press = <slot>`, never more than one.
   passed through unchanged, including semicolons.
 * `screen_mode = true` toggles the encoders between attribute and screen mode.
 * `encoder_press = <slot>` sends the real hardware encoder press (`gma.canbus.encoder(<index>, 0, true/false)`); the onPC applies its own resolution handling. Holding MA targets the screen encoder of that slot.
+
+### `[mapping.playbacks.<control>]`
+
+Maps a logical control to a grandMA2 executor through the Web Remote:
+
+```toml
+[mapping.playbacks."mc_fader_1"]
+page = "current"  # or a 1-based page number
+executor = 1      # 1-based, like the MA UI
+kind = "fader"
+
+[mapping.playbacks."mc_click_1"]
+page = 1
+executor = 1
+kind = "button"
+button = 1        # 1..3
+
+[mapping.playbacks."mc_encoder_1"]
+page = "current"
+executor = 2
+kind = "fader"
+accelerated = true  # optional, only for absolute encoders
+```
+
+`executor` is 1-based in the configuration and is converted to the 0-based
+`execIndex` of `playbacks_userInput` in the frame builder. A numeric `page` is
+converted to `pageIndex = page - 1`; `page = "current"` is sent as
+`pageIndex = -1`, which addresses the executor on the currently active master
+page (like the MA remote-input setting *Current Page on Master*). For input,
+`ma2pi` does not need to know the page, so a page change on the MA takes effect
+immediately; the optional executor feedback requests the current page the same
+way. Button events send `pressed`/`released` and preserve their order.
+Absolute values send `faderValue` between `0.0` and `1.0`; while several updates
+are still queued for the same executor, only the last value is sent. A control
+with a playback target is not additionally processed as a hardkey or command.
+
+`accelerated = true` is optional and only allowed on a fader target whose
+control is an absolute encoder in the profile. It keeps slow turns at 1:1 and
+amplifies fast turns; see `[mapping.value_acceleration]`. Physical faders and
+relative encoders are never accelerated.
+
+Executor feedback for LED-capable button targets is described in
+`[feedback]`; a fader target still has no feedback and no PickUp.
+
+### `[mapping.device_banks.<device>]`
+
+Bank layers override the global mapping for one device bank:
+
+```toml
+[mapping.device_banks.midicraft]
+bank_size = 5          # default: number of fader controls, else buttons
+
+[mapping.device_banks.midicraft.2]
+ma_page = 2            # optional; disables the bank offset for this bank
+
+[mapping.device_banks.midicraft.2.playbacks."mc_fader_1"]
+page = "current"
+executor = 20          # explicit, no offset
+kind = "fader"
+
+[mapping.device_banks.midicraft.2.keys."mc_row1_1"]
+hardkey = "Goto"
+```
+
+Resolution per event: explicit bank entry, then the global target shifted by
+`(bank - 1) * bank_size`, then nothing. Only executor targets are shifted;
+button numbers and the MA page stay unchanged. A bank with `ma_page` sends
+`Page <n>` once when the first event of a different bank arrives and applies no
+offset. Playback overrides may be partial and inherit missing fields from the
+global target. `accelerated` follows the same rules as in
+`[mapping.playbacks]`.
+Without PickUp, a page change can make an executor jump to the physical fader
+position on the next movement. Park the faders before changing pages; button
+LEDs follow the executor state through `[feedback]`, the faders themselves have
+no feedback.
 
 ### `[[mapping.encoders]]`
 
@@ -362,6 +609,26 @@ that slot from the section.
 | `curve` | string | `"none"` | `none`, `linear`, `exponential`/`exponentiell`. |
 | `window` | float | `0.10` | Rate measurement window in seconds, `> 0`. |
 | `max_multiplier` | float | `4.0` | Maximum acceleration, `>= 1`. |
+
+### `[mapping.value_acceleration]`
+
+Rate-based acceleration for absolute encoders on fader playback targets:
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `curve` | string | `"linear"` | `none`, `linear`, `exponential`/`exponentiell`. |
+| `window` | float | `0.12` | Rate measurement window in seconds, `> 0`. |
+| `slow_rate` | int | `2` | Up to this many changes per window stay 1:1, `>= 1`. |
+| `fast_rate` | int | `10` | At this rate the maximum is reached, `> slow_rate`. |
+| `max_multiplier` | float | `8.0` | Maximum acceleration, `>= 1`. |
+
+Only controls with `accelerated = true` on their fader playback target use this
+section; everything else is unaffected. The router keeps a virtual value per
+control: the first event adopts the raw value, later events add the raw change
+multiplied by the rate factor and clamp to `0.0`–`1.0`. Slow turns therefore
+stay fine, while a fast turn covers the full executor range. Because the value
+is virtual, the knob position and the executor can diverge after a fast turn;
+without PickUp the next movement may jump after a restart or page change.
 
 ### `[mapping.encoder_resolution.attribute]`
 
@@ -478,6 +745,49 @@ bleiben gesperrt. Der Dienst läuft weiterhin unprivilegiert;
 * Die PIN wird als HTTP-Cookie-Session gehalten. Nach einem Neustart des
   Dienstes ist eine erneute Anmeldung nötig.
 
+### Geräte und Mapping
+
+Die Seite **Geräte/Mapping** zeigt alle konfigurierten Geräte mit ihren
+logischen Controls; bei MIDI-Geräten erscheinen absolute Fader und Encoder mit
+Note und Art. Die Tabellen bearbeiten:
+
+* **Tasten** – Control, Aktion (Hardkey, Command, Screen-Modus, Screen,
+  Encoder-Druck) und Wert.
+* **Encoder** – Ziel-Slot oder festes Attribut sowie der Screen-Encoder 5–10.
+* **Modifier** – Hardkey, der beim Halten mitgesendet wird.
+* **Playback-Ziele** – Control, Art (`Button` oder `Fader`), Page, Executor und
+  bei Buttons die Nummer 1–3. Page und Executor sind wie in der MA 1-basiert;
+  als Page ist auch `current` erlaubt, dann folgt das Ziel der aktiven
+  Master-Page.
+  Ein Fader-Ziel hat keinen Button. Absolute Controls sind bereits als
+  deaktivierte Zeile vorhanden; „Aktiv“ setzt das Ziel, „Deaktivieren“ entfernt
+  es wieder.
+
+Die Oberfläche prüft Page, Executor und Button vor dem Speichern und markiert
+ungültige Felder. Serverseitig gelten dieselben Regeln. Ein Control mit
+Playback-Ziel löst keinen zusätzlichen Hardkey oder Command aus. Ein
+Executor-Feedback gibt es für Button-Ziele mit LED-fähiger Note über
+`[feedback]`; Fader bleiben ohne Rückmeldung und ohne PickUp: Nach einem
+Seitenwechsel springt ein Executor beim nächsten Faderwert auf die physische
+Position.
+
+Die Seite **Geräte** zeigt die schematische Fläche aus `[layouts.*]`, sofern für
+das Profil eine hinterlegt ist; sonst bleibt die Tabelle sichtbar. Über die
+Bankauswahl oben rechts wird die bearbeitete Bank gewählt. Ein Klick auf ein
+Control öffnet die Zuweisung; mehrere Klicks sammeln eine Auswahl in
+Klick-Reihenfolge. Der Dialog verteilt Executor-Nummern fortlaufend (Startwert
+und Schrittweite, Vorschau vor dem Speichern) und schreibt bei Bank 1 in
+`[mapping.keys]`/`[mapping.playbacks]`, bei höheren Bänken in die jeweilige
+`[mapping.device_banks]`-Ebene. Der Schalter **Beschleunigt** erscheint nur für
+absolute Encoder mit Fader-Ziel und nutzt dasselbe `accelerated`-Feld wie der
+Mapping-Editor.
+
+Der Learn-Modus auf der Geräte-Seite führt durch die noch ungebundenen Controls
+der gewählten Bank. Das physische Bedienen liefert die Note; Ereignisse auf einem
+anderen Kanal werden gemeldet und nicht übernommen. Erst **Speichern** schreibt
+die gelernten Noten atomar in das Profil, **Abbrechen** verwirft sie. Bankgröße,
+Kanal und optionale MA-Page der gewählten Bank lassen sich darunter bearbeiten.
+
 ### Änderungen anwenden
 
 Die Seiten **MA2**, **Geräte/Mapping**, **Backups** und **Erweitert** schreiben
@@ -542,7 +852,7 @@ python -m ma2pi --config /etc/ma2pi/config.toml --log-level DEBUG
   and exits 2.
 * `--list-devices` prints path, name, vendor/product and capabilities for every
   `/dev/input/event*`. It needs Linux and `evdev`.
-* `--dump-input` prints normalised `InputEvent` objects live.
+* `--dump-input` prints normalised events live as `kind control value=… device=… bank=… note=…`; the note is shown for MIDI inputs so a bank binding can be verified directly.
 * `--dry-run` opens no socket and logs every frame it would send.
 
 ## Dry-run: expected frame sequence

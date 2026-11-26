@@ -4,6 +4,7 @@
   import { ApiClient, type AuthStatus } from './lib/api';
   import AdvancedPage from './lib/AdvancedPage.svelte';
   import BackupsPage from './lib/BackupsPage.svelte';
+  import DevicesPage from './lib/DevicesPage.svelte';
   import Ma2Page from './lib/Ma2Page.svelte';
   import MappingPage from './lib/MappingPage.svelte';
   import NetworkPage from './lib/NetworkPage.svelte';
@@ -134,6 +135,8 @@
       <NetworkPage {api} store={statusStore} />
     {:else if page === 'mapping'}
       <MappingPage {api} learnStore={statusStore} />
+    {:else if page === 'devices'}
+      <DevicesPage {api} />
     {:else if page === 'advanced'}
       <AdvancedPage {api} />
     {:else if page === 'backups'}

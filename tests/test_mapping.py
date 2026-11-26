@@ -498,3 +498,52 @@ def test_native_transport_has_no_hold_upgrade(make_config):
     assert engine.flush_hold_upgrades(now[0]) == 0
     engine.handle(key("store_big", 0))
     assert sink.actions == [("press", "STORE", False), ("release", "STORE")]
+
+
+def _bank_key_config(make_config):
+    def mutate(data):
+        data["led"]["enabled"] = False
+        data["profiles"]["bank-test"] = {
+            "controls": [
+                {"id": "bt_button", "kind": "button"},
+                {"id": "bt_fader", "kind": "fader"},
+            ],
+            "banks": [
+                {"number": 1, "notes": {"55": "bt_button", "70": "bt_fader"}},
+                {"number": 2, "notes": {"55": "bt_button", "15": "bt_fader"}},
+            ],
+        }
+        data["devices"]["banktest"] = {
+            "backend": "midi",
+            "vendor_id": 0x04D8,
+            "product_id": 0x1234,
+            "name_contains": "Bank Test",
+            "profile": "bank-test",
+        }
+        data["mapping"]["keys"] = {"bt_button": {"hardkey": "Goto"}}
+        data["mapping"]["device_banks"] = {
+            "banktest": {
+                "2": {"keys": {"bt_button": {"hardkey": "Fix"}}}
+            }
+        }
+
+    return make_config(mutate)
+
+
+def test_bank_key_override(make_config):
+    config = _bank_key_config(make_config)
+    sink = Sink()
+    engine = MappingEngine(config, sink)
+    engine.handle(InputEvent("key", "bt_button", 1, "banktest", 2))
+    assert sink.actions[0][0] == "press"
+    assert sink.actions[0][1] == hardkeys.resolve("Fix")
+
+
+def test_release_after_bank_switch_uses_press_target(make_config):
+    config = _bank_key_config(make_config)
+    sink = Sink()
+    engine = MappingEngine(config, sink)
+    engine.handle(InputEvent("key", "bt_button", 1, "banktest", 2))
+    engine.handle(InputEvent("key", "bt_button", 0, "banktest", 1))
+    assert [action[0] for action in sink.actions] == ["press", "release"]
+    assert sink.actions[0][1] == sink.actions[1][1]

@@ -20,6 +20,7 @@ from aiohttp import web
 from .. import __version__
 from ..config import AppConfig, ConfigError
 from ..config_store import BackupError, ConfigWriteError
+from ..device_learn import DeviceLearnError
 from ..learn import LearnBusy, LearnManager
 from ..ma2_client import ConnectionClosed, HandshakeError, LoginError
 from ..network import (
@@ -54,6 +55,7 @@ DEFAULT_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
 CONFIG_KEY: web.AppKey[AppConfig] = web.AppKey("config", AppConfig)
 CONFIG_STORE_KEY: web.AppKey[ConfigStore] = web.AppKey("config_store", ConfigStore)
 LEARN_KEY: web.AppKey[LearnManager] = web.AppKey("learn", LearnManager)
+DEVICE_LEARN_KEY: web.AppKey[Any] = web.AppKey("device_learn", Any)
 NETWORK_KEY: web.AppKey[NetworkService] = web.AppKey("network", NetworkService)
 RECOVERY_KEY: web.AppKey[RecoveryService] = web.AppKey("recovery", RecoveryService)
 DIST_KEY: web.AppKey[Path] = web.AppKey("dist_dir", Path)
@@ -209,6 +211,7 @@ def create_app(
     config_store: ConfigStore | None = None,
     devices_provider: Callable[[], list[dict[str, Any]]] | None = None,
     learn_manager: LearnManager | None = None,
+    device_learn_manager: Any | None = None,
     network_service: NetworkService | None = None,
     recovery_service: RecoveryService | None = None,
 ) -> web.Application:
@@ -225,6 +228,8 @@ def create_app(
         app[CONFIG_STORE_KEY] = config_store
     if learn_manager is not None:
         app[LEARN_KEY] = learn_manager
+    if device_learn_manager is not None:
+        app[DEVICE_LEARN_KEY] = device_learn_manager
     if network_service is not None:
         app[NETWORK_KEY] = network_service
         if network_service.publish is None:
@@ -378,10 +383,10 @@ def create_app(
             return _apply_error(exc)
         return web.json_response(dataclasses.asdict(check))
 
-    async def devices(_: web.Request) -> web.Response:
+    async def devices(request: web.Request) -> web.Response:
         if devices_provider is not None:
             return web.json_response({"devices": devices_provider()})
-        config = app[CONFIG_KEY]
+        config = _current_config(request.app)
         summary = await asyncio.to_thread(detect_devices, config)
         return web.json_response({"devices": summary})
 
@@ -389,10 +394,9 @@ def create_app(
         learn = request.app.get(LEARN_KEY)
         if learn is None:
             return _json_error(503, "learn_unavailable", "Learn-Modus nicht aktiv")
-        try:
-            body = await request.json()
-        except Exception:
-            return _json_error(400, "invalid_json", "JSON-Körper erwartet")
+        body = await _json_body(request)
+        if body is None:
+            return _json_error(400, "invalid_json", "JSON-Objekt erwartet")
         try:
             result = learn.start(body.get("kind"), device=body.get("device"))
         except LearnBusy as exc:
@@ -414,6 +418,128 @@ def create_app(
             {
                 "cancelled": result is not None,
                 "learn": learn_event(result)["data"] if result is not None else None,
+            }
+        )
+
+    async def device_learn_state(request: web.Request) -> web.Response:
+        manager = request.app.get(DEVICE_LEARN_KEY)
+        if manager is None:
+            return _json_error(503, "device_learn_unavailable", "Learn-Modus nicht aktiv")
+        try:
+            return web.json_response(manager.status())
+        except DeviceLearnError:
+            return web.json_response({"active": False})
+
+    async def device_learn_start(request: web.Request) -> web.Response:
+        manager = request.app.get(DEVICE_LEARN_KEY)
+        if manager is None:
+            return _json_error(503, "device_learn_unavailable", "Learn-Modus nicht aktiv")
+        body = await _json_body(request)
+        if body is None:
+            return _json_error(400, "invalid_json", "JSON-Körper erwartet")
+        try:
+            bank = int(body.get("bank"))
+            control = body.get("control")
+            result = manager.start(
+                str(body.get("device")),
+                bank,
+                str(control) if control is not None else None,
+            )
+        except DeviceLearnError as exc:
+            message = str(exc)
+            status = 409 if "bereits" in message else 422
+            return _json_error(status, "device_learn_failed", message)
+        except (TypeError, ValueError):
+            return _json_error(422, "invalid_learn_request", "bank muss eine Zahl sein")
+        bus.publish({"type": "device_learn", "data": result})
+        return web.json_response(result)
+
+    async def device_learn_skip(request: web.Request) -> web.Response:
+        manager = request.app.get(DEVICE_LEARN_KEY)
+        if manager is None:
+            return _json_error(503, "device_learn_unavailable", "Learn-Modus nicht aktiv")
+        try:
+            result = manager.skip()
+        except DeviceLearnError as exc:
+            return _json_error(409, "device_learn_inactive", str(exc))
+        bus.publish({"type": "device_learn", "data": result})
+        return web.json_response(result)
+
+    async def device_learn_cancel(request: web.Request) -> web.Response:
+        manager = request.app.get(DEVICE_LEARN_KEY)
+        if manager is None:
+            return _json_error(503, "device_learn_unavailable", "Learn-Modus nicht aktiv")
+        result = manager.cancel()
+        return web.json_response({"cancelled": result is not None, "learn": result})
+
+    async def device_learn_finish(request: web.Request) -> web.Response:
+        manager = request.app.get(DEVICE_LEARN_KEY)
+        if manager is None:
+            return _json_error(503, "device_learn_unavailable", "Learn-Modus nicht aktiv")
+        try:
+            device, bank, captured = manager.peek()
+        except DeviceLearnError as exc:
+            return _json_error(409, "device_learn_inactive", str(exc))
+        if not captured:
+            manager.clear()
+            return web.json_response({"saved": False, "device": device, "bank": bank})
+        store = request.app.get(CONFIG_STORE_KEY)
+        if store is None:
+            return _json_error(503, "config_store_unavailable", "Kein Config-Store aktiv")
+        config = store.config
+        try:
+            profile_name = config.devices[device].profile
+            profile = config.profiles[profile_name]
+        except KeyError:
+            manager.clear()
+            return _json_error(
+                409, "device_learn_stale", f"Gerät {device!r} ist nicht mehr konfiguriert"
+            )
+        bank_profile = profile.bank(bank)
+        if bank_profile is not None:
+            for note, control in captured.items():
+                for entry in profile.banks:
+                    if entry.channel != bank_profile.channel:
+                        continue
+                    existing = entry.notes.get(note)
+                    if existing is not None and existing != control:
+                        return _json_error(
+                            409,
+                            "device_learn_conflict",
+                            f"Note {note} ist inzwischen {existing} zugeordnet",
+                        )
+        banks = []
+        for entry in profile.banks:
+            notes = {str(note): control for note, control in entry.notes.items()}
+            if entry.number == bank:
+                relearned = set(captured.values())
+                notes = {
+                    note: control
+                    for note, control in notes.items()
+                    if control not in relearned
+                }
+                notes.update({str(note): control for note, control in captured.items()})
+            banks.append({"number": entry.number, "channel": entry.channel, "notes": notes})
+        patch = {"profiles": {profile_name: {"banks": banks}}}
+        try:
+            updated = await store.apply(patch)
+        except ApplyBusy as exc:
+            return _json_error(409, "apply_busy", str(exc))
+        except Exception as exc:
+            return _apply_error(exc)
+        manager.set_config(updated)
+        manager.clear()
+        bus.publish({"type": "config", "data": {"generation": store.generation}})
+        return web.json_response(
+            {
+                "saved": True,
+                "device": device,
+                "bank": bank,
+                "generation": store.generation,
+                "notes": [
+                    {"note": note, "control": control}
+                    for note, control in sorted(captured.items())
+                ],
             }
         )
 
@@ -555,6 +681,11 @@ def create_app(
     app.router.add_get("/api/devices", devices)
     app.router.add_post("/api/learn/start", learn_start)
     app.router.add_post("/api/learn/cancel", learn_cancel)
+    app.router.add_get("/api/device-learn", device_learn_state)
+    app.router.add_post("/api/device-learn/start", device_learn_start)
+    app.router.add_post("/api/device-learn/skip", device_learn_skip)
+    app.router.add_post("/api/device-learn/cancel", device_learn_cancel)
+    app.router.add_post("/api/device-learn/finish", device_learn_finish)
     app.router.add_get("/api/backups", backups)
     app.router.add_post("/api/backups", create_backup)
     app.router.add_post("/api/backups/{backup_id}/restore", restore_backup)

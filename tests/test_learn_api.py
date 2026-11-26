@@ -185,3 +185,144 @@ async def test_learn_timeout_returns_to_normal_operation(config):
             except asyncio.CancelledError:
                 pass
         bus.unsubscribe(events)
+
+
+class _FakeStore:
+    def __init__(self, config):
+        self.config = config
+        self.generation = 0
+        self.patches: list[dict] = []
+
+    async def apply(self, patch, *, password=None):
+        self.patches.append(patch)
+        self.generation += 1
+        return self.config
+
+
+def _banked_config(make_config):
+    def mutate(data):
+        data["led"]["enabled"] = False
+        data["profiles"]["bank-test"] = {
+            "controls": [
+                {"id": "bt_fader", "kind": "fader"},
+                {"id": "bt_button", "kind": "button"},
+            ],
+            "banks": [
+                {"number": 1, "notes": {"70": "bt_fader", "55": "bt_button"}},
+                {"number": 2, "notes": {}},
+            ],
+        }
+        data["devices"]["banktest"] = {
+            "backend": "midi",
+            "vendor_id": 0x04D8,
+            "product_id": 0x1234,
+            "name_contains": "Bank Test",
+            "profile": "bank-test",
+        }
+        data["layouts"] = {
+            "surface": {
+                "profile": "bank-test",
+                "columns": 2,
+                "rows": [
+                    {
+                        "cells": [
+                            {"label": "F", "control": "bt_fader"},
+                            {"label": "B", "control": "bt_button"},
+                        ]
+                    }
+                ],
+            }
+        }
+
+    return make_config(mutate)
+
+
+async def test_device_learn_api_start_skip_finish(make_config):
+    from ma2pi.device_learn import DeviceLearnManager
+    from ma2pi.hid_input import RawEvent
+
+    config = _banked_config(make_config)
+    store = _FakeStore(config)
+    manager = DeviceLearnManager(config)
+    client = TestClient(
+        TestServer(
+            create_app(
+                config,
+                dist_dir=Path("/nonexistent"),
+                config_store=store,
+                device_learn_manager=manager,
+            )
+        )
+    )
+    await client.start_server()
+    headers = {"X-Ma2pi-Request": "1"}
+    try:
+        started = await client.post(
+            "/api/device-learn/start",
+            json={"device": "banktest", "bank": 2},
+            headers=headers,
+        )
+        assert started.status == 200
+        status = await started.json()
+        assert status["current"] == "bt_fader"
+
+        busy = await client.post(
+            "/api/device-learn/start",
+            json={"device": "banktest", "bank": 2},
+            headers=headers,
+        )
+        assert busy.status == 409
+
+        manager.handle_raw("banktest", RawEvent("note_on", "15", 127, channel=2))
+        skipped = await client.post("/api/device-learn/skip", json={}, headers=headers)
+        assert skipped.status == 200
+
+        manager.handle_raw("banktest", RawEvent("note_on", "0", 127, channel=2))
+        finished = await client.post("/api/device-learn/finish", json={}, headers=headers)
+        assert finished.status == 200
+        body = await finished.json()
+        assert body["saved"] is True
+        assert store.patches
+        banks = store.patches[-1]["profiles"]["bank-test"]["banks"]
+        assert banks[1]["notes"] == {"15": "bt_fader"}
+    finally:
+        await client.close()
+
+
+async def test_device_learn_api_relearns_bound_control(make_config):
+    from ma2pi.device_learn import DeviceLearnManager
+    from ma2pi.hid_input import RawEvent
+
+    config = _banked_config(make_config)
+    store = _FakeStore(config)
+    manager = DeviceLearnManager(config)
+    client = TestClient(
+        TestServer(
+            create_app(
+                config,
+                dist_dir=Path("/nonexistent"),
+                config_store=store,
+                device_learn_manager=manager,
+            )
+        )
+    )
+    await client.start_server()
+    headers = {"X-Ma2pi-Request": "1"}
+    try:
+        started = await client.post(
+            "/api/device-learn/start",
+            json={"device": "banktest", "bank": 1, "control": "bt_fader"},
+            headers=headers,
+        )
+        assert started.status == 200
+        status = await started.json()
+        assert status["current"] == "bt_fader"
+        assert status["total"] == 1
+
+        manager.handle_raw("banktest", RawEvent("note_on", "72", 127, channel=1))
+        finished = await client.post("/api/device-learn/finish", json={}, headers=headers)
+        assert finished.status == 200
+        banks = store.patches[-1]["profiles"]["bank-test"]["banks"]
+        assert banks[0]["notes"] == {"55": "bt_button", "72": "bt_fader"}
+    finally:
+        await client.close()

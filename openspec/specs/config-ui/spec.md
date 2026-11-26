@@ -208,3 +208,110 @@ PIN enthalten.
 
 - **WHEN** ein schreibender Aufruf ohne JSON-Inhalt oder ohne den erwarteten Header eintrifft
 - **THEN** wird er mit einem Client-Fehler abgelehnt und die Konfiguration bleibt unverändert
+
+
+### Requirement: Playback-Ziele im Mapping-Editor
+
+Der Mapping-Editor SHALL logische Controls, die als absoluter Wert konfiguriert
+sind, gemeinsam mit Tasten und Encodern anzeigen und je Control ein
+Playback-Ziel mit Page, Executor, Art (`button` oder `fader`) und optionaler
+Button-Nummer (`1..3`) bearbeiten lassen. Als Page MUST eine Zahl ab 1 oder
+`current` akzeptiert werden. Vor dem Speichern MUST die Oberfläche die
+Wertebereichsprüfung durchführen und Fehler am betroffenen Feld anzeigen.
+
+#### Scenario: Control einem Executor zuweisen
+
+- **WHEN** der Benutzer für einen Fader das Ziel `page = 1`, `executor = 5`,
+  `kind = "fader"` einträgt und speichert
+- **THEN** wird die Konfiguration über den bestehenden Schreibendpunkt
+  übernommen und das Ziel erscheint anschließend in der Mapping-Ansicht
+
+#### Scenario: Aktuelle Master-Page wählen
+
+- **WHEN** der Benutzer als Page `current` einträgt
+- **THEN** speichert die Oberfläche `page = "current"` und das Ziel folgt der
+  aktiven Master-Page
+
+#### Scenario: Ungültiger Executor
+
+- **WHEN** der Benutzer `executor = 0` oder eine Page eingibt, die weder eine
+  Zahl ab 1 noch `current` ist
+- **THEN** zeigt die Oberfläche den Fehler am Feld an und sendet keine
+  Konfigurationsänderung
+
+#### Scenario: Button-Nummer bei Fader-Ziel
+
+- **WHEN** der Benutzer für `kind = "fader"` eine Button-Nummer einträgt
+- **THEN** weist die Oberfläche auf den ungültigen Wert hin und verhindert das
+  Speichern
+
+### Requirement: Absolute Controls in der Geräteübersicht
+
+Die Geräteübersicht SHALL je konfiguriertem MIDI-Gerät die absoluten Controls
+mit Note und Art (`fader` oder `encoder`) anzeigen. Die Anzeige MUST aus der
+Konfiguration stammen und darf nicht davon abhängen, ob das Gerät gerade
+angeschlossen ist.
+
+#### Scenario: MIDICRAFT ENC wird angezeigt
+
+- **WHEN** das Gerät `midicraft` mit seinem Profil konfiguriert und
+  angeschlossen ist
+- **THEN** listet die Geräteübersicht fünf Fader und fünf absolute Encoder mit
+  ihren Notes und logischen Namen
+
+#### Scenario: Gerät ist nicht angeschlossen
+
+- **WHEN** das konfigurierte MIDICRAFT ENC nicht erkannt wird
+- **THEN** bleiben seine Controls in der Übersicht sichtbar und sind als nicht
+  erkannt markiert
+
+
+### Requirement: Checkbox je absolutem Encoder
+
+Der Mapping-Editor SHALL für jedes Playback-Ziel mit `kind = "fader"`, dessen
+Control im Profil als absoluter Encoder geführt wird, eine Checkbox
+„Beschleunigt“ anzeigen. Die Checkbox MUST den gespeicherten Wert
+`accelerated` widerspiegeln; ohne gespeicherten Wert MUST sie ausgeschaltet
+sein. Für Button-Ziele und für Controls, die im Profil als Fader geführt
+werden, MUST keine Checkbox erscheinen.
+
+#### Scenario: Encoder mit Fader-Ziel
+
+- **WHEN** ein absoluter Encoder ein Fader-Ziel auf Executor 3 hat und
+  `accelerated = true` gespeichert ist
+- **THEN** zeigt die Zeile die Checkbox aktiviert an
+
+#### Scenario: Physischer Fader
+
+- **WHEN** ein Control im Profil als Fader geführt wird
+- **THEN** zeigt seine Playback-Zeile keine Beschleunigungs-Checkbox
+
+#### Scenario: Button-Ziel
+
+- **WHEN** ein Playback-Ziel `kind = "button"` hat
+- **THEN** zeigt die Zeile keine Beschleunigungs-Checkbox
+
+### Requirement: Speichern der Checkbox
+
+Beim Speichern MUST ein eingeschalteter Wert als `accelerated = true` und ein
+ausgeschalteter Wert als `accelerated = false` oder ohne Feld geschrieben
+werden. Lehnt das Backend die Kombination ab, MUST der Editor die Fehlermeldung
+an der betroffenen Zeile anzeigen und die bisherige Konfiguration behalten.
+
+#### Scenario: Beschleunigung einschalten
+
+- **WHEN** der Benutzer die Checkbox für einen Encoder aktiviert und speichert
+- **THEN** enthält das gespeicherte Playback-Ziel `accelerated = true`
+
+#### Scenario: Beschleunigung ausschalten
+
+- **WHEN** der Benutzer die Checkbox für einen Encoder deaktiviert und speichert
+- **THEN** enthält das gespeicherte Playback-Ziel kein aktives `accelerated`
+  mehr und das Control wird wieder 1:1 übertragen
+
+#### Scenario: Ungültige Kombination
+
+- **WHEN** die Konfiguration die Checkbox für ein Control speichert, das nicht
+  als absoluter Encoder geführt wird
+- **THEN** zeigt der Editor die Fehlermeldung des Backends an der Zeile an und
+  behält die bisherige Konfiguration bei

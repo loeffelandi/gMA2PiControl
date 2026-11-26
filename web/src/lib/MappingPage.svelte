@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  import { ApiError, type ApiClient, type DeviceEntry, type LearnResult } from './api';
+  import { ApiError, type ApiClient, type DeviceEntry, type DeviceValueControl, type LearnResult } from './api';
   import type { StatusStore } from './status';
 
   type KeyKind = 'hardkey' | 'command' | 'screen_mode' | 'screen' | 'encoder_press';
   type EncoderKind = 'slot' | 'attribute';
+  type PlaybackKind = 'button' | 'fader';
 
   interface KeyRow {
     control: string;
@@ -25,15 +26,28 @@
     hardkey: string;
   }
 
+  interface PlaybackRow {
+    control: string;
+    page: string;
+    executor: string;
+    kind: PlaybackKind;
+    button: string;
+    accelerated: boolean;
+    enabled: boolean;
+    fixed: boolean;
+  }
+
   let { api, learnStore }: { api: ApiClient; learnStore?: StatusStore } = $props();
 
   let devices = $state<DeviceEntry[]>([]);
   let keyRows = $state<KeyRow[]>([]);
   let encoderRows = $state<EncoderRow[]>([]);
   let modifierRows = $state<ModifierRow[]>([]);
+  let playbackRows = $state<PlaybackRow[]>([]);
   let originalKeys: string[] = [];
   let originalModifiers: string[] = [];
   let originalScreenSlots: string[] = [];
+  let originalPlaybacks: string[] = [];
   let loading = $state(true);
   let busy = $state(false);
   let dirty = $state(false);
@@ -52,7 +66,7 @@
 
   const keyControls = $derived(
     [...new Set(devices.flatMap((device) => {
-      const controls = device.controls as {
+      const controls = device.controls as unknown as {
         keys?: { control: string }[];
         notes?: { control: string }[];
       };
@@ -63,9 +77,21 @@
     }))].sort(),
   );
 
+  const allControls = $derived(
+    [...new Set([
+      ...keyControls,
+      ...devices.flatMap((device) =>
+        valueControlsOf(device).map((entry) => entry.control),
+      ),
+    ])].sort(),
+  );
+
+  function valueControlsOf(device: DeviceEntry): DeviceValueControl[] {    return ((device.controls as { values?: DeviceValueControl[] }).values ?? []);
+  }
+
   const encoderIds = $derived(
     [...new Set(devices.flatMap((device) => {
-      const controls = device.controls as {
+      const controls = device.controls as unknown as {
         encoders?: { id: number }[];
         midi_encoders?: { id: number }[];
       };
@@ -74,6 +100,16 @@
         ...(controls.midi_encoders ?? []).map((entry) => entry.id),
       ];
     }))].sort((left, right) => left - right),
+  );
+
+  const encoderControls = $derived(
+    new Set(
+      devices.flatMap((device) =>
+        valueControlsOf(device)
+          .filter((entry) => entry.kind === 'encoder')
+          .map((entry) => entry.control),
+      ),
+    ),
   );
 
   function errorText(error: unknown): string {
@@ -98,23 +134,25 @@
 
   function deviceForControl(control: string): string | undefined {
     return devices.find((device) => {
-      const controls = device.controls as {
+      const controls = device.controls as unknown as {
         keys?: { control: string }[];
         notes?: { control: string }[];
         encoders?: { control: string }[];
         midi_encoders?: { control: string }[];
+        values?: DeviceValueControl[];
       };
       const names = [
         ...(controls.keys ?? []).map((entry) => entry.control),
         ...(controls.notes ?? []).map((entry) => entry.control),
         ...(controls.encoders ?? []).map((entry) => entry.control),
         ...(controls.midi_encoders ?? []).map((entry) => entry.control),
+        ...(controls.values ?? []).map((entry) => entry.control),
       ];
       return names.includes(control);
     })?.name;
   }
 
-  function loadMapping(config: Record<string, unknown>): void {
+  function loadMapping(config: Record<string, unknown>, deviceList: DeviceEntry[]): void {
     const mapping = (config.mapping ?? {}) as Record<string, unknown>;
     const keys = (mapping.keys ?? {}) as Record<string, Record<string, unknown>>;
     originalKeys = Object.keys(keys);
@@ -145,13 +183,44 @@
       control,
       hardkey: String(modifiers[control].hardkey),
     }));
+
+    const playbacks = (mapping.playbacks ?? {}) as Record<string, Record<string, unknown>>;
+    originalPlaybacks = Object.keys(playbacks);
+    const absolute = new Set(
+      deviceList.flatMap((device) => valueControlsOf(device).map((entry) => entry.control)),
+    );
+    const rows: PlaybackRow[] = Object.entries(playbacks).map(([control, entry]) => ({
+      control,
+      page: String(entry.page ?? ''),
+      executor: String(entry.executor ?? ''),
+      kind: entry.kind === 'fader' ? 'fader' : 'button',
+      button: String(entry.button ?? 1),
+      accelerated: entry.accelerated === true,
+      enabled: true,
+      fixed: absolute.has(control),
+    }));
+    const present = new Set(rows.map((row) => row.control));
+    for (const control of [...absolute].sort()) {
+      if (present.has(control)) continue;
+      rows.push({
+        control,
+        page: '',
+        executor: '',
+        kind: 'fader',
+        button: '1',
+        accelerated: false,
+        enabled: false,
+        fixed: true,
+      });
+    }
+    playbackRows = rows;
   }
 
   onMount(async () => {
     try {
       const [config, deviceList] = await Promise.all([api.config(), api.devices()]);
       devices = deviceList;
-      loadMapping(config);
+      loadMapping(config, deviceList);
     } catch (error) {
       message = { ok: false, text: errorText(error) };
     } finally {
@@ -222,6 +291,65 @@
     dirty = true;
   }
 
+  function addPlayback(): void {
+    const used = new Set(playbackRows.map((row) => row.control));
+    const next = allControls.find((control) => !used.has(control)) ?? '';
+    if (!next) {
+      message = { ok: false, text: 'Alle Controls haben bereits ein Playback-Ziel.' };
+      return;
+    }
+    playbackRows = [
+      ...playbackRows,
+      { control: next, page: '1', executor: '1', kind: 'button', button: '1', accelerated: false, enabled: true, fixed: false },
+    ];
+    dirty = true;
+  }
+
+  function removePlayback(index: number): void {
+    const row = playbackRows[index];
+    if (!row) return;
+    if (row.fixed) {
+      row.enabled = false;
+    } else {
+      playbackRows = removeAt(playbackRows, index);
+    }
+    dirty = true;
+  }
+
+  function positiveInteger(value: string): boolean {
+    const number = Number(value);
+    return Number.isInteger(number) && number >= 1;
+  }
+
+  function validPage(value: string): boolean {
+    return value === 'current' || positiveInteger(value);
+  }
+
+  function playbackInvalid(row: PlaybackRow): boolean {
+    if (!row.enabled) return false;
+    if (!row.control) return true;
+    if (!validPage(row.page) || !positiveInteger(row.executor)) return true;
+    if (row.kind === 'button' && !['1', '2', '3'].includes(String(Number(row.button)))) return true;
+    return false;
+  }
+
+  function playbackError(): string | null {
+    const seen = new Set<string>();
+    for (const row of playbackRows) {
+      if (!row.enabled) continue;
+      if (seen.has(row.control)) return `Control ${row.control} ist doppelt zugewiesen.`;
+      seen.add(row.control);
+      if (!row.control) return 'Bitte für jedes aktive Playback-Ziel ein Control wählen.';
+      if (!validPage(row.page) || !positiveInteger(row.executor)) {
+        return `Page von ${row.control} muss eine Zahl ab 1 oder "current" sein, Executor eine Zahl ab 1.`;
+      }
+      if (row.kind === 'button' && !['1', '2', '3'].includes(String(Number(row.button)))) {
+        return `Button von ${row.control} muss 1, 2 oder 3 sein.`;
+      }
+    }
+    return null;
+  }
+
   function removeAt<T>(rows: T[], index: number): T[] {
     return rows.filter((_, position) => position !== index);
   }
@@ -265,14 +393,47 @@
     for (const slot of originalScreenSlots) {
       if (!(slot in screenEncoders)) screenEncoders[slot] = null;
     }
+    const playbacks: Record<string, Record<string, unknown> | null> = {};
+    for (const row of playbackRows) {
+      if (!row.enabled || !row.control) continue;
+      const page = row.page === 'current' ? 'current' : Number(row.page);
+      if (page !== 'current' && (!Number.isInteger(page) || page < 1)) continue;
+      const executor = Number(row.executor);
+      if (!Number.isInteger(executor) || executor < 1) continue;
+      if (row.kind === 'button') {
+        const target: Record<string, unknown> = {
+          page,
+          executor,
+          kind: 'button',
+          button: Number(row.button),
+        };
+        if (encoderControls.has(row.control)) target.accelerated = false;
+        playbacks[row.control] = target;
+      } else {
+        const target: Record<string, unknown> = { page, executor, kind: 'fader' };
+        if (encoderControls.has(row.control)) target.accelerated = row.accelerated;
+        playbacks[row.control] = target;
+      }
+    }
+    for (const control of originalPlaybacks) {
+      if (!(control in playbacks)) playbacks[control] = null;
+    }
     const mapping: Record<string, unknown> = { keys, encoders, modifiers };
     if (Object.keys(screenEncoders).length > 0) {
       mapping.screen_encoders = screenEncoders;
+    }
+    if (Object.keys(playbacks).length > 0) {
+      mapping.playbacks = playbacks;
     }
     return { mapping };
   }
 
   async function save(): Promise<void> {
+    const invalid = playbackError();
+    if (invalid) {
+      message = { ok: false, text: invalid };
+      return;
+    }
     busy = true;
     message = null;
     try {
@@ -302,6 +463,14 @@
             {device.vendor_product} · {device.profile} ·
             {device.detected ? 'erkannt' : 'nicht erkannt'}
           </span>
+          {#if valueControlsOf(device).length > 0}
+            <span class="muted">
+              · Werte:
+              {valueControlsOf(device)
+                .map((entry) => `${entry.control} (${entry.note}, ${entry.kind})`)
+                .join(', ')}
+            </span>
+          {/if}
         </li>
       {/each}
     </ul>
@@ -509,6 +678,136 @@
       </tbody>
     </table>
     <button type="button" onclick={addModifier}>Modifier hinzufügen</button>
+
+    <h2>Playback-Ziele</h2>
+    <p class="muted">
+      Fader und absolute Encoder senden ihren Wert direkt an einen Executor.
+      Page und Executor sind wie in der MA 1-basiert; für Page kann auch
+      <code>current</code> stehen, dann folgt das Ziel der aktuell aktiven
+      Master-Page. Button 1–3 entspricht den drei Executor-Buttons. Ohne PickUp
+      springt ein Executor nach einem Seitenwechsel auf die physische
+      Faderposition.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Aktiv</th>
+          <th>Control</th>
+          <th>Art</th>
+          <th>Page</th>
+          <th>Executor</th>
+          <th>Button</th>
+          <th>Beschl.</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each playbackRows as row, index (index)}
+          <tr data-control={row.control}>
+            <td>
+              <input
+                type="checkbox"
+                bind:checked={row.enabled}
+                onchange={() => (dirty = true)}
+                data-testid="playback-enabled"
+              />
+            </td>
+            <td>
+              {#if row.fixed}
+                <span>{row.control}</span>
+              {:else}
+                <select
+                  bind:value={row.control}
+                  onchange={() => (dirty = true)}
+                  data-testid="playback-control"
+                >
+                  {#each allControls as control}
+                    <option value={control}>{control}</option>
+                  {/each}
+                  {#if !allControls.includes(row.control)}
+                    <option value={row.control}>{row.control}</option>
+                  {/if}
+                </select>
+              {/if}
+            </td>
+            <td>
+              <select
+                bind:value={row.kind}
+                onchange={() => (dirty = true)}
+                data-testid="playback-kind"
+              >
+                <option value="button">Button</option>
+                <option value="fader">Fader</option>
+              </select>
+            </td>
+            <td>
+              <input
+                type="text"
+                bind:value={row.page}
+                oninput={() => (dirty = true)}
+                class:error={playbackInvalid(row)}
+                disabled={!row.enabled}
+                placeholder="1 / current"
+                data-testid="playback-page"
+              />
+            </td>
+            <td>
+              <input
+                type="text"
+                inputmode="numeric"
+                bind:value={row.executor}
+                oninput={() => (dirty = true)}
+                class:error={playbackInvalid(row)}
+                disabled={!row.enabled}
+                data-testid="playback-executor"
+              />
+            </td>
+            <td>
+              {#if row.kind === 'button'}
+                <input
+                  type="text"
+                  inputmode="numeric"
+                  bind:value={row.button}
+                  oninput={() => (dirty = true)}
+                  class:error={playbackInvalid(row)}
+                  disabled={!row.enabled}
+                  data-testid="playback-button"
+                />
+              {:else}
+                <span class="muted">–</span>
+              {/if}
+            </td>
+            <td>
+              {#if row.kind === 'fader' && encoderControls.has(row.control)}
+                <input
+                  type="checkbox"
+                  bind:checked={row.accelerated}
+                  onchange={() => (dirty = true)}
+                  disabled={!row.enabled}
+                  title="Langsam fein, schnell weit"
+                  data-testid="playback-accelerated"
+                />
+              {:else}
+                <span class="muted">–</span>
+              {/if}
+            </td>
+            <td>
+              <button
+                type="button"
+                class="danger"
+                onclick={() => removePlayback(index)}
+                data-testid="playback-remove"
+              >
+                {row.fixed ? 'Deaktivieren' : 'Entfernen'}
+              </button>
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+    <button type="button" onclick={addPlayback} data-testid="playback-add">
+      Playback-Ziel hinzufügen
+    </button>
 
     <div class="actions">
       <button type="button" onclick={save} disabled={busy || !dirty}>

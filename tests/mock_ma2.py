@@ -11,7 +11,7 @@ import asyncio
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import websockets
 
@@ -65,6 +65,7 @@ class MockMa2Server:
         self.record_path = record_path
         self.frames: list[dict[str, Any]] = []
         self.preset_types: dict[str, Any] = DEFAULT_PRESET_TYPES
+        self.playbacks: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None
         self.logins: list[dict[str, Any]] = []
         self.connections = 0
         self._server: Any = None
@@ -150,6 +151,12 @@ class MockMa2Server:
                 self._record(frame)
                 if frame.get("requestType") == "presetTypes":
                     await websocket.send(json.dumps(self.preset_types))
+                    continue
+                if frame.get("requestType") == "playbacks":
+                    if self.playbacks is not None:
+                        response = self.playbacks(frame)
+                        if response is not None:
+                            await websocket.send(json.dumps(response))
                     continue
                 count += 1
                 if self.drop_after is not None and count >= self.drop_after:

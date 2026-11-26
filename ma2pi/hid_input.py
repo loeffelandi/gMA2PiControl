@@ -51,6 +51,7 @@ class RawEvent:
     value: int
     abs_min: int | None = None
     abs_max: int | None = None
+    channel: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -356,6 +357,13 @@ class HidManager:
     def open_devices(self) -> dict[str, str]:
         return {name: entry.info.path for name, entry in self._open.items()}
 
+    def set_config(self, config: AppConfig) -> None:
+        """Adopt an applied configuration; readers look profiles up per event."""
+
+        self.config = config
+        self._unknown_codes.clear()
+        self._missing_warned.clear()
+
     async def run(self, queue: "asyncio.Queue[InputEvent | DeviceLost]") -> None:
         try:
             while not self._stopping:
@@ -517,9 +525,16 @@ class HidManager:
         handle: DeviceHandle,
         queue: "asyncio.Queue[InputEvent | DeviceLost]",
     ) -> None:
-        profile = self.config.profiles[self.config.devices[name].profile]
         try:
             async for raw in handle.events():
+                device = self.config.devices.get(name)
+                profile = (
+                    self.config.profiles.get(device.profile)
+                    if device is not None
+                    else None
+                )
+                if profile is None:
+                    continue
                 event = self._normalise(name, info, profile, raw)
                 if event is not None:
                     await queue.put(event)

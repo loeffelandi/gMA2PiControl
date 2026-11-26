@@ -13,6 +13,8 @@ Ersetzt [0001. Web-Remote-WebSocket als Transportweg](0001-web-remote-websocket-
 
 Verifikation am Pi gegen die onPC bestanden (siehe „Bestätigung“).
 
+Related to [0019. Absolute MIDI-Werte und Executor-Ziele über den Web Remote](0019-absolute-midi-werte-und-executor-ziele-ueber-den-web-remote.md)
+
 ## Kontext und Problemstellung
 
 ADR 0001 hat den Web-Remote-`keyname`-Transport festgelegt. Im Betrieb zeigt sich:

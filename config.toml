@@ -161,6 +161,7 @@ level = "INFO"
 
 [led]
 enabled = true                # Modus-LED an der ASL-Taste
+device = "asl"                # bei mehreren MIDI-Geräten erforderlich
 note = 9                      # Taste 1 (Noten 9-11 = Tasten 1-3)
 attribute_color = "red"       # Attribut-Modus
 screen_color = "green"        # Screen-Modus
@@ -173,6 +174,12 @@ fine_note = 10                # mittlere ASL-Taste (Fine-Modifier)
 fine_color = 123
 fine_idle_brightness = 25
 fine_pressed_brightness = 127
+
+[feedback]
+enabled = true                # Executor-Zustand auf die Controller-LEDs spiegeln
+interval_ms = 250             # playbacks-Abfrageintervall (100-2000)
+off_state = "dark"            # "dark" = dunkle Executor-Farbe, "off" = aus
+fallback_color = "white"      # wenn die MA keine Appearance-Farbe liefert
 
 [web]
 bind = "0.0.0.0"            # LAN-Zugriff; Änderung erst nach Dienstneustart
@@ -192,6 +199,13 @@ vendor_id = 0x04d8
 product_id = 0xe817
 name_contains = "ASL MK2"
 profile = "asl-mk2-e4b3"
+
+[devices.midicraft]
+backend = "midi"
+vendor_id = 0x04d8
+product_id = 0xe78c
+name_contains = "MIDICRAFT ENC"
+profile = "midicraft-enc"
 
 [profiles.cherry-g86.keys]
 # Physische Cherry-POS-Tasten -> Steuerungsname. Quelle: aktuelle CCF-Belegung
@@ -351,6 +365,246 @@ direction = 1
 id = 4
 note = 4
 direction = 1
+
+# MIDICRAFT ENC (USB 04d8:e78c). Noten sind geraetespezifisch und werden
+# ueber den Learn-Modus pro Bank erfasst; Bank 1 enthaelt die Messwerte.
+[profiles.midicraft-enc]
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_click_1"
+kind = "button"
+label = "B1"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_click_2"
+kind = "button"
+label = "B2"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_click_3"
+kind = "button"
+label = "B3"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_click_4"
+kind = "button"
+label = "B4"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_click_5"
+kind = "button"
+label = "B5"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_row1_1"
+kind = "button"
+label = "B6"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_row1_2"
+kind = "button"
+label = "B7"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_row1_3"
+kind = "button"
+label = "B8"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_row1_4"
+kind = "button"
+label = "B9"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_row1_5"
+kind = "button"
+label = "B10"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_row2_1"
+kind = "button"
+label = "B11"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_row2_2"
+kind = "button"
+label = "B12"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_row2_3"
+kind = "button"
+label = "B13"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_row2_4"
+kind = "button"
+label = "B14"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_row2_5"
+kind = "button"
+label = "B15"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_row3_1"
+kind = "button"
+label = "B16"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_row3_2"
+kind = "button"
+label = "B17"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_row3_3"
+kind = "button"
+label = "B18"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_row3_4"
+kind = "button"
+label = "B19"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_row3_5"
+kind = "button"
+label = "B20"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_fader_1"
+kind = "fader"
+label = "F1"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_fader_2"
+kind = "fader"
+label = "F2"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_fader_3"
+kind = "fader"
+label = "F3"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_fader_4"
+kind = "fader"
+label = "F4"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_fader_5"
+kind = "fader"
+label = "F5"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_encoder_1"
+kind = "encoder"
+label = "E1"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_encoder_2"
+kind = "encoder"
+label = "E2"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_encoder_3"
+kind = "encoder"
+label = "E3"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_encoder_4"
+kind = "encoder"
+label = "E4"
+
+[[profiles.midicraft-enc.controls]]
+id = "mc_encoder_5"
+kind = "encoder"
+label = "E5"
+
+[[profiles.midicraft-enc.banks]]
+number = 1
+channel = 1
+notes = { "55" = "mc_click_1", "56" = "mc_click_2", "57" = "mc_click_3", "58" = "mc_click_4", "59" = "mc_click_5", "60" = "mc_encoder_1", "61" = "mc_encoder_2", "62" = "mc_encoder_3", "63" = "mc_encoder_4", "64" = "mc_encoder_5", "65" = "mc_row1_1", "66" = "mc_row1_2", "67" = "mc_row1_3", "68" = "mc_row1_4", "69" = "mc_row1_5", "70" = "mc_fader_1", "71" = "mc_fader_2", "72" = "mc_fader_3", "73" = "mc_fader_4", "74" = "mc_fader_5", "75" = "mc_row2_1", "76" = "mc_row2_2", "77" = "mc_row2_3", "78" = "mc_row2_4", "79" = "mc_row2_5", "80" = "mc_row3_1", "81" = "mc_row3_2", "82" = "mc_row3_3", "83" = "mc_row3_4", "84" = "mc_row3_5" }
+
+[[profiles.midicraft-enc.banks]]
+number = 2
+channel = 2
+notes = {}
+
+[[profiles.midicraft-enc.banks]]
+number = 3
+channel = 3
+notes = {}
+
+[[profiles.midicraft-enc.banks]]
+number = 4
+channel = 4
+notes = {}
+
+[[profiles.midicraft-enc.banks]]
+number = 5
+channel = 5
+notes = {}
+
+[[profiles.midicraft-enc.banks]]
+number = 6
+channel = 6
+notes = {}
+
+[[profiles.midicraft-enc.banks]]
+number = 7
+channel = 7
+notes = {}
+
+[[profiles.midicraft-enc.banks]]
+number = 8
+channel = 8
+notes = {}
+
+[[profiles.midicraft-enc.banks]]
+number = 9
+channel = 9
+notes = {}
+
+[[profiles.midicraft-enc.banks]]
+number = 10
+channel = 10
+notes = {}
+
+[[profiles.midicraft-enc.banks]]
+number = 11
+channel = 11
+notes = {}
+
+[[profiles.midicraft-enc.banks]]
+number = 12
+channel = 12
+notes = {}
+
+[[profiles.midicraft-enc.banks]]
+number = 13
+channel = 13
+notes = {}
+
+[[profiles.midicraft-enc.banks]]
+number = 14
+channel = 14
+notes = {}
+
+[[profiles.midicraft-enc.banks]]
+number = 15
+channel = 15
+notes = {}
+
+[[profiles.midicraft-enc.banks]]
+number = 16
+channel = 16
+notes = {}
+
+# LED-Rückmeldung: Nur die 15 RGB-Tasten haben LEDs; Encoder-Klicks
+# (Noten 55-59) und Fader bleiben unbeleuchtet.
+[profiles.midicraft-enc.led_feedback]
+protocol = "midicraft-v2"
+led_notes = [65, 66, 67, 68, 69, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84]
 
 [mapping.modifiers]
 # Logo-Taste wirkt als MA-Modifier (MA + andere Taste, z. B. MA + Encoder
@@ -524,6 +778,15 @@ curve = "linear"          # none | linear | exponential
 window = 0.10
 max_multiplier = 4.0
 
+# Absolute Encoder (MIDICRAFT) beschleunigen: langsam = fein, schnell = weit.
+# Gilt nur für Fader-Ziele mit accelerated = true und Profileintrag kind = "encoder".
+[mapping.value_acceleration]
+curve = "linear"          # none | linear | exponential
+window = 0.12
+slow_rate = 2
+fast_rate = 10
+max_multiplier = 8.0
+
 # ASL-Taste 2 halten + Encoder-Klick = Auflösung des Slots
 # Normal -> Fine -> Ultra -> Normal (in der onPC umgeschaltet, nicht fuer Screen-Encoder).
 [mapping.encoder_resolution.modifiers]
@@ -534,3 +797,1814 @@ cycle = "asl_button_2"
 normal = 1.0
 fine = 0.1
 ultra = 0.01
+
+# MIDICRAFT ENC auf Executoren. page = "current" folgt der aktuell aktiven
+# Master-Page; alternativ eine feste Page-Nummer eintragen.
+# Belegung:
+#   Fader 1-5            -> Exec 1-5, Fader
+#   Encoder 1-5          -> Exec 6-10, Fader
+#   Encoder-Klick 1-5    -> Exec 6-10, Button 1
+#   Reihe über Fadern    -> Exec 1-5, Button 2
+#   Reihe unter Fadern   -> Exec 1-5, Button 3
+#   Untere Reihe         -> Floating-Exec 101-105, Button 1
+
+[mapping.playbacks."mc_fader_1"]
+page = "current"
+executor = 1
+kind = "fader"
+
+[mapping.playbacks."mc_fader_2"]
+page = "current"
+executor = 2
+kind = "fader"
+
+[mapping.playbacks."mc_fader_3"]
+page = "current"
+executor = 3
+kind = "fader"
+
+[mapping.playbacks."mc_fader_4"]
+page = "current"
+executor = 4
+kind = "fader"
+
+[mapping.playbacks."mc_fader_5"]
+page = "current"
+executor = 5
+kind = "fader"
+
+[mapping.playbacks."mc_encoder_1"]
+page = "current"
+executor = 6
+kind = "fader"
+accelerated = true
+
+[mapping.playbacks."mc_encoder_2"]
+page = "current"
+executor = 7
+kind = "fader"
+
+[mapping.playbacks."mc_encoder_3"]
+page = "current"
+executor = 8
+kind = "fader"
+
+[mapping.playbacks."mc_encoder_4"]
+page = "current"
+executor = 9
+kind = "fader"
+
+[mapping.playbacks."mc_encoder_5"]
+page = "current"
+executor = 10
+kind = "fader"
+
+[mapping.playbacks."mc_click_1"]
+page = "current"
+executor = 6
+kind = "button"
+button = 1
+
+[mapping.playbacks."mc_click_2"]
+page = "current"
+executor = 7
+kind = "button"
+button = 1
+
+[mapping.playbacks."mc_click_3"]
+page = "current"
+executor = 8
+kind = "button"
+button = 1
+
+[mapping.playbacks."mc_click_4"]
+page = "current"
+executor = 9
+kind = "button"
+button = 1
+
+[mapping.playbacks."mc_click_5"]
+page = "current"
+executor = 10
+kind = "button"
+button = 1
+
+[mapping.playbacks."mc_row1_1"]
+page = "current"
+executor = 1
+kind = "button"
+button = 2
+
+[mapping.playbacks."mc_row1_2"]
+page = "current"
+executor = 2
+kind = "button"
+button = 2
+
+[mapping.playbacks."mc_row1_3"]
+page = "current"
+executor = 3
+kind = "button"
+button = 2
+
+[mapping.playbacks."mc_row1_4"]
+page = "current"
+executor = 4
+kind = "button"
+button = 2
+
+[mapping.playbacks."mc_row1_5"]
+page = "current"
+executor = 5
+kind = "button"
+button = 2
+
+[mapping.playbacks."mc_row2_1"]
+page = "current"
+executor = 1
+kind = "button"
+button = 3
+
+[mapping.playbacks."mc_row2_2"]
+page = "current"
+executor = 2
+kind = "button"
+button = 3
+
+[mapping.playbacks."mc_row2_3"]
+page = "current"
+executor = 3
+kind = "button"
+button = 3
+
+[mapping.playbacks."mc_row2_4"]
+page = "current"
+executor = 4
+kind = "button"
+button = 3
+
+[mapping.playbacks."mc_row2_5"]
+page = "current"
+executor = 5
+kind = "button"
+button = 3
+
+[mapping.playbacks."mc_row3_1"]
+page = "current"
+executor = 101
+kind = "button"
+button = 1
+
+[mapping.playbacks."mc_row3_2"]
+page = "current"
+executor = 102
+kind = "button"
+button = 1
+
+[mapping.playbacks."mc_row3_3"]
+page = "current"
+executor = 103
+kind = "button"
+button = 1
+
+[mapping.playbacks."mc_row3_4"]
+page = "current"
+executor = 104
+kind = "button"
+button = 1
+
+[mapping.playbacks."mc_row3_5"]
+page = "current"
+executor = 105
+kind = "button"
+button = 1
+
+[profiles.midicraft-push]
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_1"
+kind = "button"
+label = "B1"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_2"
+kind = "button"
+label = "B2"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_3"
+kind = "button"
+label = "B3"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_4"
+kind = "button"
+label = "B4"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_5"
+kind = "button"
+label = "B5"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_6"
+kind = "button"
+label = "B6"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_7"
+kind = "button"
+label = "B7"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_8"
+kind = "button"
+label = "B8"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_9"
+kind = "button"
+label = "B9"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_10"
+kind = "button"
+label = "B10"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_11"
+kind = "button"
+label = "B11"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_12"
+kind = "button"
+label = "B12"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_13"
+kind = "button"
+label = "B13"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_14"
+kind = "button"
+label = "B14"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_15"
+kind = "button"
+label = "B15"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_16"
+kind = "button"
+label = "B16"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_17"
+kind = "button"
+label = "B17"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_18"
+kind = "button"
+label = "B18"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_19"
+kind = "button"
+label = "B19"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_20"
+kind = "button"
+label = "B20"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_21"
+kind = "button"
+label = "B21"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_22"
+kind = "button"
+label = "B22"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_23"
+kind = "button"
+label = "B23"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_24"
+kind = "button"
+label = "B24"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_25"
+kind = "button"
+label = "B25"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_26"
+kind = "button"
+label = "B26"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_27"
+kind = "button"
+label = "B27"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_28"
+kind = "button"
+label = "B28"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_29"
+kind = "button"
+label = "B29"
+
+[[profiles.midicraft-push.controls]]
+id = "mcp_button_30"
+kind = "button"
+label = "B30"
+
+[[profiles.midicraft-push.banks]]
+number = 1
+channel = 1
+notes = {}
+
+[[profiles.midicraft-push.banks]]
+number = 2
+channel = 2
+notes = {}
+
+[[profiles.midicraft-push.banks]]
+number = 3
+channel = 3
+notes = {}
+
+[[profiles.midicraft-push.banks]]
+number = 4
+channel = 4
+notes = {}
+
+[[profiles.midicraft-push.banks]]
+number = 5
+channel = 5
+notes = {}
+
+[[profiles.midicraft-push.banks]]
+number = 6
+channel = 6
+notes = {}
+
+[[profiles.midicraft-push.banks]]
+number = 7
+channel = 7
+notes = {}
+
+[[profiles.midicraft-push.banks]]
+number = 8
+channel = 8
+notes = {}
+
+[[profiles.midicraft-push.banks]]
+number = 9
+channel = 9
+notes = {}
+
+[[profiles.midicraft-push.banks]]
+number = 10
+channel = 10
+notes = {}
+
+[[profiles.midicraft-push.banks]]
+number = 11
+channel = 11
+notes = {}
+
+[[profiles.midicraft-push.banks]]
+number = 12
+channel = 12
+notes = {}
+
+[[profiles.midicraft-push.banks]]
+number = 13
+channel = 13
+notes = {}
+
+[[profiles.midicraft-push.banks]]
+number = 14
+channel = 14
+notes = {}
+
+[[profiles.midicraft-push.banks]]
+number = 15
+channel = 15
+notes = {}
+
+[[profiles.midicraft-push.banks]]
+number = 16
+channel = 16
+notes = {}
+
+[profiles.midicraft-fade]
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_1"
+kind = "button"
+label = "B1"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_2"
+kind = "button"
+label = "B2"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_3"
+kind = "button"
+label = "B3"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_4"
+kind = "button"
+label = "B4"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_5"
+kind = "button"
+label = "B5"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_6"
+kind = "button"
+label = "B6"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_7"
+kind = "button"
+label = "B7"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_8"
+kind = "button"
+label = "B8"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_9"
+kind = "button"
+label = "B9"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_10"
+kind = "button"
+label = "B10"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_11"
+kind = "button"
+label = "B11"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_12"
+kind = "button"
+label = "B12"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_13"
+kind = "button"
+label = "B13"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_14"
+kind = "button"
+label = "B14"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_15"
+kind = "button"
+label = "B15"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_16"
+kind = "button"
+label = "B16"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_17"
+kind = "button"
+label = "B17"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_18"
+kind = "button"
+label = "B18"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_19"
+kind = "button"
+label = "B19"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_button_20"
+kind = "button"
+label = "B20"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_fader_1"
+kind = "fader"
+label = "F1"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_fader_2"
+kind = "fader"
+label = "F2"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_fader_3"
+kind = "fader"
+label = "F3"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_fader_4"
+kind = "fader"
+label = "F4"
+
+[[profiles.midicraft-fade.controls]]
+id = "mcf_fader_5"
+kind = "fader"
+label = "F5"
+
+[[profiles.midicraft-fade.banks]]
+number = 1
+channel = 1
+notes = {}
+
+[[profiles.midicraft-fade.banks]]
+number = 2
+channel = 2
+notes = {}
+
+[[profiles.midicraft-fade.banks]]
+number = 3
+channel = 3
+notes = {}
+
+[[profiles.midicraft-fade.banks]]
+number = 4
+channel = 4
+notes = {}
+
+[[profiles.midicraft-fade.banks]]
+number = 5
+channel = 5
+notes = {}
+
+[[profiles.midicraft-fade.banks]]
+number = 6
+channel = 6
+notes = {}
+
+[[profiles.midicraft-fade.banks]]
+number = 7
+channel = 7
+notes = {}
+
+[[profiles.midicraft-fade.banks]]
+number = 8
+channel = 8
+notes = {}
+
+[[profiles.midicraft-fade.banks]]
+number = 9
+channel = 9
+notes = {}
+
+[[profiles.midicraft-fade.banks]]
+number = 10
+channel = 10
+notes = {}
+
+[[profiles.midicraft-fade.banks]]
+number = 11
+channel = 11
+notes = {}
+
+[[profiles.midicraft-fade.banks]]
+number = 12
+channel = 12
+notes = {}
+
+[[profiles.midicraft-fade.banks]]
+number = 13
+channel = 13
+notes = {}
+
+[[profiles.midicraft-fade.banks]]
+number = 14
+channel = 14
+notes = {}
+
+[[profiles.midicraft-fade.banks]]
+number = 15
+channel = 15
+notes = {}
+
+[[profiles.midicraft-fade.banks]]
+number = 16
+channel = 16
+notes = {}
+
+[profiles.midicraft-turn]
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_button_1"
+kind = "button"
+label = "B1"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_button_2"
+kind = "button"
+label = "B2"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_button_3"
+kind = "button"
+label = "B3"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_button_4"
+kind = "button"
+label = "B4"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_button_5"
+kind = "button"
+label = "B5"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_button_6"
+kind = "button"
+label = "B6"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_button_7"
+kind = "button"
+label = "B7"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_button_8"
+kind = "button"
+label = "B8"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_button_9"
+kind = "button"
+label = "B9"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_button_10"
+kind = "button"
+label = "B10"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_button_11"
+kind = "button"
+label = "B11"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_button_12"
+kind = "button"
+label = "B12"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_button_13"
+kind = "button"
+label = "B13"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_button_14"
+kind = "button"
+label = "B14"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_button_15"
+kind = "button"
+label = "B15"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_poti_1"
+kind = "poti"
+label = "P1"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_poti_2"
+kind = "poti"
+label = "P2"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_poti_3"
+kind = "poti"
+label = "P3"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_poti_4"
+kind = "poti"
+label = "P4"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_poti_5"
+kind = "poti"
+label = "P5"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_poti_6"
+kind = "poti"
+label = "P6"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_poti_7"
+kind = "poti"
+label = "P7"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_poti_8"
+kind = "poti"
+label = "P8"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_poti_9"
+kind = "poti"
+label = "P9"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_poti_10"
+kind = "poti"
+label = "P10"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_poti_11"
+kind = "poti"
+label = "P11"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_poti_12"
+kind = "poti"
+label = "P12"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_poti_13"
+kind = "poti"
+label = "P13"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_poti_14"
+kind = "poti"
+label = "P14"
+
+[[profiles.midicraft-turn.controls]]
+id = "mct_poti_15"
+kind = "poti"
+label = "P15"
+
+[[profiles.midicraft-turn.banks]]
+number = 1
+channel = 1
+notes = {}
+
+[[profiles.midicraft-turn.banks]]
+number = 2
+channel = 2
+notes = {}
+
+[[profiles.midicraft-turn.banks]]
+number = 3
+channel = 3
+notes = {}
+
+[[profiles.midicraft-turn.banks]]
+number = 4
+channel = 4
+notes = {}
+
+[[profiles.midicraft-turn.banks]]
+number = 5
+channel = 5
+notes = {}
+
+[[profiles.midicraft-turn.banks]]
+number = 6
+channel = 6
+notes = {}
+
+[[profiles.midicraft-turn.banks]]
+number = 7
+channel = 7
+notes = {}
+
+[[profiles.midicraft-turn.banks]]
+number = 8
+channel = 8
+notes = {}
+
+[[profiles.midicraft-turn.banks]]
+number = 9
+channel = 9
+notes = {}
+
+[[profiles.midicraft-turn.banks]]
+number = 10
+channel = 10
+notes = {}
+
+[[profiles.midicraft-turn.banks]]
+number = 11
+channel = 11
+notes = {}
+
+[[profiles.midicraft-turn.banks]]
+number = 12
+channel = 12
+notes = {}
+
+[[profiles.midicraft-turn.banks]]
+number = 13
+channel = 13
+notes = {}
+
+[[profiles.midicraft-turn.banks]]
+number = 14
+channel = 14
+notes = {}
+
+[[profiles.midicraft-turn.banks]]
+number = 15
+channel = 15
+notes = {}
+
+[[profiles.midicraft-turn.banks]]
+number = 16
+channel = 16
+notes = {}
+
+[profiles.midicraft-mix]
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_button_1"
+kind = "button"
+label = "B1"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_button_2"
+kind = "button"
+label = "B2"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_button_3"
+kind = "button"
+label = "B3"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_button_4"
+kind = "button"
+label = "B4"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_button_5"
+kind = "button"
+label = "B5"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_button_6"
+kind = "button"
+label = "B6"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_button_7"
+kind = "button"
+label = "B7"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_button_8"
+kind = "button"
+label = "B8"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_button_9"
+kind = "button"
+label = "B9"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_button_10"
+kind = "button"
+label = "B10"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_button_11"
+kind = "button"
+label = "B11"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_button_12"
+kind = "button"
+label = "B12"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_button_13"
+kind = "button"
+label = "B13"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_button_14"
+kind = "button"
+label = "B14"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_button_15"
+kind = "button"
+label = "B15"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_fader_1"
+kind = "fader"
+label = "F1"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_fader_2"
+kind = "fader"
+label = "F2"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_fader_3"
+kind = "fader"
+label = "F3"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_fader_4"
+kind = "fader"
+label = "F4"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_fader_5"
+kind = "fader"
+label = "F5"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_poti_1"
+kind = "poti"
+label = "P1"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_poti_2"
+kind = "poti"
+label = "P2"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_poti_3"
+kind = "poti"
+label = "P3"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_poti_4"
+kind = "poti"
+label = "P4"
+
+[[profiles.midicraft-mix.controls]]
+id = "mcm_poti_5"
+kind = "poti"
+label = "P5"
+
+[[profiles.midicraft-mix.banks]]
+number = 1
+channel = 1
+notes = {}
+
+[[profiles.midicraft-mix.banks]]
+number = 2
+channel = 2
+notes = {}
+
+[[profiles.midicraft-mix.banks]]
+number = 3
+channel = 3
+notes = {}
+
+[[profiles.midicraft-mix.banks]]
+number = 4
+channel = 4
+notes = {}
+
+[[profiles.midicraft-mix.banks]]
+number = 5
+channel = 5
+notes = {}
+
+[[profiles.midicraft-mix.banks]]
+number = 6
+channel = 6
+notes = {}
+
+[[profiles.midicraft-mix.banks]]
+number = 7
+channel = 7
+notes = {}
+
+[[profiles.midicraft-mix.banks]]
+number = 8
+channel = 8
+notes = {}
+
+[[profiles.midicraft-mix.banks]]
+number = 9
+channel = 9
+notes = {}
+
+[[profiles.midicraft-mix.banks]]
+number = 10
+channel = 10
+notes = {}
+
+[[profiles.midicraft-mix.banks]]
+number = 11
+channel = 11
+notes = {}
+
+[[profiles.midicraft-mix.banks]]
+number = 12
+channel = 12
+notes = {}
+
+[[profiles.midicraft-mix.banks]]
+number = 13
+channel = 13
+notes = {}
+
+[[profiles.midicraft-mix.banks]]
+number = 14
+channel = 14
+notes = {}
+
+[[profiles.midicraft-mix.banks]]
+number = 15
+channel = 15
+notes = {}
+
+[[profiles.midicraft-mix.banks]]
+number = 16
+channel = 16
+notes = {}
+
+[profiles.midicraft-spot]
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_button_1"
+kind = "button"
+label = "B1"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_button_2"
+kind = "button"
+label = "B2"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_button_3"
+kind = "button"
+label = "B3"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_button_4"
+kind = "button"
+label = "B4"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_button_5"
+kind = "button"
+label = "B5"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_button_6"
+kind = "button"
+label = "B6"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_button_7"
+kind = "button"
+label = "B7"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_button_8"
+kind = "button"
+label = "B8"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_button_9"
+kind = "button"
+label = "B9"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_button_10"
+kind = "button"
+label = "B10"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_fader_1"
+kind = "fader"
+label = "F1"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_fader_2"
+kind = "fader"
+label = "F2"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_fader_3"
+kind = "fader"
+label = "F3"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_fader_4"
+kind = "fader"
+label = "F4"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_fader_5"
+kind = "fader"
+label = "F5"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_poti_1"
+kind = "poti"
+label = "P1"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_poti_2"
+kind = "poti"
+label = "P2"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_poti_3"
+kind = "poti"
+label = "P3"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_poti_4"
+kind = "poti"
+label = "P4"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_poti_5"
+kind = "poti"
+label = "P5"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_poti_6"
+kind = "poti"
+label = "P6"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_poti_7"
+kind = "poti"
+label = "P7"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_poti_8"
+kind = "poti"
+label = "P8"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_poti_9"
+kind = "poti"
+label = "P9"
+
+[[profiles.midicraft-spot.controls]]
+id = "mcs_poti_10"
+kind = "poti"
+label = "P10"
+
+[[profiles.midicraft-spot.banks]]
+number = 1
+channel = 1
+notes = {}
+
+[[profiles.midicraft-spot.banks]]
+number = 2
+channel = 2
+notes = {}
+
+[[profiles.midicraft-spot.banks]]
+number = 3
+channel = 3
+notes = {}
+
+[[profiles.midicraft-spot.banks]]
+number = 4
+channel = 4
+notes = {}
+
+[[profiles.midicraft-spot.banks]]
+number = 5
+channel = 5
+notes = {}
+
+[[profiles.midicraft-spot.banks]]
+number = 6
+channel = 6
+notes = {}
+
+[[profiles.midicraft-spot.banks]]
+number = 7
+channel = 7
+notes = {}
+
+[[profiles.midicraft-spot.banks]]
+number = 8
+channel = 8
+notes = {}
+
+[[profiles.midicraft-spot.banks]]
+number = 9
+channel = 9
+notes = {}
+
+[[profiles.midicraft-spot.banks]]
+number = 10
+channel = 10
+notes = {}
+
+[[profiles.midicraft-spot.banks]]
+number = 11
+channel = 11
+notes = {}
+
+[[profiles.midicraft-spot.banks]]
+number = 12
+channel = 12
+notes = {}
+
+[[profiles.midicraft-spot.banks]]
+number = 13
+channel = 13
+notes = {}
+
+[[profiles.midicraft-spot.banks]]
+number = 14
+channel = 14
+notes = {}
+
+[[profiles.midicraft-spot.banks]]
+number = 15
+channel = 15
+notes = {}
+
+[[profiles.midicraft-spot.banks]]
+number = 16
+channel = 16
+notes = {}
+
+
+[devices.midicraft-push]
+backend = "midi"
+vendor_id = 0x04d8
+product_id = 0                          # exakte PID wird nach der Messung ergaenzt
+name_contains = "MIDICRAFT PUSH"
+profile = "midicraft-push"
+
+[devices.midicraft-fade]
+backend = "midi"
+vendor_id = 0x04d8
+product_id = 0
+name_contains = "MIDICRAFT FADE"
+profile = "midicraft-fade"
+
+[devices.midicraft-turn]
+backend = "midi"
+vendor_id = 0x04d8
+product_id = 0
+name_contains = "MIDICRAFT TURN"
+profile = "midicraft-turn"
+
+[devices.midicraft-mix]
+backend = "midi"
+vendor_id = 0x04d8
+product_id = 0
+name_contains = "MIDICRAFT MIX"
+profile = "midicraft-mix"
+
+[devices.midicraft-spot]
+backend = "midi"
+vendor_id = 0x04d8
+product_id = 0
+name_contains = "MIDICRAFT SPOT"
+profile = "midicraft-spot"
+
+[layouts.cherry]
+profile = "cherry-g86"
+columns = 18
+
+[[layouts.cherry.rows]]
+cells = [
+  { label = "Ch Pg+", control = "ch_pg_plus", color = "blue", row = 1, col = 1 },
+  { label = "Pause", control = "pause_big", col_span = 2, row_span = 2, color = "green", row = 1, col = 2 },
+  { label = "V1", control = "v1", color = "grey", row = 1, col = 4 },
+  { label = "V7", control = "v7", color = "grey", row = 1, col = 5 },
+  { label = "U1", control = "u1", color = "red", row = 1, col = 6 },
+  { label = "◎", control = "target", color = "green", row = 1, col = 7 },
+  { label = "Off", control = "off", color = "grey", row = 1, col = 8 },
+  { label = "Temp", control = "temp", color = "grey", row = 1, col = 9 },
+  { label = "Top", control = "top", color = "grey", row = 1, col = 10 },
+  { label = "On", control = "on", color = "grey", row = 1, col = 11 },
+  { label = "View", control = "view", color = "green", row = 1, col = 12 },
+  { label = "Page", control = "page", color = "green", row = 1, col = 13 },
+  { label = "Macro", control = "macro", color = "green", row = 1, col = 14 },
+  { label = "Preset", control = "preset", color = "green", row = 1, col = 15 },
+  { label = "Tools", control = "tools", color = "blue", row = 1, col = 16 },
+  { label = "Setup", control = "setup", color = "blue", row = 1, col = 17 },
+  { label = "Backup", control = "backup", color = "blue", row = 1, col = 18 },
+]
+
+[[layouts.cherry.rows]]
+cells = [
+  { label = "Ch Pg-", control = "ch_pg_minus", color = "blue", row = 2, col = 1 },
+  { label = "V2", control = "v2", color = "grey", row = 2, col = 4 },
+  { label = "V8", control = "v8", color = "grey", row = 2, col = 5 },
+  { label = "U2", control = "u2", color = "red", row = 2, col = 6 },
+  { label = "Short Cuts", control = "short_cuts", row_span = 2, color = "blue", row = 2, col = 7 },
+  { label = "Select", control = "select", color = "grey", row = 2, col = 8 },
+  { label = "<<<", control = "prev_transport", color = "grey", row = 2, col = 9 },
+  { label = "Learn", control = "learn", color = "grey", row = 2, col = 10 },
+  { label = ">>>", control = "next_transport", color = "grey", row = 2, col = 11 },
+  { label = "Effect", control = "effect", color = "green", row = 2, col = 12 },
+  { label = "Sequ", control = "sequ", color = "green", row = 2, col = 13 },
+  { label = "Cue", control = "cue", color = "green", row = 2, col = 14 },
+  { label = "Exec", control = "exec", color = "green", row = 2, col = 15 },
+  { label = "Del", control = "del", color = "red", row = 2, col = 16 },
+  { label = "Blind", control = "blind", color = "red", row = 2, col = 17 },
+  { label = "Help", control = "help", color = "red", row = 2, col = 18 },
+]
+
+[[layouts.cherry.rows]]
+cells = [
+  { label = "Fd Pg+", control = "fd_pg_plus", color = "red", row = 3, col = 1 },
+  { label = "Go-", control = "go_minus_big", col_span = 2, row_span = 2, color = "green", row = 3, col = 2 },
+  { label = "V3", control = "v3", color = "grey", row = 3, col = 4 },
+  { label = "V9", control = "v9", color = "grey", row = 3, col = 5 },
+  { label = "U3", control = "u3", color = "red", row = 3, col = 6 },
+  { label = "Fix", control = "fix", color = "grey", row = 3, col = 8 },
+  { label = "Go-", control = "go_minus", color = "grey", row = 3, col = 9 },
+  { label = "Pause", control = "pause", color = "grey", row = 3, col = 10 },
+  { label = "Go+", control = "go_plus", color = "grey", row = 3, col = 11 },
+  { label = "Goto", control = "goto", color = "green", row = 3, col = 12 },
+  { label = "Channel", control = "channel", color = "green", row = 3, col = 13 },
+  { label = "Fixture", control = "fixture", color = "green", row = 3, col = 14 },
+  { label = "Group", control = "group", color = "green", row = 3, col = 15 },
+  { label = "Copy", control = "copy", color = "red", row = 3, col = 16 },
+  { label = "Freeze", control = "freeze", color = "red", row = 3, col = 17 },
+  { label = "Prvw", control = "prvw", color = "red", row = 3, col = 18 },
+]
+
+[[layouts.cherry.rows]]
+cells = [
+  { label = "Fd Pg-", control = "fd_pg_minus", color = "red", row = 4, col = 1 },
+  { label = "V4", control = "v4", color = "grey", row = 4, col = 4 },
+  { label = "V10", control = "v10", color = "grey", row = 4, col = 5 },
+  { label = "U4", control = "u4", color = "red", row = 4, col = 6 },
+  { label = "Screen 6 Ext 2", control = "screen6", color = "yellow", row = 4, col = 7 },
+  { label = "", color = "black", row = 4, col = 8 },
+  { label = "Screen 5 Ext 1", control = "screen5", color = "yellow", row = 4, col = 9 },
+  { label = "Time", control = "time", color = "blue", row = 4, col = 10 },
+  { label = "Esc", control = "esc", color = "blue", row = 4, col = 11 },
+  { label = "7", control = "num_7", color = "grey", row = 4, col = 12 },
+  { label = "8", control = "num_8", color = "grey", row = 4, col = 13 },
+  { label = "9", control = "num_9", color = "grey", row = 4, col = 14 },
+  { label = "+", control = "plus", color = "grey", row = 4, col = 15 },
+  { label = "Move", control = "move", color = "red", row = 4, col = 16 },
+  { label = "Assign", control = "assign", color = "red", row = 4, col = 17 },
+  { label = "Align", control = "align", color = "red", row = 4, col = 18 },
+]
+
+[[layouts.cherry.rows]]
+cells = [
+  { label = "Bt Pg+", control = "bt_pg_plus", color = "grey", row = 5, col = 1 },
+  { label = "Go+", control = "go_plus_big", col_span = 2, row_span = 2, color = "green", row = 5, col = 2 },
+  { label = "V5", control = "v5", color = "grey", row = 5, col = 4 },
+  { label = "User 1", control = "user1", row_span = 2, color = "blue", row = 5, col = 5 },
+  { label = "User 2", control = "user2", row_span = 2, color = "blue", row = 5, col = 6 },
+  { label = "Screen 4", control = "screen4", color = "yellow", row = 5, col = 7 },
+  { label = "Screen 3", control = "screen3", color = "yellow", row = 5, col = 8 },
+  { label = "Screen 2", control = "screen2", color = "yellow", row = 5, col = 9 },
+  { label = "Edit", control = "edit", color = "blue", row = 5, col = 10 },
+  { label = "Oops", control = "oops", color = "blue", row = 5, col = 11 },
+  { label = "4", control = "num_4", color = "grey", row = 5, col = 12 },
+  { label = "5", control = "num_5", color = "grey", row = 5, col = 13 },
+  { label = "6", control = "num_6", color = "grey", row = 5, col = 14 },
+  { label = "Thru", control = "thru", color = "grey", row = 5, col = 15 },
+  { label = "Full", control = "full", color = "blue", row = 5, col = 16 },
+  { label = "Hight", control = "hight", color = "blue", row = 5, col = 17 },
+  { label = "Solo", control = "solo", color = "blue", row = 5, col = 18 },
+]
+
+[[layouts.cherry.rows]]
+cells = [
+  { label = "Bt Pg-", control = "bt_pg_minus", color = "grey", row = 6, col = 1 },
+  { label = "V6", control = "v6", color = "grey", row = 6, col = 4 },
+  { label = "List", control = "list", col_span = 2, color = "blue", row = 6, col = 7 },
+  { label = "Screen 1 CMD", control = "screen1", color = "yellow", row = 6, col = 9 },
+  { label = "Update", control = "update", color = "blue", row = 6, col = 10 },
+  { label = "Clear", control = "clear", color = "blue", row = 6, col = 11 },
+  { label = "1", control = "num_1", color = "grey", row = 6, col = 12 },
+  { label = "2", control = "num_2", color = "grey", row = 6, col = 13 },
+  { label = "3", control = "num_3", color = "grey", row = 6, col = 14 },
+  { label = "-", control = "minus", color = "grey", row = 6, col = 15 },
+  { label = "", color = "black", row = 6, col = 16 },
+  { label = "Up", control = "up", color = "green", row = 6, col = 17 },
+  { label = "", color = "black", row = 6, col = 18 },
+]
+
+[[layouts.cherry.rows]]
+cells = [
+  { label = "X1", control = "x1", color = "blue", row = 7, col = 1 },
+  { label = "X2", control = "x2", color = "blue", row = 7, col = 2 },
+  { label = "X3", control = "x3", color = "blue", row = 7, col = 3 },
+  { label = "X4", control = "x4", color = "blue", row = 7, col = 4 },
+  { label = "X5", control = "x5", color = "blue", row = 7, col = 5 },
+  { label = "X6", control = "x6", color = "green", row = 7, col = 6 },
+  { label = "X7", control = "x7", color = "green", row = 7, col = 7 },
+  { label = "X8", control = "x8", color = "green", row = 7, col = 8 },
+  { label = "X9", control = "x9", color = "green", row = 7, col = 9 },
+  { label = "X10", control = "x10", color = "green", row = 7, col = 10 },
+  { label = "Store", control = "store_big", row_span = 2, color = "blue", row = 7, col = 11 },
+  { label = "0", control = "num_0", color = "grey", row = 7, col = 12 },
+  { label = ".", control = "dot", color = "grey", row = 7, col = 13 },
+  { label = "If", control = "if_key", color = "grey", row = 7, col = 14 },
+  { label = "At", control = "at", color = "grey", row = 7, col = 15 },
+  { label = "Prev", control = "prev", color = "green", row = 7, col = 16 },
+  { label = "Set", control = "set", color = "green", row = 7, col = 17 },
+  { label = "Next", control = "next", color = "green", row = 7, col = 18 },
+]
+
+[[layouts.cherry.rows]]
+cells = [
+  { label = "X11", control = "x11", color = "green", row = 8, col = 1 },
+  { label = "X12", control = "x12", color = "green", row = 8, col = 2 },
+  { label = "X13", control = "x13", color = "green", row = 8, col = 3 },
+  { label = "X14", control = "x14", color = "green", row = 8, col = 4 },
+  { label = "X15", control = "x15", color = "green", row = 8, col = 5 },
+  { label = "X16", control = "x16", color = "blue", row = 8, col = 6 },
+  { label = "X17", control = "x17", color = "blue", row = 8, col = 7 },
+  { label = "X18", control = "x18", color = "blue", row = 8, col = 8 },
+  { label = "X19", control = "x19", color = "blue", row = 8, col = 9 },
+  { label = "X20", control = "x20", color = "blue", row = 8, col = 10 },
+  { label = "MA", color = "black", row = 8, col = 12 },
+  { label = "", color = "black", row = 8, col = 13 },
+  { label = "Please", control = "please_big", col_span = 2, color = "green", row = 8, col = 14 },
+  { label = "", color = "black", row = 8, col = 16 },
+  { label = "Down", control = "down", color = "green", row = 8, col = 17 },
+  { label = "", color = "black", row = 8, col = 18 },
+]
+
+[layouts.asl]
+profile = "asl-mk2-e4b3"
+columns = 4
+
+[[layouts.asl.rows]]
+cells = [
+  { label = "Enc 1", control = "encoder.1", color = "blue" },
+  { label = "Enc 2", control = "encoder.2", color = "blue" },
+  { label = "Enc 3", control = "encoder.3", color = "blue" },
+  { label = "Enc 4", control = "encoder.4", color = "blue" },
+]
+
+[[layouts.asl.rows]]
+cells = [
+  { label = "Click 1", control = "asl_click_1", color = "green" },
+  { label = "Click 2", control = "asl_click_2", color = "green" },
+  { label = "Click 3", control = "asl_click_3", color = "green" },
+  { label = "Click 4", control = "asl_click_4", color = "green" },
+]
+
+[[layouts.asl.rows]]
+cells = [
+  { label = "Bank", control = "asl_bank", color = "grey" },
+  { label = "Fine", control = "asl_button_2", color = "grey" },
+  { label = "Nipple", control = "asl_button_3", color = "grey" },
+]
+
+[layouts.midicraft-enc]
+profile = "midicraft-enc"
+columns = 5
+
+[[layouts.midicraft-enc.rows]]
+cells = [
+  { label = "E1", control = "mc_encoder_1", color = "blue" },
+  { label = "E2", control = "mc_encoder_2", color = "blue" },
+  { label = "E3", control = "mc_encoder_3", color = "blue" },
+  { label = "E4", control = "mc_encoder_4", color = "blue" },
+  { label = "E5", control = "mc_encoder_5", color = "blue" },
+]
+
+[[layouts.midicraft-enc.rows]]
+cells = [
+  { label = "K1", control = "mc_click_1", color = "green" },
+  { label = "K2", control = "mc_click_2", color = "green" },
+  { label = "K3", control = "mc_click_3", color = "green" },
+  { label = "K4", control = "mc_click_4", color = "green" },
+  { label = "K5", control = "mc_click_5", color = "green" },
+]
+
+[[layouts.midicraft-enc.rows]]
+cells = [
+  { label = "R1-1", control = "mc_row1_1", color = "green" },
+  { label = "R1-2", control = "mc_row1_2", color = "green" },
+  { label = "R1-3", control = "mc_row1_3", color = "green" },
+  { label = "R1-4", control = "mc_row1_4", color = "green" },
+  { label = "R1-5", control = "mc_row1_5", color = "green" },
+]
+
+[[layouts.midicraft-enc.rows]]
+cells = [
+  { label = "F1", control = "mc_fader_1", color = "blue" },
+  { label = "F2", control = "mc_fader_2", color = "blue" },
+  { label = "F3", control = "mc_fader_3", color = "blue" },
+  { label = "F4", control = "mc_fader_4", color = "blue" },
+  { label = "F5", control = "mc_fader_5", color = "blue" },
+]
+
+[[layouts.midicraft-enc.rows]]
+cells = [
+  { label = "R2-1", control = "mc_row2_1", color = "green" },
+  { label = "R2-2", control = "mc_row2_2", color = "green" },
+  { label = "R2-3", control = "mc_row2_3", color = "green" },
+  { label = "R2-4", control = "mc_row2_4", color = "green" },
+  { label = "R2-5", control = "mc_row2_5", color = "green" },
+]
+
+[[layouts.midicraft-enc.rows]]
+cells = [
+  { label = "R3-1", control = "mc_row3_1", color = "green" },
+  { label = "R3-2", control = "mc_row3_2", color = "green" },
+  { label = "R3-3", control = "mc_row3_3", color = "green" },
+  { label = "R3-4", control = "mc_row3_4", color = "green" },
+  { label = "R3-5", control = "mc_row3_5", color = "green" },
+]
+
+[layouts.midicraft-push]
+profile = "midicraft-push"
+columns = 6
+
+[[layouts.midicraft-push.rows]]
+cells = [
+  { label = "B1", control = "mcp_button_1", color = "green" },
+  { label = "B2", control = "mcp_button_2", color = "green" },
+  { label = "B3", control = "mcp_button_3", color = "green" },
+  { label = "B4", control = "mcp_button_4", color = "green" },
+  { label = "B5", control = "mcp_button_5", color = "green" },
+  { label = "B6", control = "mcp_button_6", color = "green" },
+]
+
+[[layouts.midicraft-push.rows]]
+cells = [
+  { label = "B7", control = "mcp_button_7", color = "green" },
+  { label = "B8", control = "mcp_button_8", color = "green" },
+  { label = "B9", control = "mcp_button_9", color = "green" },
+  { label = "B10", control = "mcp_button_10", color = "green" },
+  { label = "B11", control = "mcp_button_11", color = "green" },
+  { label = "B12", control = "mcp_button_12", color = "green" },
+]
+
+[[layouts.midicraft-push.rows]]
+cells = [
+  { label = "B13", control = "mcp_button_13", color = "green" },
+  { label = "B14", control = "mcp_button_14", color = "green" },
+  { label = "B15", control = "mcp_button_15", color = "green" },
+  { label = "B16", control = "mcp_button_16", color = "green" },
+  { label = "B17", control = "mcp_button_17", color = "green" },
+  { label = "B18", control = "mcp_button_18", color = "green" },
+]
+
+[[layouts.midicraft-push.rows]]
+cells = [
+  { label = "B19", control = "mcp_button_19", color = "green" },
+  { label = "B20", control = "mcp_button_20", color = "green" },
+  { label = "B21", control = "mcp_button_21", color = "green" },
+  { label = "B22", control = "mcp_button_22", color = "green" },
+  { label = "B23", control = "mcp_button_23", color = "green" },
+  { label = "B24", control = "mcp_button_24", color = "green" },
+]
+
+[[layouts.midicraft-push.rows]]
+cells = [
+  { label = "B25", control = "mcp_button_25", color = "green" },
+  { label = "B26", control = "mcp_button_26", color = "green" },
+  { label = "B27", control = "mcp_button_27", color = "green" },
+  { label = "B28", control = "mcp_button_28", color = "green" },
+  { label = "B29", control = "mcp_button_29", color = "green" },
+  { label = "B30", control = "mcp_button_30", color = "green" },
+]
+
+[layouts.midicraft-fade]
+profile = "midicraft-fade"
+columns = 5
+
+[[layouts.midicraft-fade.rows]]
+cells = [
+  { label = "F1", control = "mcf_fader_1", color = "blue" },
+  { label = "F2", control = "mcf_fader_2", color = "blue" },
+  { label = "F3", control = "mcf_fader_3", color = "blue" },
+  { label = "F4", control = "mcf_fader_4", color = "blue" },
+  { label = "F5", control = "mcf_fader_5", color = "blue" },
+]
+
+[[layouts.midicraft-fade.rows]]
+cells = [
+  { label = "B1", control = "mcf_button_1", color = "green" },
+  { label = "B2", control = "mcf_button_2", color = "green" },
+  { label = "B3", control = "mcf_button_3", color = "green" },
+  { label = "B4", control = "mcf_button_4", color = "green" },
+  { label = "B5", control = "mcf_button_5", color = "green" },
+]
+
+[[layouts.midicraft-fade.rows]]
+cells = [
+  { label = "B6", control = "mcf_button_6", color = "green" },
+  { label = "B7", control = "mcf_button_7", color = "green" },
+  { label = "B8", control = "mcf_button_8", color = "green" },
+  { label = "B9", control = "mcf_button_9", color = "green" },
+  { label = "B10", control = "mcf_button_10", color = "green" },
+]
+
+[[layouts.midicraft-fade.rows]]
+cells = [
+  { label = "B11", control = "mcf_button_11", color = "green" },
+  { label = "B12", control = "mcf_button_12", color = "green" },
+  { label = "B13", control = "mcf_button_13", color = "green" },
+  { label = "B14", control = "mcf_button_14", color = "green" },
+  { label = "B15", control = "mcf_button_15", color = "green" },
+]
+
+[[layouts.midicraft-fade.rows]]
+cells = [
+  { label = "B16", control = "mcf_button_16", color = "green" },
+  { label = "B17", control = "mcf_button_17", color = "green" },
+  { label = "B18", control = "mcf_button_18", color = "green" },
+  { label = "B19", control = "mcf_button_19", color = "green" },
+  { label = "B20", control = "mcf_button_20", color = "green" },
+]
+
+[layouts.midicraft-turn]
+profile = "midicraft-turn"
+columns = 5
+
+[[layouts.midicraft-turn.rows]]
+cells = [
+  { label = "B1", control = "mct_button_1", color = "green" },
+  { label = "B2", control = "mct_button_2", color = "green" },
+  { label = "B3", control = "mct_button_3", color = "green" },
+  { label = "B4", control = "mct_button_4", color = "green" },
+  { label = "B5", control = "mct_button_5", color = "green" },
+]
+
+[[layouts.midicraft-turn.rows]]
+cells = [
+  { label = "B6", control = "mct_button_6", color = "green" },
+  { label = "B7", control = "mct_button_7", color = "green" },
+  { label = "B8", control = "mct_button_8", color = "green" },
+  { label = "B9", control = "mct_button_9", color = "green" },
+  { label = "B10", control = "mct_button_10", color = "green" },
+]
+
+[[layouts.midicraft-turn.rows]]
+cells = [
+  { label = "B11", control = "mct_button_11", color = "green" },
+  { label = "B12", control = "mct_button_12", color = "green" },
+  { label = "B13", control = "mct_button_13", color = "green" },
+  { label = "B14", control = "mct_button_14", color = "green" },
+  { label = "B15", control = "mct_button_15", color = "green" },
+]
+
+[[layouts.midicraft-turn.rows]]
+cells = [
+  { label = "P1", control = "mct_poti_1", color = "blue" },
+  { label = "P2", control = "mct_poti_2", color = "blue" },
+  { label = "P3", control = "mct_poti_3", color = "blue" },
+  { label = "P4", control = "mct_poti_4", color = "blue" },
+  { label = "P5", control = "mct_poti_5", color = "blue" },
+]
+
+[[layouts.midicraft-turn.rows]]
+cells = [
+  { label = "P6", control = "mct_poti_6", color = "blue" },
+  { label = "P7", control = "mct_poti_7", color = "blue" },
+  { label = "P8", control = "mct_poti_8", color = "blue" },
+  { label = "P9", control = "mct_poti_9", color = "blue" },
+  { label = "P10", control = "mct_poti_10", color = "blue" },
+]
+
+[[layouts.midicraft-turn.rows]]
+cells = [
+  { label = "P11", control = "mct_poti_11", color = "blue" },
+  { label = "P12", control = "mct_poti_12", color = "blue" },
+  { label = "P13", control = "mct_poti_13", color = "blue" },
+  { label = "P14", control = "mct_poti_14", color = "blue" },
+  { label = "P15", control = "mct_poti_15", color = "blue" },
+]
+
+[layouts.midicraft-mix]
+profile = "midicraft-mix"
+columns = 5
+
+[[layouts.midicraft-mix.rows]]
+cells = [
+  { label = "F1", control = "mcm_fader_1", color = "blue" },
+  { label = "F2", control = "mcm_fader_2", color = "blue" },
+  { label = "F3", control = "mcm_fader_3", color = "blue" },
+  { label = "F4", control = "mcm_fader_4", color = "blue" },
+  { label = "F5", control = "mcm_fader_5", color = "blue" },
+]
+
+[[layouts.midicraft-mix.rows]]
+cells = [
+  { label = "B1", control = "mcm_button_1", color = "green" },
+  { label = "B2", control = "mcm_button_2", color = "green" },
+  { label = "B3", control = "mcm_button_3", color = "green" },
+  { label = "B4", control = "mcm_button_4", color = "green" },
+  { label = "B5", control = "mcm_button_5", color = "green" },
+]
+
+[[layouts.midicraft-mix.rows]]
+cells = [
+  { label = "B6", control = "mcm_button_6", color = "green" },
+  { label = "B7", control = "mcm_button_7", color = "green" },
+  { label = "B8", control = "mcm_button_8", color = "green" },
+  { label = "B9", control = "mcm_button_9", color = "green" },
+  { label = "B10", control = "mcm_button_10", color = "green" },
+]
+
+[[layouts.midicraft-mix.rows]]
+cells = [
+  { label = "B11", control = "mcm_button_11", color = "green" },
+  { label = "B12", control = "mcm_button_12", color = "green" },
+  { label = "B13", control = "mcm_button_13", color = "green" },
+  { label = "B14", control = "mcm_button_14", color = "green" },
+  { label = "B15", control = "mcm_button_15", color = "green" },
+]
+
+[[layouts.midicraft-mix.rows]]
+cells = [
+  { label = "P1", control = "mcm_poti_1", color = "blue" },
+  { label = "P2", control = "mcm_poti_2", color = "blue" },
+  { label = "P3", control = "mcm_poti_3", color = "blue" },
+  { label = "P4", control = "mcm_poti_4", color = "blue" },
+  { label = "P5", control = "mcm_poti_5", color = "blue" },
+]
+
+[layouts.midicraft-spot]
+profile = "midicraft-spot"
+columns = 5
+
+[[layouts.midicraft-spot.rows]]
+cells = [
+  { label = "F1", control = "mcs_fader_1", color = "blue" },
+  { label = "F2", control = "mcs_fader_2", color = "blue" },
+  { label = "F3", control = "mcs_fader_3", color = "blue" },
+  { label = "F4", control = "mcs_fader_4", color = "blue" },
+  { label = "F5", control = "mcs_fader_5", color = "blue" },
+]
+
+[[layouts.midicraft-spot.rows]]
+cells = [
+  { label = "B1", control = "mcs_button_1", color = "green" },
+  { label = "B2", control = "mcs_button_2", color = "green" },
+  { label = "B3", control = "mcs_button_3", color = "green" },
+  { label = "B4", control = "mcs_button_4", color = "green" },
+  { label = "B5", control = "mcs_button_5", color = "green" },
+]
+
+[[layouts.midicraft-spot.rows]]
+cells = [
+  { label = "B6", control = "mcs_button_6", color = "green" },
+  { label = "B7", control = "mcs_button_7", color = "green" },
+  { label = "B8", control = "mcs_button_8", color = "green" },
+  { label = "B9", control = "mcs_button_9", color = "green" },
+  { label = "B10", control = "mcs_button_10", color = "green" },
+]
+
+[[layouts.midicraft-spot.rows]]
+cells = [
+  { label = "P1", control = "mcs_poti_1", color = "blue" },
+  { label = "P2", control = "mcs_poti_2", color = "blue" },
+  { label = "P3", control = "mcs_poti_3", color = "blue" },
+  { label = "P4", control = "mcs_poti_4", color = "blue" },
+  { label = "P5", control = "mcs_poti_5", color = "blue" },
+]
+
+[[layouts.midicraft-spot.rows]]
+cells = [
+  { label = "P6", control = "mcs_poti_6", color = "blue" },
+  { label = "P7", control = "mcs_poti_7", color = "blue" },
+  { label = "P8", control = "mcs_poti_8", color = "blue" },
+  { label = "P9", control = "mcs_poti_9", color = "blue" },
+  { label = "P10", control = "mcs_poti_10", color = "blue" },
+]

@@ -27,6 +27,7 @@ class EventBus:
     def __init__(self, queue_size: int = QUEUE_SIZE) -> None:
         self._queue_size = queue_size
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
+        self._dropped: dict[asyncio.Queue[dict[str, Any]], asyncio.Event] = {}
 
     @property
     def subscriber_count(self) -> int:
@@ -35,10 +36,17 @@ class EventBus:
     def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=self._queue_size)
         self._subscribers.add(queue)
+        self._dropped[queue] = asyncio.Event()
         return queue
+
+    def dropped(self, queue: asyncio.Queue[dict[str, Any]]) -> asyncio.Event:
+        """Event that is set once the bus dropped ``queue`` for being too slow."""
+
+        return self._dropped.setdefault(queue, asyncio.Event())
 
     def unsubscribe(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
         self._subscribers.discard(queue)
+        self._dropped.pop(queue, None)
 
     def publish(self, event: dict[str, Any]) -> None:
         """Deliver an event to every subscriber without blocking."""
@@ -47,7 +55,11 @@ class EventBus:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
                 LOGGER.warning("UI-Client zu langsam, trenne Verbindung")
-                self.unsubscribe(queue)
+                # Stop delivering, but keep the flag so the WebSocket handler
+                # notices and closes; otherwise it would wait forever on a
+                # queue that never receives anything again.
+                self._subscribers.discard(queue)
+                self._dropped.setdefault(queue, asyncio.Event()).set()
 
 
 async def _drain(ws: web.WebSocketResponse) -> None:
@@ -69,14 +81,24 @@ async def events_handler(
 
     queue = bus.subscribe()
     reader = asyncio.create_task(_drain(ws), name="ma2pi-events-reader")
+    overflow = asyncio.create_task(
+        bus.dropped(queue).wait(), name="ma2pi-events-dropped"
+    )
     try:
         if initial is not None:
             await ws.send_json(initial)
-        while not reader.done():
+        while not reader.done() and not overflow.done():
             getter = asyncio.create_task(queue.get(), name="ma2pi-events-get")
             done, _ = await asyncio.wait(
-                {getter, reader}, return_when=asyncio.FIRST_COMPLETED
+                {getter, reader, overflow}, return_when=asyncio.FIRST_COMPLETED
             )
+            if overflow in done:
+                # Too slow: close the socket; the UI reconnects and resyncs
+                # from ``/api/status``.
+                getter.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await getter
+                break
             if getter in done:
                 await ws.send_json(getter.result())
             else:
@@ -85,6 +107,9 @@ async def events_handler(
                     await getter
                 break
     finally:
+        overflow.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await overflow
         reader.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await reader

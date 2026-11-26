@@ -2,32 +2,89 @@
 
 ## Why
 
-Das Mapping im UI ist heute eine reine Tabelle. Für die Cherry-Tastatur und den ASL-MIDI-Controller ist die räumliche Anordnung aber entscheidend: Wer eine Taste zuweist, denkt in Reihen und Spalten, nicht in Scancodes. Ohne hinterlegtes Layout kann die Oberfläche die Geräte nicht grafisch darstellen, und jede Layout-Änderung müsste im Frontend hartkodiert werden.
+Geräte erscheinen im UI bisher nur als Tabellenzeilen, obwohl Cherry-Tastatur,
+ASL-Controller und die MIDICRAFT-Modelle unregelmäßige, räumlich aufgebaute
+Flächen sind. Wer eine Taste belegt, denkt in Reihen, Spalten und Aufklebern,
+nicht in Scancodes. Bei den MIDICRAFT-Geräten kommen zwei Eigenheiten hinzu: Die
+Noten sind am Gerät frei einstellbar, und ein Page-Wechsel ändert MIDI-Kanal und
+Notenbelegung gemeinsam. Welche Bank gemeint ist, wählt der Benutzer beim
+Anlernen und beim Mappen in der Oberfläche; der Kanal ordnet das Ereignis der
+Bank zu.
 
 ## What Changes
 
-- Neue Capability `device-layout`: Die Konfiguration beschreibt je Gerät eine schematische Darstellung (Raster aus Reihen/Spalten mit Key-Labeln und Control-Referenzen).
-- Cherry G86-63400: Layout entsprechend dem aktuellen Tastaturfoto (Reihen, Spalten, bedruckte Labels, Zuordnung zu logischen Controls).
-- ASL MK2-E4B3: schematische Darstellung mit vier Encodern, Encoder-Clicks und den drei Tasten.
-- Das Layout ist **Daten**, nicht Code: Die UI liest es über die API und rendert daraus die grafische Ansicht.
-- Layouts sind optional; fehlt eines, bleibt die tabellarische Ansicht wie heute nutzbar.
-- Die Erfassung der echten Scancodes (Task 3.8 in `add-ma2pi-core`) bleibt davon unberührt und kann das Layout später befüllen.
-
-Nicht enthalten: freies Zeichnen, Drag-and-drop-Layout-Editor, Mehrsprachigkeit der Labels, Layouts für fremde Geräte.
+- Neue Capability `device-layout`: Geräte werden als datengetriebenes Raster
+  (Reihen, Spalten, Spannen, Labels, optionale Aufkleberfarbe) beschrieben und
+  in der Oberfläche schematisch dargestellt.
+- Neue Capability `device-banks`: Bis zu 16 Bänke je Profil, jeweils mit eigenem
+  MIDI-Kanal und eigener Notenbelegung. Ein Page-Wechsel am Gerät ändert beides
+  gemeinsam. Die Bank wird beim Lernen und beim Mappen in der UI gewählt; der
+  Kanal ordnet das Ereignis der Bank zu. Ohne expliziten Eintrag verteilt ein
+  konfigurierbarer Bank-Offset die Executor-Ziele auf derselben MA-Page; eine
+  MA-Page-Bindung pro Bank bleibt optional.
+- Neue Capability `device-learn`: Geführter Learn-Modus über die Gerätefläche.
+  Die ungebundenen Controls der gewählten Bank werden in Layout-Reihenfolge
+  durchlaufen; das physische Bedienen liefert die Note, die atomar ins Profil
+  geschrieben wird. Damit sind die frei einstellbaren MIDICRAFT-Noten ohne
+  Handarbeit erfassbar.
+- Control-Inventar im Profil: physische Controls werden unabhängig von Noten
+  deklariert, sodass Fläche und Learn-Modus auch vor dem ersten Anlernen
+  vollständig sind.
+- Mitgelieferte Layouts: Cherry G86-63400 im Layout des aktuellen Fotos, ASL
+  MK2-E4B3 sowie alle sechs aktuellen MIDICRAFT-Modelle (`PUSH²`, `FADE²`,
+  `TURN²`, `MIX²`, `ENC`, `SPOT`) mit ihren Control-Zahlen.
+- Mehrfachzuweisung: mehrere Felder auswählen (Klick-Reihenfolge), Aktion und
+  Startwert angeben; numerische Ziele wie Executor-Nummern werden fortlaufend
+  verteilt (5 Tasten, Executor, Start 1 → 1–5).
+- Encoder-Beschleunigung in der Geräteansicht: Der Zuweisungsdialog bietet für
+  absolute Encoder mit Fader-Ziel denselben Schalter `accelerated`, den der
+  Mapping-Editor verwendet.
+- **Nicht enthalten:** LED-Feedback, PickUp, freier Drag-and-drop-Layouteditor,
+  ASL-Modelle außer MK2-E4B3, MIDICRAFT-Vorgängerserie, MIDI-CC-Betrieb.
+- **Abhängigkeit:** baut auf `add-midicraft-input` auf (absolute Werte,
+  Executor-Ziele) und auf `add-value-acceleration` (Feld `accelerated` samt
+  Backend-Validierung). Alle neuen Sektionen sind optional; bestehende
+  Konfigurationen bleiben gültig.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `device-layout`: Schema und API für schematische Geräte-Layouts (Raster, Labels, Control-Referenzen), damit die Oberfläche Tastatur und MIDI-Controller grafisch darstellen kann.
+- `device-layout`: Schema, Validierung und API für schematische Geräteflächen,
+  damit die Oberfläche Tastaturen und Controller als Raster darstellen und
+  Felder ihren logischen Controls zuordnen kann.
+- `device-banks`: Bank-Modell aus MIDI-Kanal und Notenbelegung, explizite
+  Bankwahl im Editor, Bank-Offset und optionale MA-Page-Bindung.
+- `device-learn`: Geführter Anlernmodus für die physische Control-Belegung
+  inklusive Note, Fortschritt, Abbruch und atomarem Speichern.
 
 ### Modified Capabilities
 
-Keine. `config-ui` bleibt unverändert; die neue Capability ergänzt sie.
+- `hid-input`: Control-Inventar unabhängig von Noten, Bänke mit Notenbelegung,
+  normalisierte Ereignisse mit Bank sowie Profile für die MIDICRAFT-Familie.
+- `mapping-engine`: Auflösung in der Reihenfolge Bank-Ebene vor Bank-Offset vor
+  globalem Mapping, inklusive gehaltener Tasten.
+- `config-ui`: Geräteflächen mit Direktzuweisung, Bankauswahl,
+  Mehrfachzuweisung, Bank-Einstellungen, Learn-Modus und
+  Beschleunigungs-Schalter.
 
 ## Impact
 
-- **Code:** `config.py` (neue `[layouts.*]`-Sektion), `ma2pi/web/` (Layout in `GET /api/config` bzw. `GET /api/devices`), Frontend-Rendering in `web/`.
-- **Daten:** `config.toml` erhält Layout-Blöcke für `cherry-g86` und `asl-mk2-e4b3`.
-- **Abhängigkeiten:** keine neuen.
-- **Risiko:** Ein falsch gepflegtes Layout ist nur kosmetisch; die Funktion hängt weiterhin am Mapping, nicht am Layout.
+- **Code:** `ma2pi/config.py` (Control-Inventar, Bänke, Layout, Mapping-Ebenen,
+  `bank_size`, Validierung), `ma2pi/events.py` (Bank im Ereignis),
+  `ma2pi/midi_input.py` (Kanal und Note liefern die Bank, Roh-Ereignisse für
+  Learn), `ma2pi/mapping.py` (Bank-Auflösung und Offset), neuer Learn-Zustand
+  im Daemon, `ma2pi/web/` (Geräte-API, Learn-Endpunkte), `web/src/App.svelte`
+  und neue Komponenten für Fläche, Auswahl, Zuweisungsdialog und Learn-Modus.
+  Der Beschleunigungs-Schalter nutzt das Feld `accelerated` aus
+  `add-value-acceleration`.
+- **Daten:** `config.toml` erhält `[layouts.*]`, Profil-Bänke, Control-Inventar,
+  `[mapping.device_banks.*]` und `bank_size`; bestehende Profile werden als
+  Bank 1 abgeleitet.
+- **Dokumentation:** README-Konfigurationsreferenz und Learn-Anleitung; ADR
+  (Proposed) für Bänke als Editorzustand und Bank-Offset.
+- **Abhängigkeiten:** keine neuen Laufzeitabhängigkeiten.
+- **Risiko:** Die Noten der MIDICRAFT-Modelle sind gerätespezifisch und werden
+  erst durch den Learn-Modus bekannt; mitgelieferte Profile starten deshalb mit
+  Inventar und ohne Noten. Die Kanäle müssen je Profil eindeutig sein, weil sie
+  die Bank bestimmen; Noten dürfen sich zwischen Bänken wiederholen.
