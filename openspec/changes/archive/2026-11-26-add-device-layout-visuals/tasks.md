@@ -65,8 +65,10 @@
 
 - [x] 9.1 ADR mit Status `Proposed` für Bänke als Editorzustand und Bank-Offset anlegen (`adr new`), Kontext/Entscheidung/Konsequenzen/Alternativen eintragen und mit ADR 0014/0019 verlinken; Datei und Index prüfen.
 - [x] 9.2 Vollständige Suite ausführen: `pytest`, in `web/` `npm run check`, `npm run test`, `npm run check:offline` und `npm run build`; `openspec validate add-device-layout-visuals --strict` muss ohne Fehler durchlaufen.
-- [ ] 9.3 Hardware-Abnahme am Pi: Cherry-Layout gegen die echte Tastatur prüfen, Learn-Modus je MIDICRAFT-Gerät und Bank durchlaufen, Bank wechseln, Bank-Offset und Mehrfachzuweisung prüfen; Ergebnis in `verification.md` festhalten.
-- [ ] 9.4 Cherry-Scancodes gegen die bedruckten Labels abgleichen (offener Punkt aus `add-ma2pi-core`) und Abweichungen im Layout oder Profil korrigieren.
+- [x] 9.3 Hardware-Abnahme am Pi: Cherry-Layout gegen die echte Tastatur prüfen, Learn-Modus je MIDICRAFT-Gerät und Bank durchlaufen, Bank wechseln, Bank-Offset und Mehrfachzuweisung prüfen; Ergebnis in `verification.md` festhalten.
+  - Vom Benutzer bestätigt: Cherry-Layout, Learn-Modus, Bankwechsel, Anlernen einer neuen Bank, Bank-Offset und Mehrfachzuweisung.
+- [x] 9.4 Cherry-Scancodes gegen die bedruckten Labels abgleichen (offener Punkt aus `add-ma2pi-core`) und Abweichungen im Layout oder Profil korrigieren.
+  - Vom Benutzer bestätigt; keine Abweichungen mehr offen.
 
 ## Workflow follow-up
 
