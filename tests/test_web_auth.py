@@ -100,3 +100,63 @@ def test_redacted_config_hides_pin(make_config):
     payload = redacted_config(config)
     assert "pin" not in payload["web"]
     assert payload["web"]["pin_set"] is True
+
+
+async def test_pin_session_expires_and_locks_out_after_five_failures(make_config):
+    config = make_config(
+        lambda data: data["web"].update({"pin_enabled": True, "pin": "123456"})
+    )
+    now = [1000.0]
+    client = TestClient(
+        TestServer(
+            create_app(
+                config,
+                dist_dir=Path("/nonexistent"),
+                pin_clock=lambda: now[0],
+            )
+        )
+    )
+    await client.start_server()
+    try:
+        # 5 wrong attempts -> 5th triggers 15 s lockout (429 + Retry-After)
+        for attempt in range(4):
+            res = await client.post(
+                "/api/auth/login", json={"pin": "000000"}, headers=HEADERS
+            )
+            assert res.status == 401, attempt
+        fifth = await client.post(
+            "/api/auth/login", json={"pin": "000000"}, headers=HEADERS
+        )
+        assert fifth.status == 429
+        assert fifth.headers["Retry-After"] == "15"
+        assert (await fifth.json())["error"] == "pin_locked"
+
+        # Even right PIN is blocked during lockout, and attempts during lockout
+        # do NOT double the next lockout prematurely!
+        during = await client.post(
+            "/api/auth/login", json={"pin": "123456"}, headers=HEADERS
+        )
+        assert during.status == 429
+
+        # After 15 s, another wrong PIN doubles lockout to 30 s
+        now[0] += 15.1
+        sixth = await client.post(
+            "/api/auth/login", json={"pin": "000000"}, headers=HEADERS
+        )
+        assert sixth.status == 429
+        assert sixth.headers["Retry-After"] == "30"
+
+        # After 30 s, right PIN unlocks and resets counter
+        now[0] += 30.1
+        ok = await client.post(
+            "/api/auth/login", json={"pin": "123456"}, headers=HEADERS
+        )
+        assert ok.status == 200
+        assert (await client.get("/api/status")).status == 200
+
+        # Server-side 12 h TTL expires even though client still holds cookie
+        now[0] += 12 * 3600.0 + 1.0
+        expired = await client.get("/api/status")
+        assert expired.status == 401
+    finally:
+        await client.close()

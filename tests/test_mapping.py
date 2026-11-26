@@ -184,8 +184,8 @@ def test_device_loss_releases_only_that_device(engine, sink):
     engine.release_device("cherry")
     assert ("press", "MA") in sink.actions
     assert ("release", "MA") in sink.actions
-    assert "ma" not in engine.held
-    assert "asl_click_1" in engine.held
+    assert ("cherry", "ma") not in engine.held
+    assert ("asl", "asl_click_1") in engine.held
 
 
 def test_connection_lost_clears_without_replay(engine, sink):
@@ -565,3 +565,89 @@ def test_release_after_bank_switch_uses_press_target(make_config):
     engine.handle(InputEvent("key", "bt_button", 0, "banktest", 1))
     assert [action[0] for action in sink.actions] == ["press", "release"]
     assert sink.actions[0][1] == sink.actions[1][1]
+
+
+def test_two_devices_same_console_key_refcounted_and_single_hold_upgrade(make_config):
+    def mutate(data):
+        data["ma2"]["hardkey_transport"] = "lua"
+        data["ma2"]["hardkey_hold_threshold"] = 0.5
+        data["mapping"]["keys"]["oops"] = {"hardkey": "Fix"}
+
+    cfg = make_config(mutate)
+    sink = Sink()
+    engine = MappingEngine(cfg, sink, clock=lambda: 0.0)
+
+    # Device A holds `fix`, Device B sends unrelated release -> ignored!
+    engine.handle(InputEvent("key", "fix", 1, "devA"), now=0.0)
+    engine.handle(InputEvent("key", "fix", 0, "devB"), now=0.1)
+    assert sink.actions == [("press", "FIX")]
+    assert ("devA", "fix") in engine.held
+
+    # Device B presses `oops` which ALSO maps to console key `FIX` -> no 2nd press!
+    engine.handle(InputEvent("key", "oops", 1, "devB"), now=0.1)
+    assert sink.actions == [("press", "FIX")]
+
+    # Hold upgrade after threshold fires AT MOST ONCE for `FIX`!
+    assert engine.flush_hold_upgrades(0.7) == 1
+    assert sink.actions == [("press", "FIX"), ("press", "FIX")]
+
+    # First holder releases -> console key stays held!
+    engine.handle(InputEvent("key", "fix", 0, "devA"), now=0.8)
+    assert sink.actions == [("press", "FIX"), ("press", "FIX")]
+
+    # Last holder releases -> single release frame!
+    engine.handle(InputEvent("key", "oops", 0, "devB"), now=0.9)
+    assert sink.actions == [("press", "FIX"), ("press", "FIX"), ("release", "FIX")]
+    assert engine.held == {}
+    assert engine._keyname_holders == {}
+
+
+def test_cross_device_local_modifier_and_cleanup_reset_hook(make_config):
+    def mutate(data):
+        data["mapping"]["encoders"] = [{"id": 1, "attribute": "PAN"}]
+        data["mapping"]["encoder_resolution"] = {
+            "attribute": {"normal": 1.0, "fine": 0.1, "ultra": 0.01},
+            "modifiers": {"fine": "asl_button_2"},
+        }
+
+    cfg = make_config(mutate)
+    sink = Sink()
+    engine = MappingEngine(cfg, sink, clock=lambda: 0.0)
+    hook_calls: list[tuple[str, bool]] = []
+    engine.modifier_hook = lambda ctrl, pressed: hook_calls.append((ctrl, pressed))
+
+    engine.handle(InputEvent("key", "asl_button_2", 1, "devA"), now=0.0)
+    engine.handle(InputEvent("key", "asl_button_2", 1, "devB"), now=0.01)
+    assert hook_calls == [("asl_button_2", True)]
+
+    # Fine held on devA/devB scales attribute encoder turned on devC!
+    engine.handle(InputEvent("encoder", "encoder.1", 2, "devC"), now=0.02)
+    engine.flush_all(0.1)
+    assert sink.actions == [("attribute", "PAN", pytest.approx(0.2))]
+
+    engine.handle(InputEvent("key", "asl_button_2", 0, "devA"), now=0.1)
+    assert hook_calls == [("asl_button_2", True)]
+    engine.cleanup(send=False)
+    assert hook_calls == [("asl_button_2", True), ("asl_button_2", False)]
+
+
+def test_banked_relative_encoder_is_mappable(make_config):
+    def mutate(data):
+        data["profiles"]["rel-bank"] = {
+            "controls": [{"id": "rel_enc", "kind": "relative-encoder", "encoder_id": 9}],
+            "banks": [{"number": 1, "channel": 1, "notes": {"20": "rel_enc"}}],
+        }
+        data["devices"]["relbox"] = {
+            "backend": "midi",
+            "vendor_id": 0x04D8,
+            "product_id": 0x7777,
+            "profile": "rel-bank",
+        }
+        data["mapping"]["encoders"].append({"id": 9, "slot": 2})
+
+    cfg = make_config(mutate)
+    sink = Sink()
+    engine = MappingEngine(cfg, sink, clock=lambda: 0.0)
+    engine.handle(InputEvent("encoder", "rel_enc", 3, "relbox", 1, 20), now=0.0)
+    engine.flush_all(0.1)
+    assert sink.actions == [("slot", 2, pytest.approx(3.0))]

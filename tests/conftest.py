@@ -63,3 +63,34 @@ def small_config(make_config) -> AppConfig:
 @pytest.fixture(autouse=True)
 def test_password(monkeypatch):
     monkeypatch.setenv("MA2PI_TEST_PASSWORD", "secret")
+
+
+class NullSink:
+    """Shared no-op ``ActionSink`` test double matching ``MappingEngine``."""
+
+    def press(self, keyname: str, hold: bool = False) -> None:
+        pass
+
+    def release(self, keyname: str) -> None:
+        pass
+
+    def command(self, text: str) -> None:
+        pass
+
+    def encoder_slot(self, slot: int, delta: float, screen: bool = False) -> None:
+        pass
+
+    def encoder_attribute(self, name: str, value: float) -> None:
+        pass
+
+    def toggle_screen_mode(self) -> None:
+        pass
+
+    def encoder_press(self, slot: int, pressed: bool, screen: bool = False) -> None:
+        pass
+
+    def encoder_resolution(self, slot: int, screen: bool = False) -> None:
+        pass
+
+    def screen_shortcut(self, screen: int) -> None:
+        pass

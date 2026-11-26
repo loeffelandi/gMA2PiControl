@@ -20,7 +20,7 @@ from .activity import (
     record_ma2_frame,
 )
 from .config import AppConfig, ConfigError, find_config
-from .config_store import DEFAULT_ETC_DIR, ConfigPaths
+from .config_store import DEFAULT_ETC_DIR, ConfigPaths, migrate
 from .events import DeviceLost, InputEvent, format_input
 from .feedback import ExecutorFeedback
 from .hid_input import HidManager, device_matches, format_devices, list_devices
@@ -112,7 +112,11 @@ async def _process_input(
             if learn.active:
                 _publish_learn(bus, learn.cancel())
             if device_learn is not None:
-                device_learn.device_lost(item.device)
+                event = device_learn.device_lost(item.device)
+                if bus is not None and isinstance(event, dict):
+                    bus.publish({"type": "device_learn", "data": event})
+            if playback is not None and hasattr(playback, "release_device"):
+                playback.release_device(item.device)
             engine.release_device(item.device)
         elif learn.active:
             # Learn owns all input while a session is open; no mapping action
@@ -212,16 +216,22 @@ def _activity_event(activity: ActivityTracker) -> dict | None:
 
 
 def _config_paths(config: AppConfig) -> ConfigPaths:
-    """Pick the writable state directory for the active configuration."""
+    """Pick the writable state directory and migrate legacy ``/etc`` once."""
 
     source = Path(config.source_path) if config.source_path else None
     if source is not None and source.parent != DEFAULT_ETC_DIR:
-        return ConfigPaths(state_dir=source.parent)
-    return ConfigPaths()
+        return ConfigPaths(state_dir=source.parent, config_file=source.name)
+    paths = ConfigPaths(etc_dir=source.parent if source is not None else DEFAULT_ETC_DIR)
+    if source is not None and not paths.config.exists():
+        try:
+            migrate(paths)
+        except OSError as exc:
+            LOGGER.warning("Automatische Migration nach %s fehlgeschlagen: %s", paths.state_dir, exc)
+    return paths
 
 
 def _find_led_target(config: AppConfig) -> tuple[str, str] | None:
-    """Return ``(midi node, device name)`` for the LED output."""
+    """Return ``(midi node, device name)`` for a configured MIDI LED device."""
 
     try:
         infos = list_midi_devices()
@@ -234,104 +244,105 @@ def _find_led_target(config: AppConfig) -> tuple[str, str] | None:
         for info in infos:
             if device_matches(device, info):
                 return info.path, name
-    return (infos[0].path, "asl") if infos else None
-
-
-def _resolve_led_target(config: AppConfig) -> tuple[str, str] | None:
-    """Resolve ``[led].device`` (a configured name) to ``(path, name)``."""
-
-    if config.led.device is None:
-        return _find_led_target(config)
-    device = config.devices.get(config.led.device)
-    if device is None or device.backend != "midi":
-        return None
-    try:
-        infos = list_midi_devices()
-    except Exception as exc:  # pragma: no cover - hardware dependent
-        LOGGER.warning("MIDI-Enumeration für LED fehlgeschlagen: %s", exc)
-        return None
-    for info in infos:
-        if device_matches(device, info):
-            return info.path, config.led.device
     return None
 
 
-def _start_led(config: AppConfig) -> LedOutput | None:
-    """Open the LED output; a failure must never stop the daemon."""
+def _resolve_led_device_name(config: AppConfig) -> str | None:
+    """Return the configured MIDI device name owned by ``[led]``."""
 
+    if config.led.device is not None:
+        device = config.devices.get(config.led.device)
+        if device is None or device.backend != "midi":
+            return None
+        return config.led.device
+    for name, device in config.devices.items():
+        if device.backend == "midi":
+            return name
+    return None
+
+
+def _led_step(
+    config: AppConfig,
+    client: Ma2Client,
+    midi: MidiManager,
+    holder: dict,
+) -> None:
+    """Reconcile ASL LED output over ``MidiManager`` without opening a second fd."""
+
+    current: LedOutput | None = holder.get("led")
     if not config.led.enabled:
-        return None
-    target = _resolve_led_target(config)
-    if target is None:
-        LOGGER.warning("LED-Ausgabe aktiviert, aber kein MIDI-Gerät gefunden")
-        return None
-    path, name = target
-    led = LedOutput(path, config.led)
-    led.device_name = name
-    try:
-        led.open()
-    except OSError as exc:
-        LOGGER.error("LED-Ausgabe konnte %s nicht öffnen: %s", path, exc)
-        return None
-    led.enable()
-    led.apply_mode(False)
-    LOGGER.info("LED-Ausgabe aktiv auf %s (Note %d)", path, config.led.note)
-    return led
-
-
-def _attach_led_activity(led: LedOutput | None, activity: ActivityTracker) -> None:
-    """Report LED writes as TX activity under the resolved device name."""
-
-    if led is None:
+        if current is not None:
+            current.close()
+            holder.clear()
+            client.set_led(None)
+            LOGGER.info("LED-Ausgabe deaktiviert")
         return
-    led.on_write = lambda label: activity.record_tx(
-        led.device_name, "led", label
+
+    name = _resolve_led_device_name(config)
+    open_gens = getattr(midi, "open_generations", {}) or {}
+    open_paths = getattr(midi, "open_devices", {}) or {}
+    if name is None or name not in open_gens:
+        if current is not None:
+            current.close()
+            holder.clear()
+            client.set_led(None)
+        return
+
+    gen = open_gens[name]
+    path = open_paths.get(name, name)
+    if (
+        current is not None
+        and holder.get("device") == name
+        and holder.get("generation") == gen
+        and holder.get("settings") == config.led
+    ):
+        return
+
+    if current is not None:
+        current.close()
+    led = LedOutput(
+        path,
+        config.led,
+        sender=lambda payload, dev=name: midi.send(dev, payload),
     )
+    led.device_name = name
+    led.open()
+    led.enable()
+    led.apply_mode(client.screen_encoder_active)
+    holder.clear()
+    holder.update(
+        {
+            "led": led,
+            "device": name,
+            "generation": gen,
+            "settings": config.led,
+        }
+    )
+    client.set_led(led)
+    LOGGER.info("LED-Ausgabe aktiv auf %s (Note %d)", path, config.led.note)
 
 
 async def _led_loop(
-    config: AppConfig,
+    engine: MappingEngine,
     client: Ma2Client,
+    midi: MidiManager,
     holder: dict,
-    activity: ActivityTracker | None = None,
 ) -> None:
-    """Open the LED output as soon as the (re)plugged device appears."""
+    """Keep ``[led]`` synchronised with hot-reloads and MIDI replugs."""
 
     while True:
-        await asyncio.sleep(2.0)
-        current = holder.get("led")
-        if current is not None and current.is_open and current.still_attached():
-            continue
-        target = _resolve_led_target(config)
-        if target is None:
-            continue
-        path, name = target
-        if not Path(path).exists():
-            continue
-        if current is not None:
-            current.close()  # toten Handle nach Replug freigeben
-        led = LedOutput(path, config.led)
-        led.device_name = name
-        try:
-            led.open()
-        except OSError:
-            continue
-        led.enable()
-        led.apply_mode(client.screen_encoder_active)
-        if activity is not None:
-            _attach_led_activity(led, activity)
-        holder["led"] = led
-        client.set_led(led)
-        LOGGER.info("LED-Ausgabe aktiv auf %s (Note %d)", path, config.led.note)
+        _led_step(engine.config, client, midi, holder)
+        await asyncio.sleep(1.0)
 
 
-async def _device_learn_loop(device_learn: DeviceLearnManager, engine: MappingEngine) -> None:
-    """Timeout the active device learn session and follow hot reloads."""
+async def _device_learn_loop(device_learn: DeviceLearnManager, bus=None) -> None:
+    """Timeout active device learn sessions and publish state transitions."""
 
     while True:
         await asyncio.sleep(0.2)
-        device_learn.set_config(engine.config)
-        device_learn.poll()
+        event = device_learn.poll()
+        if bus is not None and isinstance(event, dict):
+            bus.publish({"type": "device_learn", "data": event})
 
 
 async def _start_web(
@@ -446,7 +457,22 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
     learn = LearnManager(config)
     device_learn = DeviceLearnManager(config)
     playback = PlaybackRouter(engine, client)
+
+    def _release_for_learn(dev: str | None) -> None:
+        send = client.authenticated or client.dry_run
+        if dev is None:
+            playback.cleanup(send=send)
+            engine.cleanup(send=send)
+        else:
+            playback.release_device(dev, send=send)
+            engine.release_device(dev, send=send)
+
+    learn.on_start = _release_for_learn
+    device_learn.on_start = _release_for_learn
+    store.set_playback(playback)
     client.add_connection_lost_callback(engine.on_connection_lost)
+    if hasattr(playback, "on_connection_lost"):
+        client.add_connection_lost_callback(playback.on_connection_lost)
     hid = HidManager(config)
     midi = MidiManager(config)
     midi.set_raw_hook(device_learn.handle_raw)
@@ -455,9 +481,18 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
     )
     feedback = ExecutorFeedback(config, client, midi, dry_run=dry_run)
     client.add_connection_lost_callback(feedback.reset)
+    led_holder: dict = {}
     store.add_activate_hook(hid.set_config)
     store.add_activate_hook(midi.set_config)
     store.add_activate_hook(feedback.set_config)
+    store.add_activate_hook(learn.set_config)
+    store.add_activate_hook(device_learn.set_config)
+    store.add_activate_hook(
+        lambda cfg: logging.getLogger().setLevel(cfg.logging.level.upper())
+    )
+    store.add_activate_hook(
+        lambda cfg: _led_step(cfg, client, midi, led_holder)
+    )
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -468,15 +503,8 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
             pass
 
     await client.start()
-    led_holder: dict = {"led": _start_led(config)}
-    _attach_led_activity(led_holder["led"], activity)
-    client.set_led(led_holder["led"])
-    led_task = (
-        asyncio.create_task(
-            _led_loop(config, client, led_holder, activity), name="ma2pi-led"
-        )
-        if config.led.enabled
-        else None
+    led_task = asyncio.create_task(
+        _led_loop(engine, client, midi, led_holder), name="ma2pi-led"
     )
     def _modifier_led(control: str, pressed: bool) -> None:
         led = led_holder.get("led")
@@ -489,6 +517,10 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
         config, client, store, learn, device_learn, activity, hid, midi
     )
     bus = web_service[2] if web_service is not None else None
+    if bus is not None and hasattr(device_learn, "publish"):
+        device_learn.publish = lambda payload: bus.publish(
+            {"type": "device_learn", "data": payload}
+        )
     encoder_task = asyncio.create_task(engine.run_encoder_loop(), name="ma2pi-encoder")
     hid_task = asyncio.create_task(hid.run(queue), name="ma2pi-hid")
     midi_task = asyncio.create_task(midi.run(queue), name="ma2pi-midi")
@@ -498,7 +530,7 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
     )
     learn_task = asyncio.create_task(_learn_loop(learn, bus), name="ma2pi-learn")
     device_learn_task = asyncio.create_task(
-        _device_learn_loop(device_learn, engine), name="ma2pi-device-learn"
+        _device_learn_loop(device_learn, bus), name="ma2pi-device-learn"
     )
     feedback_task = asyncio.create_task(feedback.run(), name="ma2pi-feedback")
 
@@ -520,6 +552,7 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
         input_task,
         learn_task,
         device_learn_task,
+        led_task,
         feedback_task,
     ):
         task.add_done_callback(_watch)
@@ -530,33 +563,36 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
         LOGGER.info("Shutdown angefordert")
         input_task.cancel()
         hid_task.cancel()
-        midi_task.cancel()
         learn_task.cancel()
+        device_learn_task.cancel()
+        led_task.cancel()
         engine.stop()
         encoder_task.cancel()
         feedback_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await feedback_task
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await input_task
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await hid_task
+        for task in (
+            feedback_task,
+            input_task,
+            hid_task,
+            learn_task,
+            device_learn_task,
+            led_task,
+            encoder_task,
+        ):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        # Send ASL LED DISABLE before cancelling midi_task (whose finally closes handles).
+        if led_holder.get("led") is not None:
+            led_holder["led"].close()
+            client.set_led(None)
+        midi_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await midi_task
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await learn_task
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await encoder_task
+        if hasattr(playback, "cleanup"):
+            playback.cleanup(send=client.authenticated)
         engine.cleanup(send=client.authenticated)
         await client.shutdown()
-        if led_task is not None:
-            led_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await led_task
-        if led_holder["led"] is not None:
-            led_holder["led"].close()
         if web_service is not None:
-            web_runner, web_task, _, network, recovery_task = web_service
+            web_runner, web_task, web_bus, network, recovery_task = web_service
             recovery_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await recovery_task
@@ -564,6 +600,7 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
             web_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await web_task
+            web_bus.close_all()
             with contextlib.suppress(Exception):
                 await web_runner.cleanup()
         await hid.close()

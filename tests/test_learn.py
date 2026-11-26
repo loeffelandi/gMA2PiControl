@@ -174,3 +174,25 @@ def test_not_learning_returns_none(config):
     learner = LearnManager(config)
     assert learner.feed(key("fix", 1), now=0.0) is None
     assert learner.poll(now=1.0) is None
+
+
+def test_missing_key_up_expires_after_release_timeout_and_locks_encoder(config):
+    learner = LearnManager(config, release_timeout=2.0)
+    learner.start("key", now=0.0)
+    res = learner.feed(InputEvent("key", "mc_row1_1", 1, "midicraft-enc", bank=1, note=65), now=0.1)
+    assert res is not None and res.raw == "65"
+    assert learner.active is True
+
+    # Without key-up, poll after 2.1 s releases the session so rig inputs resume!
+    learner.poll(now=2.2)
+    assert learner.active is False
+
+    # Encoder learn locks onto the first encoder moved
+    learner.start("encoder", now=3.0)
+    learner.feed(encoder(1, 1), now=3.1)
+    learner.feed(encoder(2, -5), now=3.2)  # must be ignored!
+    done = learner.poll(now=5.2)
+    assert done is not None
+    assert done.control == "encoder.1"
+    assert done.detents == 1
+    assert done.direction == 1

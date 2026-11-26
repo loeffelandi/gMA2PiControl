@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/svelte';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import StatusPage from './StatusPage.svelte';
 import { StatusStore, type WebSocketLike } from './status';
@@ -310,6 +310,101 @@ describe('StatusPage', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Noch keine Aktivität.')).toBeTruthy();
+    });
+
+    store.disconnect();
+  });
+
+  it('shows Unbekannt for Encoder-Modus before the first status snapshot arrives', () => {
+    const store = new StatusStore({
+      factory: (url) => new FakeSocket(url),
+    });
+    render(StatusPage, { props: { store, devicesLoader: async () => [] } });
+
+    expect(screen.getByText('Unbekannt')).toBeTruthy();
+    expect(screen.queryByText('Attribut (rot)')).toBeNull();
+  });
+
+  it('re-fetches devices on configGeneration changes and hotplug activity', async () => {
+    const store = new StatusStore({
+      factory: (url) => new FakeSocket(url),
+      reconnectBaseMs: 10,
+    });
+    let currentDevices = [
+      {
+        ...devices[0],
+        detected: null as Record<string, unknown> | null,
+      },
+    ];
+    const devicesLoader = vi.fn(async () => currentDevices);
+    const { container } = render(StatusPage, {
+      props: { store, devicesLoader },
+    });
+
+    store.connect();
+    const socket = FakeSocket.last!;
+    socket.emitOpen();
+    await waitFor(() => expect(devicesLoader).toHaveBeenCalledTimes(1));
+    expect(container.querySelector('.device-id')).toBeNull();
+
+    // Hotplug in: previously unseen device appears in activity -> re-fetches devices.
+    currentDevices = [{ ...devices[0], detected: { path: '/dev/input/event0' } }];
+    socket.emitMessage({
+      type: 'activity',
+      data: {
+        devices: { cherry: { rx: 1, tx: 0, last_rx: 1700000010, last_tx: null } },
+        entries: [
+          {
+            seq: 1,
+            ts: 1700000010,
+            direction: 'rx',
+            device: 'cherry',
+            kind: 'key',
+            summary: 'fix · value 1',
+          },
+        ],
+      },
+    });
+
+    await waitFor(() => {
+      expect(devicesLoader).toHaveBeenCalledTimes(2);
+      expect(container.querySelector('.device-id')?.textContent).toBe('cherry');
+    });
+
+    // Hotplug out: device-lost entry appears -> re-fetches devices.
+    currentDevices = [{ ...devices[0], detected: null }];
+    socket.emitMessage({
+      type: 'activity',
+      data: {
+        devices: {},
+        entries: [
+          {
+            seq: 2,
+            ts: 1700000012,
+            direction: 'rx',
+            device: 'system',
+            kind: 'device-lost',
+            summary: 'cherry: device lost',
+          },
+        ],
+      },
+    });
+
+    await waitFor(() => {
+      expect(devicesLoader).toHaveBeenCalledTimes(3);
+      expect(container.querySelector('.device-id')).toBeNull();
+    });
+
+    // Config change -> re-fetches devices.
+    currentDevices = [{ ...devices[0], detected: { path: '/dev/input/event1' } }];
+    socket.emitMessage({
+      type: 'config',
+      data: { generation: 8 },
+    });
+
+    await waitFor(() => {
+      expect(devicesLoader).toHaveBeenCalledTimes(4);
+      expect(container.querySelector('.device-id')?.textContent).toBe('cherry');
     });
 
     store.disconnect();

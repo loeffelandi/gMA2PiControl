@@ -1,20 +1,48 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
 
-  import { ApiError, type ApiClient, type DeviceEntry, type DevicePresence, type DeviceValueControl, type LearnResult } from './api';
+  import {
+    ApiError,
+    type ApiClient,
+    type DeviceEntry,
+    type DevicePresence,
+    type DeviceValueControl,
+    type LearnResult,
+  } from './api';
   import type { StatusStore } from './status';
 
   type KeyKind = 'hardkey' | 'command' | 'screen_mode' | 'screen' | 'encoder_press';
   type EncoderKind = 'slot' | 'attribute';
+  type ModifierKind = 'hardkey' | 'local';
   type PlaybackKind = 'button' | 'fader';
 
+  interface ValueControlInfo {
+    control: string;
+    note: number;
+    kind: 'fader' | 'poti' | 'encoder';
+  }
+
+  interface RawBankEntry {
+    number: number;
+    channel: number;
+    notes?: Record<string, string> | { note: number; control: string }[];
+  }
+
+  interface RawInventoryEntry {
+    id: string;
+    kind: 'button' | 'fader' | 'poti' | 'encoder' | 'relative-encoder';
+    label?: string | null;
+  }
+
   interface KeyRow {
+    uid: number;
     control: string;
     kind: KeyKind;
     value: string;
   }
 
   interface EncoderRow {
+    uid: number;
     id: number;
     kind: EncoderKind;
     value: string;
@@ -22,11 +50,14 @@
   }
 
   interface ModifierRow {
+    uid: number;
     control: string;
+    kind: ModifierKind;
     hardkey: string;
   }
 
   interface PlaybackRow {
+    uid: number;
     control: string;
     page: string;
     executor: string;
@@ -38,6 +69,13 @@
   }
 
   let { api, learnStore }: { api: ApiClient; learnStore?: StatusStore } = $props();
+
+  let nextRowUid = 1;
+  function allocUid(): number {
+    const id = nextRowUid;
+    nextRowUid += 1;
+    return id;
+  }
 
   let devices = $state<DeviceEntry[]>([]);
   let presence = $state<Record<string, DevicePresence>>({});
@@ -60,7 +98,7 @@
   let dirty = $state(false);
   let message = $state<{ ok: boolean; text: string } | null>(null);
   let learnState = $state<LearnResult | null>(null);
-  let pendingLearn = $state<null | { kind: 'key' | 'encoder'; index: number }>(null);
+  let pendingLearn = $state<null | { kind: 'key' | 'encoder'; uid: number }>(null);
   let learnedControl = $state<string | null>(null);
 
   const keyKinds: KeyKind[] = [
@@ -71,15 +109,70 @@
     'screen_mode',
   ];
 
+  function bankNotesList(bank: RawBankEntry | undefined): { note: number; control: string }[] {
+    if (!bank?.notes) return [];
+    if (Array.isArray(bank.notes)) {
+      return bank.notes.map((entry) => ({
+        note: Number(entry.note),
+        control: String(entry.control),
+      }));
+    }
+    return Object.entries(bank.notes).map(([note, control]) => ({
+      note: Number(note),
+      control: String(control),
+    }));
+  }
+
+  function valueControlsOf(device: DeviceEntry): ValueControlInfo[] {
+    const controls = device.controls as unknown as {
+      values?: DeviceValueControl[];
+      inventory?: RawInventoryEntry[];
+      banks?: RawBankEntry[];
+    };
+    const seen: Record<string, boolean> = {};
+    const out: ValueControlInfo[] = [];
+    for (const entry of controls.values ?? []) {
+      if (seen[entry.control]) continue;
+      seen[entry.control] = true;
+      out.push({
+        control: entry.control,
+        note: entry.note,
+        kind: entry.kind,
+      });
+    }
+    const firstBankNotes: Record<string, number> = {};
+    for (const entry of bankNotesList(controls.banks?.[0])) {
+      if (!(entry.control in firstBankNotes)) {
+        firstBankNotes[entry.control] = entry.note;
+      }
+    }
+    for (const item of controls.inventory ?? []) {
+      if (seen[item.id]) continue;
+      if (item.kind === 'fader' || item.kind === 'poti' || item.kind === 'encoder') {
+        seen[item.id] = true;
+        out.push({
+          control: item.id,
+          note: firstBankNotes[item.id] ?? 0,
+          kind: item.kind,
+        });
+      }
+    }
+    return out;
+  }
+
   const keyControls = $derived(
     [...new Set(devices.flatMap((device) => {
       const controls = device.controls as unknown as {
         keys?: { control: string }[];
         notes?: { control: string }[];
+        inventory?: RawInventoryEntry[];
       };
       return [
         ...(controls.keys ?? []).map((entry) => entry.control),
         ...(controls.notes ?? []).map((entry) => entry.control),
+        ...(controls.inventory ?? [])
+          .filter((entry) => entry.kind === 'button')
+          .map((entry) => entry.id),
       ];
     }))].sort(),
   );
@@ -90,21 +183,32 @@
       ...devices.flatMap((device) =>
         valueControlsOf(device).map((entry) => entry.control),
       ),
+      ...devices.flatMap((device) => {
+        const controls = device.controls as unknown as {
+          inventory?: RawInventoryEntry[];
+        };
+        return (controls.inventory ?? [])
+          .filter((entry) => entry.kind !== 'relative-encoder')
+          .map((entry) => entry.id);
+      }),
     ])].sort(),
   );
-
-  function valueControlsOf(device: DeviceEntry): DeviceValueControl[] {    return ((device.controls as { values?: DeviceValueControl[] }).values ?? []);
-  }
 
   const encoderIds = $derived(
     [...new Set(devices.flatMap((device) => {
       const controls = device.controls as unknown as {
         encoders?: { id: number }[];
         midi_encoders?: { id: number }[];
+        inventory?: RawInventoryEntry[];
       };
+      const invIds = (controls.inventory ?? [])
+        .filter((entry) => entry.kind === 'relative-encoder' && entry.id.startsWith('encoder.'))
+        .map((entry) => Number(entry.id.slice('encoder.'.length)))
+        .filter((id) => Number.isInteger(id) && id >= 1);
       return [
         ...(controls.encoders ?? []).map((entry) => entry.id),
         ...(controls.midi_encoders ?? []).map((entry) => entry.id),
+        ...invIds,
       ];
     }))].sort((left, right) => left - right),
   );
@@ -144,16 +248,22 @@
       const controls = device.controls as unknown as {
         keys?: { control: string }[];
         notes?: { control: string }[];
-        encoders?: { control: string }[];
-        midi_encoders?: { control: string }[];
+        encoders?: { id?: number; control?: string }[];
+        midi_encoders?: { id?: number; control?: string }[];
         values?: DeviceValueControl[];
+        inventory?: RawInventoryEntry[];
+        banks?: RawBankEntry[];
       };
       const names = [
         ...(controls.keys ?? []).map((entry) => entry.control),
         ...(controls.notes ?? []).map((entry) => entry.control),
-        ...(controls.encoders ?? []).map((entry) => entry.control),
-        ...(controls.midi_encoders ?? []).map((entry) => entry.control),
+        ...(controls.encoders ?? []).map((entry) => entry.control ?? `encoder.${entry.id}`),
+        ...(controls.midi_encoders ?? []).map((entry) => entry.control ?? `encoder.${entry.id}`),
         ...(controls.values ?? []).map((entry) => entry.control),
+        ...(controls.inventory ?? []).map((entry) => entry.id),
+        ...(controls.banks ?? []).flatMap((bank) =>
+          bankNotesList(bank).map((entry) => entry.control),
+        ),
       ];
       return names.includes(control);
     })?.name;
@@ -165,7 +275,7 @@
     originalKeys = Object.keys(keys);
     keyRows = Object.entries(keys).map(([control, entry]) => {
       const kind = kindOf(entry);
-      return { control, kind, value: valueOf(entry, kind) };
+      return { uid: allocUid(), control, kind, value: valueOf(entry, kind) };
     });
 
     const screen = (mapping.screen_encoders ?? {}) as Record<string, unknown>;
@@ -175,6 +285,7 @@
       const slot = entry.slot != null ? Number(entry.slot) : null;
       const screenName = slot == null ? null : screen[String(slot)];
       return {
+        uid: allocUid(),
         id: Number(entry.id),
         kind: slot != null ? 'slot' : 'attribute',
         value: String(slot ?? entry.attribute ?? ''),
@@ -183,12 +294,12 @@
     });
 
     const modifiers = (mapping.modifiers ?? {}) as Record<string, Record<string, unknown>>;
-    originalModifiers = Object.keys(modifiers).filter(
-      (control) => modifiers[control].hardkey != null,
-    );
-    modifierRows = originalModifiers.map((control) => ({
+    originalModifiers = Object.keys(modifiers);
+    modifierRows = Object.entries(modifiers).map(([control, entry]) => ({
+      uid: allocUid(),
       control,
-      hardkey: String(modifiers[control].hardkey),
+      kind: entry.local === true ? 'local' : 'hardkey',
+      hardkey: entry.hardkey == null ? '' : String(entry.hardkey),
     }));
 
     const playbacks = (mapping.playbacks ?? {}) as Record<string, Record<string, unknown>>;
@@ -197,6 +308,7 @@
       deviceList.flatMap((device) => valueControlsOf(device).map((entry) => entry.control)),
     );
     const rows: PlaybackRow[] = Object.entries(playbacks).map(([control, entry]) => ({
+      uid: allocUid(),
       control,
       page: String(entry.page ?? ''),
       executor: String(entry.executor ?? ''),
@@ -210,6 +322,7 @@
     for (const control of [...absolute].sort()) {
       if (present.has(control)) continue;
       rows.push({
+        uid: allocUid(),
         control,
         page: '',
         executor: '',
@@ -223,7 +336,7 @@
     playbackRows = rows;
   }
 
-  onMount(async () => {
+  async function loadInitial(): Promise<void> {
     try {
       const [config, deviceList] = await Promise.all([api.config(), api.devices()]);
       devices = deviceList;
@@ -233,9 +346,10 @@
     } finally {
       loading = false;
     }
-  });
+  }
 
-  $effect(() => {
+  onMount(() => {
+    void loadInitial();
     if (!learnStore) return;
     learnState = learnStore.state.learn;
     presence = learnStore.state.status?.presence ?? {};
@@ -246,19 +360,36 @@
     });
   });
 
+  onDestroy(() => {
+    if (pendingLearn !== null && typeof api.cancelLearn === 'function') {
+      void api.cancelLearn().catch(() => {});
+    }
+  });
+
   function applyLearn(result: LearnResult | null): void {
-    if (!pendingLearn || !result || result.status !== 'captured') return;
+    if (!pendingLearn || !result) return;
+    if (result.status === 'timeout') {
+      pendingLearn = null;
+      message = { ok: true, text: 'Learn abgelaufen – keine Eingabe erkannt.' };
+      return;
+    }
+    if (result.status === 'cancelled') {
+      pendingLearn = null;
+      return;
+    }
+    if (result.status !== 'captured') return;
     if (result.kind !== pendingLearn.kind) return;
+    const targetUid = pendingLearn.uid;
     learnedControl = result.control ?? null;
     if (result.kind === 'key' && result.control) {
-      const row = keyRows[pendingLearn.index];
+      const row = keyRows.find((entry) => entry.uid === targetUid);
       if (row) {
         row.control = result.control;
         dirty = true;
       }
     } else if (result.kind === 'encoder') {
       const id = Number(result.control?.split('.')[1] ?? 0);
-      const row = encoderRows[pendingLearn.index];
+      const row = encoderRows.find((entry) => entry.uid === targetUid);
       if (row && id > 0) {
         row.id = id;
         dirty = true;
@@ -270,9 +401,9 @@
   async function startLearn(
     kind: 'key' | 'encoder',
     control: string,
-    index: number,
+    uid: number,
   ): Promise<void> {
-    pendingLearn = { kind, index };
+    pendingLearn = { kind, uid };
     learnedControl = null;
     message = null;
     try {
@@ -284,19 +415,35 @@
     }
   }
 
+  async function cancelActiveLearn(): Promise<void> {
+    try {
+      if (typeof api.cancelLearn === 'function') {
+        await api.cancelLearn();
+      }
+      message = { ok: true, text: 'Learn abgebrochen.' };
+    } catch (error) {
+      message = { ok: false, text: errorText(error) };
+    } finally {
+      pendingLearn = null;
+    }
+  }
+
   function addKey(): void {
-    keyRows = [...keyRows, { control: keyControls[0] ?? '', kind: 'hardkey', value: '' }];
+    keyRows = [...keyRows, { uid: allocUid(), control: keyControls[0] ?? '', kind: 'hardkey', value: '' }];
     dirty = true;
   }
 
   function addEncoder(): void {
     const next = encoderIds.find((id) => !encoderRows.some((row) => row.id === id)) ?? encoderIds[0] ?? 1;
-    encoderRows = [...encoderRows, { id: next, kind: 'slot', value: '1', screen: '' }];
+    encoderRows = [...encoderRows, { uid: allocUid(), id: next, kind: 'slot', value: '1', screen: '' }];
     dirty = true;
   }
 
   function addModifier(): void {
-    modifierRows = [...modifierRows, { control: keyControls[0] ?? '', hardkey: '' }];
+    modifierRows = [
+      ...modifierRows,
+      { uid: allocUid(), control: keyControls[0] ?? '', kind: 'hardkey', hardkey: '' },
+    ];
     dirty = true;
   }
 
@@ -309,18 +456,29 @@
     }
     playbackRows = [
       ...playbackRows,
-      { control: next, page: '1', executor: '1', kind: 'button', button: '1', accelerated: false, enabled: true, fixed: false },
+      {
+        uid: allocUid(),
+        control: next,
+        page: '1',
+        executor: '1',
+        kind: 'button',
+        button: '1',
+        accelerated: false,
+        enabled: true,
+        fixed: false,
+      },
     ];
     dirty = true;
   }
 
-  function removePlayback(index: number): void {
+  function removePlayback(uid: number): void {
+    const index = playbackRows.findIndex((entry) => entry.uid === uid);
+    if (index < 0) return;
     const row = playbackRows[index];
-    if (!row) return;
     if (row.fixed) {
       row.enabled = false;
     } else {
-      playbackRows = removeAt(playbackRows, index);
+      playbackRows = removeByUid(playbackRows, uid);
     }
     dirty = true;
   }
@@ -343,11 +501,11 @@
   }
 
   function playbackError(): string | null {
-    const seen = new Set<string>();
+    const seen: Record<string, boolean> = {};
     for (const row of playbackRows) {
       if (!row.enabled) continue;
-      if (seen.has(row.control)) return `Control ${row.control} ist doppelt zugewiesen.`;
-      seen.add(row.control);
+      if (seen[row.control]) return `Control ${row.control} ist doppelt zugewiesen.`;
+      seen[row.control] = true;
       if (!row.control) return 'Bitte für jedes aktive Playback-Ziel ein Control wählen.';
       if (!validPage(row.page) || !positiveInteger(row.executor)) {
         return `Page von ${row.control} muss eine Zahl ab 1 oder "current" sein, Executor eine Zahl ab 1.`;
@@ -359,36 +517,51 @@
     return null;
   }
 
-  function removeAt<T>(rows: T[], index: number): T[] {
-    return rows.filter((_, position) => position !== index);
+  function removeByUid<T extends { uid: number }>(rows: T[], uid: number): T[] {
+    return rows.filter((row) => row.uid !== uid);
   }
 
   function patch(): Record<string, unknown> {
     const keys: Record<string, Record<string, unknown> | null> = {};
     for (const row of keyRows) {
       if (!row.control) continue;
+      const baseKey = {
+        hardkey: null,
+        command: null,
+        screen_mode: null,
+        encoder_press: null,
+        screen: null,
+      };
       if (row.kind === 'screen_mode') {
-        keys[row.control] = { screen_mode: true };
+        keys[row.control] = { ...baseKey, screen_mode: true };
       } else if (row.kind === 'screen' || row.kind === 'encoder_press') {
-        keys[row.control] = { [row.kind]: Number(row.value) };
+        keys[row.control] = { ...baseKey, [row.kind]: Number(row.value) };
       } else {
-        keys[row.control] = { [row.kind]: row.value };
+        keys[row.control] = { ...baseKey, [row.kind]: row.value };
       }
     }
     for (const control of originalKeys) {
       if (!(control in keys)) keys[control] = null;
     }
+
     const encoders = encoderRows.map((row) => ({
       id: row.id,
       [row.kind]: row.kind === 'slot' ? Number(row.value) : row.value,
     }));
-    const modifiers: Record<string, { hardkey: string } | null> = {};
+
+    const modifiers: Record<string, Record<string, unknown> | null> = {};
     for (const row of modifierRows) {
-      if (row.control && row.hardkey) modifiers[row.control] = { hardkey: row.hardkey };
+      if (!row.control) continue;
+      if (row.kind === 'local') {
+        modifiers[row.control] = { local: true, hardkey: null };
+      } else if (row.hardkey) {
+        modifiers[row.control] = { hardkey: row.hardkey, local: null };
+      }
     }
     for (const control of originalModifiers) {
       if (!(control in modifiers)) modifiers[control] = null;
     }
+
     const screenEncoders: Record<string, number | null> = {};
     for (const row of encoderRows) {
       if (row.kind !== 'slot') continue;
@@ -402,6 +575,7 @@
     for (const slot of originalScreenSlots) {
       if (!(slot in screenEncoders)) screenEncoders[slot] = null;
     }
+
     const playbacks: Record<string, Record<string, unknown> | null> = {};
     for (const row of playbackRows) {
       if (!row.enabled || !row.control) continue;
@@ -410,23 +584,27 @@
       const executor = Number(row.executor);
       if (!Number.isInteger(executor) || executor < 1) continue;
       if (row.kind === 'button') {
-        const target: Record<string, unknown> = {
+        playbacks[row.control] = {
           page,
           executor,
           kind: 'button',
           button: Number(row.button),
+          accelerated: null,
         };
-        if (encoderControls.has(row.control)) target.accelerated = false;
-        playbacks[row.control] = target;
       } else {
-        const target: Record<string, unknown> = { page, executor, kind: 'fader' };
-        if (encoderControls.has(row.control)) target.accelerated = row.accelerated;
-        playbacks[row.control] = target;
+        playbacks[row.control] = {
+          page,
+          executor,
+          kind: 'fader',
+          button: null,
+          accelerated: encoderControls.has(row.control) ? row.accelerated : null,
+        };
       }
     }
     for (const control of originalPlaybacks) {
       if (!(control in playbacks)) playbacks[control] = null;
     }
+
     const mapping: Record<string, unknown> = { keys, encoders, modifiers };
     if (Object.keys(screenEncoders).length > 0) {
       mapping.screen_encoders = screenEncoders;
@@ -435,6 +613,39 @@
       mapping.playbacks = playbacks;
     }
     return { mapping };
+  }
+
+  function refreshOriginals(
+    payload: Record<string, unknown>,
+    res: Record<string, unknown> | undefined,
+  ): void {
+    const resConfig =
+      res && typeof res === 'object' && 'config' in res && res.config && typeof res.config === 'object'
+        ? (res.config as Record<string, unknown>)
+        : null;
+    if (resConfig) {
+      const savedMapping = (resConfig.mapping ?? {}) as Record<string, unknown>;
+      originalKeys = Object.keys((savedMapping.keys ?? {}) as Record<string, unknown>);
+      originalModifiers = Object.keys((savedMapping.modifiers ?? {}) as Record<string, unknown>);
+      originalScreenSlots = Object.keys(
+        (savedMapping.screen_encoders ?? {}) as Record<string, unknown>,
+      );
+      originalPlaybacks = Object.keys((savedMapping.playbacks ?? {}) as Record<string, unknown>);
+      return;
+    }
+    const sent = (payload.mapping ?? {}) as Record<string, Record<string, unknown>>;
+    originalKeys = Object.entries(sent.keys ?? {})
+      .filter(([, value]) => value !== null)
+      .map(([key]) => key);
+    originalModifiers = Object.entries(sent.modifiers ?? {})
+      .filter(([, value]) => value !== null)
+      .map(([key]) => key);
+    originalScreenSlots = Object.entries(sent.screen_encoders ?? {})
+      .filter(([, value]) => value !== null)
+      .map(([key]) => key);
+    originalPlaybacks = Object.entries(sent.playbacks ?? {})
+      .filter(([, value]) => value !== null)
+      .map(([key]) => key);
   }
 
   async function save(): Promise<void> {
@@ -446,7 +657,9 @@
     busy = true;
     message = null;
     try {
-      await api.updateConfig(patch());
+      const payload = patch();
+      const res = await api.updateConfig(payload);
+      refreshOriginals(payload, res);
       dirty = false;
       message = { ok: true, text: 'Mapping gespeichert und angewendet.' };
     } catch (error) {
@@ -498,11 +711,11 @@
         </tr>
       </thead>
       <tbody>
-        {#each keyRows as row, index (index)}
+        {#each keyRows as row (row.uid)}
           <tr>
             <td>
               <select bind:value={row.control} onchange={() => (dirty = true)}>
-                {#each keyControls as control}
+                {#each keyControls as control (control)}
                   <option value={control}>{control}</option>
                 {/each}
                 {#if !keyControls.includes(row.control)}
@@ -511,8 +724,12 @@
               </select>
             </td>
             <td>
-              <select bind:value={row.kind} onchange={() => (dirty = true)}>
-                {#each keyKinds as kind}
+              <select
+                bind:value={row.kind}
+                onchange={() => (dirty = true)}
+                data-testid="key-kind"
+              >
+                {#each keyKinds as kind (kind)}
                   <option value={kind}>{kind}</option>
                 {/each}
               </select>
@@ -531,7 +748,7 @@
             <td>
               <button
                 type="button"
-                onclick={() => startLearn('key', row.control, index)}
+                onclick={() => startLearn('key', row.control, row.uid)}
                 disabled={busy || pendingLearn !== null}
                 data-testid="key-learn"
               >
@@ -543,7 +760,7 @@
                 type="button"
                 class="danger"
                 onclick={() => {
-                  keyRows = removeAt(keyRows, index);
+                  keyRows = removeByUid(keyRows, row.uid);
                   dirty = true;
                 }}
               >
@@ -575,11 +792,11 @@
         </tr>
       </thead>
       <tbody>
-        {#each encoderRows as row, index (index)}
+        {#each encoderRows as row (row.uid)}
           <tr>
             <td>
               <select bind:value={row.id} onchange={() => (dirty = true)}>
-                {#each encoderIds as id}
+                {#each encoderIds as id (id)}
                   <option value={id}>Encoder {id}</option>
                 {/each}
                 {#if !encoderIds.includes(row.id)}
@@ -614,7 +831,7 @@
                   <option value="8">Screen-Encoder 8</option>
                   <option value="9">Screen-Encoder 9</option>
                   <option value="10">Screen-Encoder 10</option>
-                  {#if row.screen && !['5', '6', '7', '8'].includes(row.screen)}
+                  {#if row.screen && !['5', '6', '7', '8', '9', '10'].includes(row.screen)}
                     <option value={row.screen}>{row.screen}</option>
                   {/if}
                 </select>
@@ -625,7 +842,7 @@
             <td>
               <button
                 type="button"
-                onclick={() => startLearn('encoder', `encoder.${row.id}`, index)}
+                onclick={() => startLearn('encoder', `encoder.${row.id}`, row.uid)}
                 disabled={busy || pendingLearn !== null}
                 data-testid="encoder-learn"
               >
@@ -637,7 +854,7 @@
                 type="button"
                 class="danger"
                 onclick={() => {
-                  encoderRows = removeAt(encoderRows, index);
+                  encoderRows = removeByUid(encoderRows, row.uid);
                   dirty = true;
                 }}
               >
@@ -655,29 +872,51 @@
       <thead>
         <tr>
           <th>Control</th>
+          <th>Art</th>
           <th>Hardkey</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
-        {#each modifierRows as row, index (index)}
+        {#each modifierRows as row (row.uid)}
           <tr>
             <td>
               <select bind:value={row.control} onchange={() => (dirty = true)}>
-                {#each keyControls as control}
+                {#each keyControls as control (control)}
                   <option value={control}>{control}</option>
                 {/each}
+                {#if !keyControls.includes(row.control)}
+                  <option value={row.control}>{row.control}</option>
+                {/if}
               </select>
             </td>
             <td>
-              <input bind:value={row.hardkey} oninput={() => (dirty = true)} />
+              <select
+                bind:value={row.kind}
+                onchange={() => (dirty = true)}
+                data-testid="modifier-kind"
+              >
+                <option value="hardkey">Hardkey</option>
+                <option value="local">Lokal</option>
+              </select>
+            </td>
+            <td>
+              {#if row.kind === 'local'}
+                <span class="muted">(lokal)</span>
+              {:else}
+                <input
+                  bind:value={row.hardkey}
+                  oninput={() => (dirty = true)}
+                  data-testid="modifier-hardkey"
+                />
+              {/if}
             </td>
             <td>
               <button
                 type="button"
                 class="danger"
                 onclick={() => {
-                  modifierRows = removeAt(modifierRows, index);
+                  modifierRows = removeByUid(modifierRows, row.uid);
                   dirty = true;
                 }}
               >
@@ -713,7 +952,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each playbackRows as row, index (index)}
+        {#each playbackRows as row (row.uid)}
           <tr data-control={row.control}>
             <td>
               <input
@@ -732,7 +971,7 @@
                   onchange={() => (dirty = true)}
                   data-testid="playback-control"
                 >
-                  {#each allControls as control}
+                  {#each allControls as control (control)}
                     <option value={control}>{control}</option>
                   {/each}
                   {#if !allControls.includes(row.control)}
@@ -756,7 +995,7 @@
                 type="text"
                 bind:value={row.page}
                 oninput={() => (dirty = true)}
-                class:error={playbackInvalid(row)}
+                class={{ error: playbackInvalid(row) }}
                 disabled={!row.enabled}
                 placeholder="1 / current"
                 data-testid="playback-page"
@@ -768,7 +1007,7 @@
                 inputmode="numeric"
                 bind:value={row.executor}
                 oninput={() => (dirty = true)}
-                class:error={playbackInvalid(row)}
+                class={{ error: playbackInvalid(row) }}
                 disabled={!row.enabled}
                 data-testid="playback-executor"
               />
@@ -780,7 +1019,7 @@
                   inputmode="numeric"
                   bind:value={row.button}
                   oninput={() => (dirty = true)}
-                  class:error={playbackInvalid(row)}
+                  class={{ error: playbackInvalid(row) }}
                   disabled={!row.enabled}
                   data-testid="playback-button"
                 />
@@ -806,7 +1045,7 @@
               <button
                 type="button"
                 class="danger"
-                onclick={() => removePlayback(index)}
+                onclick={() => removePlayback(row.uid)}
                 data-testid="playback-remove"
               >
                 {row.fixed ? 'Deaktivieren' : 'Entfernen'}
@@ -824,13 +1063,18 @@
       <button type="button" onclick={save} disabled={busy || !dirty}>
         Speichern
       </button>
+      {#if pendingLearn !== null}
+        <button type="button" onclick={cancelActiveLearn} data-testid="learn-cancel">
+          Abbrechen
+        </button>
+      {/if}
       {#if dirty}
         <span class="dirty" data-testid="dirty">Ungespeicherte Änderungen</span>
       {/if}
     </div>
 
     {#if message}
-      <p class:error={!message.ok} class="message" role={message.ok ? 'status' : 'alert'}>
+      <p class={['message', { error: !message.ok }]} role={message.ok ? 'status' : 'alert'}>
         {message.text}
       </p>
     {/if}

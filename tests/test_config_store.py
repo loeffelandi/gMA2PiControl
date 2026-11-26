@@ -253,3 +253,41 @@ def test_rotate_backups_keeps_newest(tmp_path):
     assert len(remaining) == 20
     assert remaining[0] == "config-20260101-000005.toml"
     assert remaining[-1] == "config-20260101-000024.toml"
+
+
+def test_rotate_backups_orders_same_second_suffixes_chronologically(tmp_path):
+    from ma2pi.config_store import rotate_backups
+
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    names = [
+        "config-20260101-120000.toml",
+        "config-20260101-120000-1.toml",
+        "config-20260101-120000-2.toml",
+        "config-20260101-120000-10.toml",
+    ]
+    for name in names:
+        (backup_dir / name).write_text(name, encoding="utf-8")
+
+    rotate_backups(backup_dir, keep=2)
+
+    remaining = sorted(p.name for p in backup_dir.glob("config-*.toml"))
+    assert remaining == [
+        "config-20260101-120000-10.toml",
+        "config-20260101-120000-2.toml",
+    ]
+
+
+def test_config_paths_supports_custom_filename_and_etc_migration(tmp_path):
+    from ma2pi.__main__ import _config_paths
+
+    custom_dir = tmp_path / "custom"
+    custom_dir.mkdir()
+    custom_file = custom_dir / "my-show.toml"
+    custom_file.write_text(
+        LEGACY_CONFIG.format(password=str(custom_dir / "ma2pi.password")),
+        encoding="utf-8",
+    )
+    cfg = load_config(custom_file)
+    paths = _config_paths(cfg)
+    assert paths.config == custom_file

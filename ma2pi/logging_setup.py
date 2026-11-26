@@ -1,8 +1,9 @@
 """Structured logging with secret redaction.
 
 Frame logs are one line per frame and always carry direction, frame type and
-session id.  A filter removes password values and 32 character MD5 hashes as a
-defence in depth; the normal code paths never pass secrets to the logger.
+session id.  Both a filter and formatter scrub passwords, PINs, PSKs, tokens
+and 32-character MD5 hashes across plain text, Python dicts, JSON strings and
+exception tracebacks.
 """
 
 from __future__ import annotations
@@ -12,31 +13,44 @@ import re
 from typing import Any
 
 _SECRET_KEYS = re.compile(
-    r"(?i)(password|passwd|pwd|password_hash|md5)\s*[=:]\s*('([^']*)'|\"([^\"]*)\"|[^\s,;]+)"
+    r"""(?i)(?P<prefix>["']?(?:password|passwd|pwd|password_hash|md5|pin|psk|wifi-sec\.psk|token|ma2pi_pin)["']?\s*[=:]\s*)(?:'[^']*'|\"[^\"]*\"|[^\s,;\}\]]+)"""
 )
 _MD5 = re.compile(r"\b[0-9a-fA-F]{32}\b")
 
 
+def redact_text(text: str) -> str:
+    """Replace secret values and 32-hex MD5 digests in ``text`` with ``***``."""
+
+    redacted = _SECRET_KEYS.sub(lambda match: f"{match.group('prefix')}***", text)
+    return _MD5.sub("***", redacted)
+
+
 class RedactionFilter(logging.Filter):
-    """Redact passwords and MD5-like values from formatted records."""
+    """Redact secrets from log messages before handlers inspect ``record``."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             message = record.getMessage()
         except Exception:  # pragma: no cover - defensive
             return True
-        redacted = _SECRET_KEYS.sub(lambda match: f"{match.group(1)}=***", message)
-        redacted = _MD5.sub("***", redacted)
+        redacted = redact_text(message)
         if redacted != message:
             record.msg = redacted
             record.args = ()
         return True
 
 
+class RedactingFormatter(logging.Formatter):
+    """Format records (including ``exc_info`` tracebacks) and scrub secrets."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_text(super().format(record))
+
+
 def setup_logging(level: str = "INFO", stream: Any = None) -> None:
     handler = logging.StreamHandler(stream)
     handler.setFormatter(
-        logging.Formatter(
+        RedactingFormatter(
             fmt="%(asctime)s %(levelname)-7s %(name)s %(message)s",
             datefmt="%Y-%m-%dT%H:%M:%S%z",
         )

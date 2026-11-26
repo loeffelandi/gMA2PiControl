@@ -148,3 +148,82 @@ def test_led_config_rejects_unknown_color(make_config):
 
     with pytest.raises(ConfigError):
         make_config(lambda data: data["led"].update({"screen_color": "pink"}))
+
+
+def test_led_step_routes_through_midi_manager_and_hot_reloads(make_config):
+    from ma2pi.__main__ import _find_led_target, _led_step
+    from ma2pi.hid_input import DeviceInfo
+    from ma2pi.ma2_client import Ma2Client
+
+    class FakeMidi:
+        def __init__(self) -> None:
+            self.open_devices = {"asl-mk2-e4b3": "/dev/snd/midiC3D0"}
+            self.open_generations = {"asl-mk2-e4b3": 1}
+            self.sent: list[tuple[str, bytes]] = []
+
+        def send(self, device: str, data: bytes) -> bool:
+            self.sent.append((device, data))
+            return True
+
+    cfg_off = make_config(lambda d: d["led"].update({"enabled": False, "device": "asl-mk2-e4b3"}))
+    cfg_on = make_config(lambda d: d["led"].update({"enabled": True, "device": "asl-mk2-e4b3"}))
+    cfg_color = make_config(
+        lambda d: d["led"].update({"enabled": True, "device": "asl-mk2-e4b3", "attribute_color": 127})
+    )
+
+    client = Ma2Client(cfg_off, dry_run=True)
+    midi = FakeMidi()
+    holder: dict = {}
+
+    # Idle when disabled
+    _led_step(cfg_off, client, midi, holder)
+    assert holder == {}
+    assert midi.sent == []
+
+    # Enable at runtime -> sends enable + mode/button frames via midi.send
+    _led_step(cfg_on, client, midi, holder)
+    assert holder["led"].is_open
+    assert client._led is holder["led"]
+    count_after_enable = len(midi.sent)
+    assert count_after_enable >= 4
+
+    # Re-running with unchanged generation & settings is a no-op
+    _led_step(cfg_on, client, midi, holder)
+    assert len(midi.sent) == count_after_enable
+
+    # Replug on same path bumps generation -> re-initialises
+    midi.open_generations["asl-mk2-e4b3"] = 2
+    _led_step(cfg_on, client, midi, holder)
+    assert holder["generation"] == 2
+    assert len(midi.sent) > count_after_enable
+
+    # Changing [led] colour hot-reloads
+    _led_step(cfg_color, client, midi, holder)
+    assert holder["settings"] == cfg_color.led
+
+    # Disable at runtime -> sends DISABLE and clears client._led
+    _led_step(cfg_off, client, midi, holder)
+    assert holder == {}
+    assert client._led is None
+    assert midi.sent[-1] == ("asl-mk2-e4b3", DISABLE)
+
+
+def test_find_led_target_never_falls_back_to_unrelated_midi_device(monkeypatch, make_config):
+    from ma2pi import __main__ as main_mod
+    from ma2pi.hid_input import DeviceInfo
+
+    def mutate(d):
+        d["devices"] = {"asl-mk2-e4b3": d["devices"]["asl-mk2-e4b3"]}
+        d["mapping"].pop("device_banks", None)
+        d["led"].update({"enabled": True, "device": None})
+
+    cfg = make_config(mutate)
+    unrelated = DeviceInfo(
+        path="/dev/snd/midiC9D0",
+        name="Unrelated Synth",
+        vendor_id=0x9999,
+        product_id=0x9999,
+        backend="midi",
+    )
+    monkeypatch.setattr(main_mod, "list_midi_devices", lambda: [unrelated])
+    assert main_mod._find_led_target(cfg) is None

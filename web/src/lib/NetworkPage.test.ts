@@ -313,4 +313,59 @@ describe('NetworkPage', () => {
     });
     expect(screen.queryByText('Anwenden …')).toBeNull();
   });
+
+  it('renders saveRecovery 422 failure with .error, role="alert" and field validity', async () => {
+    const api = fakeApi();
+    (api.saveRecovery as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new ApiError(
+        422,
+        'validation_error',
+        'Passwort muss zwischen 8 und 63 Zeichen lang sein',
+        'password',
+      ),
+    );
+    render(NetworkPage, { props: { api } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Rettungs-WLAN')).toBeTruthy();
+    });
+
+    await fireEvent.input(screen.getByLabelText('WLAN-Passwort'), {
+      target: { value: 'kurz' },
+    });
+    await fireEvent.click(screen.getByText('Rettungs-WLAN speichern'));
+
+    await waitFor(() => {
+      const alert = screen.getByRole('alert');
+      expect(alert.classList.contains('error')).toBe(true);
+      expect(alert.textContent).toContain(
+        'Passwort muss zwischen 8 und 63 Zeichen lang sein',
+      );
+    });
+    expect(
+      screen.getByLabelText('WLAN-Passwort').getAttribute('aria-invalid'),
+    ).toBe('true');
+  });
+
+  it('closes the native confirmation dialog on Escape', async () => {
+    const api = fakeApi();
+    render(NetworkPage, { props: { api } });
+
+    await waitFor(() => {
+      expect(screen.getByText('192.168.10.50')).toBeTruthy();
+    });
+    await fireEvent.click(screen.getByLabelText('Statisch'));
+    await fireEvent.input(screen.getByLabelText('IPv4-Adresse'), {
+      target: { value: '192.168.10.60' },
+    });
+    await fireEvent.click(screen.getByText('Anwenden …'));
+
+    const dialog = await waitFor(() => screen.getByRole('dialog'));
+    expect(dialog.tagName).toBe('DIALOG');
+
+    await fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+  });
 });

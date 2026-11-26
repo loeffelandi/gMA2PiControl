@@ -1,8 +1,13 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
 
-  import type { ActivityDevice, DeviceEntry } from './api';
-  import { LOG_LIMIT, type StatusState, type StatusStore } from './status';
+  import type { ActivityDevice, ActivityEntry, DeviceEntry } from './api';
+  import {
+    emptyStatusState,
+    LOG_LIMIT,
+    type StatusState,
+    type StatusStore,
+  } from './status';
 
   let {
     store,
@@ -12,15 +17,7 @@
     devicesLoader?: () => Promise<DeviceEntry[]>;
   } = $props();
 
-  let snapshot = $state<StatusState>({
-    connection: 'closed',
-    reconnecting: false,
-    status: null,
-    learn: null,
-    network: null,
-    activity: { devices: {}, entries: [] },
-    lastError: null,
-  });
+  let snapshot = $state<StatusState>(emptyStatusState());
   let devices = $state<DeviceEntry[]>([]);
   let detectedDevices = $derived(
     devices.filter((device) => {
@@ -30,11 +27,56 @@
   );
   let devicesError = $state<string | null>(null);
   let pulses = $state<Record<string, boolean>>({});
-  let logEl = $state<HTMLOListElement | null>(null);
-  let stickToBottom = $state(true);
 
-  const previousCounts = new Map<string, number>();
-  const pulseTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  let previousCounts: Record<string, number> = Object.create(null);
+  let pulseTimers: Record<string, ReturnType<typeof setTimeout>> =
+    Object.create(null);
+  let seenActivityDevices: Record<string, true> = Object.create(null);
+
+  function maxLostSeq(entries: ActivityEntry[]): number {
+    let max = -1;
+    for (const entry of entries) {
+      if (entry.kind === 'device-lost' && entry.seq > max) {
+        max = entry.seq;
+      }
+    }
+    return max;
+  }
+
+  function lostDeviceNames(entries: ActivityEntry[], afterSeq: number): string[] {
+    const names: string[] = [];
+    for (const entry of entries) {
+      if (entry.kind === 'device-lost' && entry.seq > afterSeq) {
+        const colon = entry.summary.indexOf(':');
+        const name = (
+          colon >= 0 ? entry.summary.slice(0, colon) : entry.summary
+        ).trim();
+        if (name) names.push(name);
+      }
+    }
+    return names;
+  }
+
+  function collectActivityDevices(state: StatusState): string[] {
+    const seen: Record<string, true> = Object.create(null);
+    for (const name of Object.keys(state.activity.devices)) {
+      seen[name] = true;
+    }
+    for (const entry of state.activity.entries) {
+      if (entry.device && entry.device !== 'system' && entry.device !== 'ma2') {
+        seen[entry.device] = true;
+      }
+    }
+    return Object.keys(seen);
+  }
+
+  let lastConfigGeneration: number | null = null;
+  let lastDeviceLostSeq = -1;
+  let initialDevicesLoaded = false;
+  let pendingUnseenCheck = false;
+  let loadingDevices = false;
+  let reloadQueued = false;
+  let destroyed = false;
 
   const timeFormat = new Intl.DateTimeFormat('de-DE', {
     hour: '2-digit',
@@ -50,69 +92,155 @@
     last_tx: null,
   };
 
-  $effect(() => {
-    snapshot = { ...store.state };
-    return store.subscribe(() => {
-      snapshot = { ...store.state };
-    });
-  });
-
-  $effect(() => {
-    if (!devicesLoader) return;
-    let cancelled = false;
+  function refreshDevices(): void {
+    if (!devicesLoader || destroyed) return;
+    if (loadingDevices) {
+      reloadQueued = true;
+      return;
+    }
+    loadingDevices = true;
     devicesLoader()
       .then((list) => {
-        if (!cancelled) devices = list;
+        if (destroyed) return;
+        devices = list;
+        devicesError = null;
+        if (!initialDevicesLoaded) {
+          initialDevicesLoaded = true;
+          if (pendingUnseenCheck) {
+            pendingUnseenCheck = false;
+            for (const name of Object.keys(seenActivityDevices)) {
+              if (!list.some((d) => d.name === name && d.detected !== null)) {
+                reloadQueued = true;
+                break;
+              }
+            }
+          }
+        }
       })
       .catch((error: unknown) => {
-        if (!cancelled) {
-          devicesError = error instanceof Error ? error.message : 'Geräte nicht lesbar';
+        if (!destroyed) {
+          devicesError =
+            error instanceof Error ? error.message : 'Geräte nicht lesbar';
+          initialDevicesLoaded = true;
+        }
+      })
+      .finally(() => {
+        loadingDevices = false;
+        if (reloadQueued && !destroyed) {
+          reloadQueued = false;
+          refreshDevices();
         }
       });
-    return () => {
-      cancelled = true;
-    };
-  });
+  }
 
-  // Pulse an LED for a short moment whenever its counter grows.
-  $effect(() => {
-    for (const [name, counts] of Object.entries(snapshot.activity.devices)) {
+  function updatePulses(activityDevices: Record<string, ActivityDevice>): void {
+    for (const [name, counts] of Object.entries(activityDevices)) {
       for (const direction of ['rx', 'tx'] as const) {
         const key = `${name}:${direction}`;
         const value = counts[direction];
-        const before = previousCounts.get(key);
+        const before = previousCounts[key];
         if (before !== undefined && value > before) {
           pulses[key] = true;
-          const running = pulseTimers.get(key);
-          if (running) clearTimeout(running);
-          pulseTimers.set(
-            key,
-            setTimeout(() => {
-              pulses[key] = false;
-            }, 400),
-          );
+          const running = pulseTimers[key];
+          if (running !== undefined) clearTimeout(running);
+          pulseTimers[key] = setTimeout(() => {
+            pulses[key] = false;
+          }, 400);
         }
-        previousCounts.set(key, value);
+        previousCounts[key] = value;
       }
     }
-  });
+  }
 
-  // Keep the newest log line in view unless the user scrolled up.
-  $effect(() => {
-    const count = snapshot.activity.entries.length;
-    if (logEl && count > 0 && stickToBottom) {
-      logEl.scrollTop = logEl.scrollHeight;
+  function handleStoreUpdate(next: StatusState, initial = false): void {
+    snapshot = { ...next };
+    if (initial) {
+      for (const [name, counts] of Object.entries(next.activity.devices)) {
+        previousCounts[`${name}:rx`] = counts.rx;
+        previousCounts[`${name}:tx`] = counts.tx;
+      }
+      lastConfigGeneration = next.configGeneration;
+      lastDeviceLostSeq = maxLostSeq(next.activity.entries);
+      for (const name of collectActivityDevices(next)) {
+        seenActivityDevices[name] = true;
+      }
+      return;
     }
+
+    updatePulses(next.activity.devices);
+
+    let shouldReload = false;
+
+    if (next.configGeneration !== lastConfigGeneration) {
+      const changedToNumber = next.configGeneration !== null;
+      lastConfigGeneration = next.configGeneration;
+      if (changedToNumber) shouldReload = true;
+    }
+
+    const currentMaxLost = maxLostSeq(next.activity.entries);
+    if (currentMaxLost > lastDeviceLostSeq) {
+      for (const name of lostDeviceNames(next.activity.entries, lastDeviceLostSeq)) {
+        delete seenActivityDevices[name];
+      }
+      lastDeviceLostSeq = currentMaxLost;
+      shouldReload = true;
+    } else if (next.status === null && next.activity.entries.length === 0) {
+      lastDeviceLostSeq = -1;
+      seenActivityDevices = Object.create(null);
+      previousCounts = Object.create(null);
+    }
+
+    for (const name of collectActivityDevices(next)) {
+      if (!seenActivityDevices[name]) {
+        seenActivityDevices[name] = true;
+        if (initialDevicesLoaded) {
+          if (!devices.some((d) => d.name === name && d.detected !== null)) {
+            shouldReload = true;
+          }
+        } else {
+          pendingUnseenCheck = true;
+        }
+      }
+    }
+
+    if (shouldReload) {
+      refreshDevices();
+    }
+  }
+
+  onMount(() => {
+    handleStoreUpdate(store.state, true);
+    refreshDevices();
+    return store.subscribe(() => {
+      handleStoreUpdate(store.state, false);
+    });
   });
 
-  function onLogScroll(): void {
-    if (!logEl) return;
-    stickToBottom =
-      logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 32;
+  let stickToBottom = true;
+
+  function trackLogScroll(node: HTMLOListElement): () => void {
+    stickToBottom = true;
+    function onScroll(): void {
+      stickToBottom =
+        node.scrollHeight - node.scrollTop - node.clientHeight < 32;
+    }
+    node.addEventListener('scroll', onScroll);
+    return () => {
+      node.removeEventListener('scroll', onScroll);
+    };
+  }
+
+  function scrollLogOnCount(count: number) {
+    return (node: HTMLOListElement): void => {
+      if (count > 0 && stickToBottom) {
+        node.scrollTop = node.scrollHeight;
+      }
+    };
   }
 
   onDestroy(() => {
-    for (const timer of pulseTimers.values()) clearTimeout(timer);
+    destroyed = true;
+    for (const timer of Object.values(pulseTimers)) clearTimeout(timer);
   });
 
   const connectionLabel = $derived(
@@ -121,6 +249,14 @@
       : snapshot.connection === 'connecting'
         ? 'verbinde'
         : 'getrennt',
+  );
+
+  const encoderModeLabel = $derived(
+    snapshot.status === null
+      ? 'Unbekannt'
+      : snapshot.status.screen_mode
+        ? 'Screen (grün)'
+        : 'Attribut (rot)',
   );
 
   function countsFor(name: string): ActivityDevice {
@@ -182,12 +318,16 @@
       <dt>Encoder-Modus</dt>
       <dd>
         <span
-          class="led"
-          class:green={snapshot.status?.screen_mode === true}
-          class:red={snapshot.status?.screen_mode === false}
+          class={[
+            'led',
+            {
+              green: snapshot.status?.screen_mode === true,
+              red: snapshot.status?.screen_mode === false,
+            },
+          ]}
           aria-hidden="true"
         ></span>
-        {snapshot.status?.screen_mode ? 'Screen (grün)' : 'Attribut (rot)'}
+        {encoderModeLabel}
       </dd>
     </div>
     <div>
@@ -220,14 +360,18 @@
           <span class="activity-leds" aria-hidden="true">
             {#key counts.rx}
               <i
-                class="activity-led rx"
-                class:pulse={pulses[`${device.name}:rx`]}
+                class={[
+                  'activity-led rx',
+                  { pulse: pulses[`${device.name}:rx`] },
+                ]}
               ></i>
             {/key}
             {#key counts.tx}
               <i
-                class="activity-led tx"
-                class:pulse={pulses[`${device.name}:tx`]}
+                class={[
+                  'activity-led tx',
+                  { pulse: pulses[`${device.name}:tx`] },
+                ]}
               ></i>
             {/key}
           </span>
@@ -237,9 +381,7 @@
             <span class="device-counts">{counts.rx} rx / {counts.tx} tx</span>
           </span>
           <span
-            class="device-state"
-            class:ok={connected}
-            class:lost={!connected}
+            class={['device-state', { ok: connected, lost: !connected }]}
           >
             {connected ? 'verbunden' : 'verbindung verloren'}
           </span>
@@ -256,9 +398,18 @@
       <span class="terminal-meta">RX/TX · letzte {LOG_LIMIT}</span>
     </header>
     {#if snapshot.activity.entries.length}
-      <ol class="log" bind:this={logEl} onscroll={onLogScroll}>
+      <ol
+        class="log"
+        {@attach trackLogScroll}
+        {@attach scrollLogOnCount(snapshot.activity.entries.length)}
+      >
         {#each snapshot.activity.entries as entry (entry.seq)}
-          <li class:rx={entry.direction === 'rx'} class:tx={entry.direction === 'tx'}>
+          <li
+            class={{
+              rx: entry.direction === 'rx',
+              tx: entry.direction === 'tx',
+            }}
+          >
             <time datetime={new Date(entry.ts * 1000).toISOString()}>
               {formatTime(entry.ts)}
             </time>

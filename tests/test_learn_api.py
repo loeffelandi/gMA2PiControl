@@ -326,3 +326,28 @@ async def test_device_learn_api_relearns_bound_control(make_config):
         assert banks[0]["notes"] == {"55": "bt_button", "72": "bt_fader"}
     finally:
         await client.close()
+
+
+async def test_learn_start_rejects_non_object_json_body(config):
+    from ma2pi.learn import LearnManager
+
+    learn = LearnManager(config)
+    client = TestClient(
+        TestServer(
+            create_app(
+                config,
+                dist_dir=Path("/nonexistent"),
+                learn_manager=learn,
+            )
+        )
+    )
+    await client.start_server()
+    headers = {"X-Ma2pi-Request": "1"}
+    try:
+        for bad in ([1, 2, 3], "hello", 42):
+            res = await client.post("/api/learn/start", json=bad, headers=headers)
+            assert res.status == 400
+            assert (await res.json())["error"] == "invalid_json"
+        assert not learn.active
+    finally:
+        await client.close()

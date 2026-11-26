@@ -2,8 +2,8 @@
 
 At most one session is active at a time.  While it is active the caller must
 route all input events through :meth:`LearnManager.feed` instead of the
-mapping engine, so no MA2 frame is produced.  The manager itself never touches
-the client or the configuration; it only reports what was seen.
+mapping engine, so no MA2 frame is produced.  A bounded post-capture release
+timeout guarantees a missing key-up can never block rig inputs indefinitely.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ LOGGER = logging.getLogger("ma2pi.learn")
 
 DEFAULT_TIMEOUT = 15.0
 DEFAULT_ENCODER_WINDOW = 2.0
+DEFAULT_RELEASE_TIMEOUT = 2.0
 
 LearnKind = Literal["key", "encoder"]
 LearnStatus = Literal["active", "captured", "timeout", "cancelled"]
@@ -48,6 +49,7 @@ class _Session:
     started: float
     timeout: float
     window: float
+    release_timeout: float = DEFAULT_RELEASE_TIMEOUT
     device: str | None = None
     control: str | None = None
     raw: str | None = None
@@ -57,10 +59,22 @@ class _Session:
     done: bool = False
     reported: bool = False
     awaiting_release: tuple[str, str] | None = None
+    release_deadline: float | None = None
 
 
-def _resolve_raw(config: AppConfig, device: str, control: str) -> str | None:
-    """Map a logical control back to its physical key code or encoder axis."""
+def _resolve_raw(
+    config: AppConfig,
+    device: str,
+    control: str,
+    note: int | None = None,
+) -> str | None:
+    """Map a logical control back to its physical key code, MIDI note or axis."""
+
+    if note is not None:
+        device_cfg = config.devices.get(device)
+        prof = config.profiles.get(device_cfg.profile) if device_cfg else None
+        if prof is not None and prof.banks:
+            return str(note)
 
     device_config = config.devices.get(device)
     if device_config is None:
@@ -72,21 +86,30 @@ def _resolve_raw(config: AppConfig, device: str, control: str) -> str | None:
     for code, name in profile.keys.items():
         if name == control:
             return code
-    for note, name in profile.notes.items():
+    for midi_note, name in profile.notes.items():
         if name == control:
-            return str(note)
-    if control.startswith("encoder."):
+            return str(midi_note)
+    for mv in profile.midi_values:
+        if mv.control == control:
+            return str(mv.note)
+    for bank in profile.banks:
+        for bank_note, name in bank.notes.items():
+            if name == control:
+                return str(bank_note)
+    enc_id = profile.relative_encoder_ids.get(control)
+    if enc_id is None and control.startswith("encoder."):
         try:
-            encoder_id = int(control.split(".", 1)[1])
+            enc_id = int(control.split(".", 1)[1])
         except ValueError:
-            return None
+            enc_id = None
+    if enc_id is not None:
         for encoder in profile.encoders:
-            if encoder.id == encoder_id:
+            if encoder.id == enc_id:
                 return encoder.control
         for encoder in profile.midi_encoders:
-            if encoder.id == encoder_id:
+            if encoder.id == enc_id:
                 return f"note {encoder.note}"
-    return None
+    return None if note is None else str(note)
 
 
 class LearnManager:
@@ -99,11 +122,15 @@ class LearnManager:
         clock: Callable[[], float] = time.monotonic,
         timeout: float = DEFAULT_TIMEOUT,
         encoder_window: float = DEFAULT_ENCODER_WINDOW,
+        release_timeout: float = DEFAULT_RELEASE_TIMEOUT,
+        on_start: Callable[[str | None], None] | None = None,
     ) -> None:
         self.config = config
         self._clock = clock
         self.timeout = timeout
         self.encoder_window = encoder_window
+        self.release_timeout = release_timeout
+        self.on_start = on_start
         self._session: _Session | None = None
 
     # -- state -----------------------------------------------------------
@@ -135,14 +162,21 @@ class LearnManager:
     ) -> LearnResult:
         if kind not in ("key", "encoder"):
             raise ValueError(f"unbekannter Learn-Typ: {kind!r}")
+        moment = self._clock() if now is None else now
+        self._expire_release(moment)
         if self.active:
             raise LearnBusy("Es läuft bereits eine Learn-Sitzung")
-        moment = self._clock() if now is None else now
+        if self.on_start is not None:
+            try:
+                self.on_start(device)
+            except Exception:  # pragma: no cover - defensive
+                LOGGER.debug("Learn-Start-Hook fehlgeschlagen", exc_info=True)
         self._session = _Session(
             kind=kind,
             started=moment,
             timeout=self.timeout,
             window=self.encoder_window,
+            release_timeout=self.release_timeout,
             device=device,
         )
         LOGGER.info("Learn-Sitzung für %s gestartet", kind)
@@ -169,13 +203,20 @@ class LearnManager:
 
     # -- input -----------------------------------------------------------
 
-    def feed(self, event: InputEvent, now: float | None = None) -> LearnResult | None:
-        """Consume one event; only call while :attr:`active`.
+    def _expire_release(self, moment: float) -> bool:
+        session = self._session
+        if (
+            session is not None
+            and session.done
+            and session.release_deadline is not None
+            and moment >= session.release_deadline
+        ):
+            self._session = None
+            return True
+        return False
 
-        Returns a result when the session finished or timed out.  ``None``
-        means "still learning" or "not learning"; callers check
-        :attr:`active` before routing, so the distinction is unambiguous.
-        """
+    def feed(self, event: InputEvent, now: float | None = None) -> LearnResult | None:
+        """Consume one event; only call while :attr:`active`."""
 
         session = self._session
         if session is None:
@@ -183,8 +224,6 @@ class LearnManager:
         moment = self._clock() if now is None else now
 
         if session.done:
-            # The key-up belonging to a captured press is swallowed so it
-            # cannot trigger a mapping action.
             if (
                 session.awaiting_release is not None
                 and event.kind == "key"
@@ -192,6 +231,8 @@ class LearnManager:
                 and (event.device, event.control) == session.awaiting_release
             ):
                 self._session = None
+                return None
+            self._expire_release(moment)
             return None
 
         result = self._poll_session(moment)
@@ -207,15 +248,20 @@ class LearnManager:
             if event.kind == "key" and event.value == 1:
                 session.control = event.control
                 session.device = event.device
-                session.raw = _resolve_raw(self.config, event.device, event.control)
+                session.raw = _resolve_raw(
+                    self.config, event.device, event.control, event.note
+                )
                 session.awaiting_release = (event.device, event.control)
+                session.release_deadline = moment + session.release_timeout
                 return self._finish(session, moment)
             return None
 
-        # Encoder session: collect within the window starting at the first feed.
+        # Encoder session: lock onto the first encoder control moved.
         if event.kind != "encoder":
             return None
         if session.device is not None and event.device != session.device:
+            return None
+        if session.control is not None and event.control != session.control:
             return None
         if event.value == 0:
             return None
@@ -223,18 +269,23 @@ class LearnManager:
             session.first_event = moment
         session.control = event.control
         session.device = event.device
-        session.raw = _resolve_raw(self.config, event.device, event.control)
+        session.raw = _resolve_raw(
+            self.config, event.device, event.control, event.note
+        )
         session.direction += 1 if event.value > 0 else -1
         session.detents += abs(int(event.value))
         return self._poll_session(moment)
 
     def poll(self, now: float | None = None) -> LearnResult | None:
-        """Finish an encoder window or an idle session without a new event."""
+        """Finish an encoder window, release wait or idle session."""
 
         session = self._session
-        if session is None or session.done:
+        if session is None:
             return None
         moment = self._clock() if now is None else now
+        if session.done:
+            self._expire_release(moment)
+            return None
         return self._poll_session(moment)
 
     # -- helpers ---------------------------------------------------------

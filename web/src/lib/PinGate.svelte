@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-
   import { ApiError, type ApiClient } from './api';
   import { PRODUCT_NAME } from './brand';
 
@@ -15,11 +13,25 @@
   let pin = $state('');
   let busy = $state(false);
   let error = $state<string | null>(null);
-  let input = $state<HTMLInputElement>();
 
-  onMount(() => {
-    input?.focus();
-  });
+  function focusOnMount(node: HTMLInputElement): void {
+    node.focus();
+  }
+
+  function formatLoginError(failure: unknown): string {
+    if (failure instanceof ApiError) {
+      if (failure.code === 'pin_locked') {
+        if (failure.detail) return failure.detail;
+        if (failure.retryAfter !== undefined) {
+          return `Zu viele Fehlversuche – bitte ${failure.retryAfter} s warten`;
+        }
+        return 'Zu viele Fehlversuche – bitte warten';
+      }
+      return failure.detail || failure.message;
+    }
+    if (failure instanceof Error) return failure.message;
+    return 'PIN falsch';
+  }
 
   async function submit(event: SubmitEvent): Promise<void> {
     event.preventDefault();
@@ -31,12 +43,7 @@
       pin = '';
       onUnlocked();
     } catch (failure) {
-      error =
-        failure instanceof ApiError
-          ? failure.detail || failure.message
-          : failure instanceof Error
-            ? failure.message
-            : 'PIN falsch';
+      error = formatLoginError(failure);
       pin = '';
     } finally {
       busy = false;
@@ -60,7 +67,7 @@
       autocomplete="current-password"
       maxlength="12"
       bind:value={pin}
-      bind:this={input}
+      {@attach focusOnMount}
     />
 
     {#if error}

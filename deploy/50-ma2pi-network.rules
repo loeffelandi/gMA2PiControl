@@ -1,7 +1,6 @@
-// Allow the ma2pi service to manage its own wired IPv4 profile through
-// NetworkManager.  Only the two actions needed for changing a system
-// connection and activating it are granted; everything else is left to the
-// normal polkit policy.
+// Allow the ma2pi service to manage its own wired IPv4 profile and WPA2
+// recovery hotspot through NetworkManager.  Unencrypted open AP sharing is
+// deliberately omitted.
 polkit.addRule(function (action, subject) {
     if (subject.user !== "ma2pi") {
         return polkit.Result.NOT_HANDLED;
@@ -9,7 +8,6 @@ polkit.addRule(function (action, subject) {
     if (
         action.id === "org.freedesktop.NetworkManager.settings.modify.system" ||
         action.id === "org.freedesktop.NetworkManager.network-control" ||
-        action.id === "org.freedesktop.NetworkManager.wifi.share.open" ||
         action.id === "org.freedesktop.NetworkManager.wifi.share.protected"
     ) {
         return polkit.Result.YES;

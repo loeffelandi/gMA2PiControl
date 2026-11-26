@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -83,11 +83,7 @@ def palette_index(name: str) -> int:
 
 
 def nearest_color(value: Any) -> int | None:
-    """Map a ``#rrggbb`` string to the closest palette index.
-
-    Returns ``None`` for missing or malformed values so the caller can fall
-    back to the configured colour.
-    """
+    """Map a ``#rrggbb`` string to the closest palette index."""
 
     if not isinstance(value, str):
         return None
@@ -101,7 +97,6 @@ def nearest_color(value: Any) -> int | None:
     except ValueError:
         return None
     if rgb == (0, 0, 0):
-        # Black means "no appearance colour" for an LED rather than a colour.
         return None
     best_index = 0
     best_distance = float("inf")
@@ -140,15 +135,13 @@ class ExecutorState:
 
 @dataclass(frozen=True, slots=True)
 class PlaybackSnapshot:
-    """One decoded ``playbacks`` response.
-
-    ``page`` is the raw ``iPage`` and therefore 0-based; a configured page is
-    ``page + 1``.  ``executors`` is keyed by the 1-based executor number.
-    """
+    """One decoded ``playbacks`` response."""
 
     page: int
     items_type: int
     executors: dict[int, ExecutorState]
+    seen_executors: frozenset[int] = field(default_factory=frozenset)
+    empty_executors: frozenset[int] = field(default_factory=frozenset)
 
 
 def _iter_items(items: Any) -> list[dict[str, Any]]:
@@ -174,6 +167,8 @@ def parse_playbacks(payload: dict[str, Any]) -> PlaybackSnapshot | None:
     if not isinstance(page, int):
         return None
     executors: dict[int, ExecutorState] = {}
+    seen_executors: set[int] = set()
+    empty_executors: set[int] = set()
     items_type = 0
     for group in payload.get("itemGroups") or []:
         if not isinstance(group, dict):
@@ -186,21 +181,31 @@ def parse_playbacks(payload: dict[str, Any]) -> PlaybackSnapshot | None:
             index = item.get("iExec")
             if not isinstance(index, int):
                 continue
+            exec_num = index + 1
+            seen_executors.add(exec_num)
+            if item.get("isEmpty") is True:
+                empty_executors.add(exec_num)
+                continue
             running = item.get("isRun")
             if isinstance(running, bool):
                 pass
             elif isinstance(running, int):
                 running = bool(running)
             else:
-                # Unknown state: keep the LED as it is instead of guessing.
                 continue
             color = nearest_color(item.get("bC"))
             if color is None:
                 color = nearest_color(item.get("bdC"))
-            executors[index + 1] = ExecutorState(running, color)
-    if not executors:
+            executors[exec_num] = ExecutorState(running, color)
+    if not executors and not seen_executors:
         return None
-    return PlaybackSnapshot(page, items_type, executors)
+    return PlaybackSnapshot(
+        page,
+        items_type,
+        executors,
+        frozenset(seen_executors),
+        frozenset(empty_executors),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,6 +215,7 @@ class LedTarget:
     note: int
     page: int | str
     executor: int
+    channel: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,25 +228,34 @@ class RequestBlock:
 
 
 def _block_key(page: int | str, executor: int) -> tuple[int | str, int]:
-    # Executor 100 still belongs to the page blocks; floating executors start
-    # at 101 and are addressed through the bottom-button view.
     return (page, 100 if executor > 100 else 0)
 
 
-def _belongs_to_block(snapshot: PlaybackSnapshot, block: RequestBlock) -> bool:
-    """Check that a response answers the given request block.
+def _belongs_to_block(
+    snapshot: PlaybackSnapshot,
+    block: RequestBlock,
+    *,
+    known_current_page: int | None = None,
+    fixed_pages: frozenset[int] = frozenset(),
+) -> bool:
+    """Check that a response answers the given request block."""
 
-    Requests and responses are not correlated by the Web Remote, so a late
-    answer can arrive after its block timed out.  Matching page, item type and
-    the requested executor range keeps such answers from being applied.
-    """
-
-    if block.page != "current" and snapshot.page + 1 != block.page:
+    snap_page = snapshot.page + 1
+    if block.page != "current":
+        if snap_page != block.page:
+            return False
+    elif (
+        known_current_page is not None
+        and snap_page != known_current_page
+        and snap_page in fixed_pages
+    ):
+        # Reject a late answer for a polled fixed page when current page differs.
         return False
     if snapshot.items_type and snapshot.items_type != block.items_type:
         return False
     expected = range(block.start + 1, block.start + block.count + 1)
-    return any(executor in snapshot.executors for executor in expected)
+    present = snapshot.executors or snapshot.seen_executors
+    return any(executor in present for executor in expected)
 
 
 def _frame_intervals(config: "AppConfig") -> dict[str, float]:
@@ -256,12 +271,71 @@ def _frame_intervals(config: "AppConfig") -> dict[str, float]:
     return result
 
 
+def _default_bank_size(config: "AppConfig", device_name: str) -> int:
+    settings = config.mapping.device_banks.get(device_name)
+    if settings is not None and settings.bank_size is not None:
+        return settings.bank_size
+    device = config.devices.get(device_name)
+    if device is None:
+        return 1
+    profile = config.profiles[device.profile]
+    kinds = profile.control_kinds
+    faders = sum(1 for kind in kinds.values() if kind == "fader")
+    if faders:
+        return faders
+    buttons = sum(1 for kind in kinds.values() if kind == "button")
+    return max(1, buttons)
+
+
+def _resolve_playback_for_bank(
+    config: "AppConfig", device_name: str, bank_num: int, control: str
+) -> tuple[int | str, int] | None:
+    settings = config.mapping.device_banks.get(device_name)
+    layer = settings.banks.get(bank_num) if settings is not None else None
+    if layer is not None and control in layer.keys:
+        return None
+    base = config.mapping.playbacks.get(control)
+    override = layer.playbacks.get(control) if layer is not None else None
+    if base is None and override is None:
+        return None
+    kind = (
+        override.kind
+        if override is not None and override.kind is not None
+        else (base.kind if base is not None else "button")
+    )
+    if kind != "button":
+        return None
+    page = (
+        override.page
+        if override is not None and override.page is not None
+        else (base.page if base is not None else None)
+    )
+    executor = (
+        override.executor
+        if override is not None and override.executor is not None
+        else (base.executor if base is not None else None)
+    )
+    if page is None or executor is None:
+        return None
+    if (
+        settings is not None
+        and bank_num > 1
+        and (override is None or override.executor is None)
+        and (layer is None or layer.ma_page is None)
+    ):
+        executor += (bank_num - 1) * _default_bank_size(config, device_name)
+    return page, executor
+
+
 def build_feedback_targets(
     config: "AppConfig",
 ) -> tuple[list[LedTarget], dict[tuple[int | str, int], RequestBlock]]:
-    """Collect the LED-capable button targets and their request blocks."""
+    """Collect LED-capable button targets (including banked channels/offsets)."""
 
-    led_controls: dict[tuple[str, str], int] = {}
+    targets: list[LedTarget] = []
+    seen_leds: set[tuple[str, int, int]] = set()
+    ranges: dict[tuple[int | str, int], list[int]] = {}
+
     for name, device in config.devices.items():
         if device.backend != "midi":
             continue
@@ -270,26 +344,53 @@ def build_feedback_targets(
         if feedback is None or not feedback.enabled:
             continue
         allowed = set(feedback.notes) if feedback.notes is not None else None
-        note_pairs = list(profile.notes.items())
-        for bank in profile.banks:
-            note_pairs.extend(bank.notes.items())
-        for note, control in note_pairs:
-            if allowed is not None and note not in allowed:
-                continue
-            led_controls.setdefault((name, control), note)
 
-    targets: list[LedTarget] = []
-    ranges: dict[tuple[int | str, int], list[int]] = {}
-    for (device, control), note in led_controls.items():
-        playback = config.mapping.playbacks.get(control)
-        if playback is None or playback.kind != "button":
-            continue
-        targets.append(
-            LedTarget(control, device, note, playback.page, playback.executor)
-        )
-        ranges.setdefault(_block_key(playback.page, playback.executor), []).append(
-            playback.executor
-        )
+        if profile.banks:
+            for bank in profile.banks:
+                for note, control in bank.notes.items():
+                    if allowed is not None and note not in allowed:
+                        continue
+                    led_id = (name, bank.channel, note)
+                    if led_id in seen_leds:
+                        continue
+                    resolved = _resolve_playback_for_bank(
+                        config, name, bank.number, control
+                    )
+                    if resolved is None:
+                        continue
+                    seen_leds.add(led_id)
+                    page, executor = resolved
+                    targets.append(
+                        LedTarget(
+                            control,
+                            name,
+                            note,
+                            page,
+                            executor,
+                            channel=bank.channel,
+                        )
+                    )
+                    ranges.setdefault(_block_key(page, executor), []).append(
+                        executor
+                    )
+        else:
+            for note, control in profile.notes.items():
+                if allowed is not None and note not in allowed:
+                    continue
+                led_id = (name, 1, note)
+                if led_id in seen_leds:
+                    continue
+                resolved = _resolve_playback_for_bank(config, name, 1, control)
+                if resolved is None:
+                    continue
+                seen_leds.add(led_id)
+                page, executor = resolved
+                targets.append(
+                    LedTarget(control, name, note, page, executor, channel=1)
+                )
+                ranges.setdefault(_block_key(page, executor), []).append(
+                    executor
+                )
 
     blocks: dict[tuple[int | str, int], RequestBlock] = {}
     for key, executors in ranges.items():
@@ -301,6 +402,16 @@ def build_feedback_targets(
         items_type = 3 if boundary else 2
         blocks[key] = RequestBlock(page, start, count, items_type, items_type)
     return targets, blocks
+
+
+def _outbox_key(channel: int, note: int) -> int | tuple[int, int]:
+    return note if channel == 1 else (channel, note)
+
+
+def _unpack_outbox_key(key: int | tuple[int, int]) -> tuple[int, int]:
+    if isinstance(key, tuple):
+        return key
+    return 1, int(key)
 
 
 class ExecutorFeedback:
@@ -326,16 +437,16 @@ class ExecutorFeedback:
         self._timeout_override = timeout
         self._targets: list[LedTarget] = []
         self._blocks: dict[tuple[int | str, int], RequestBlock] = {}
-        self._last: dict[tuple[str, int], int] = {}
+        self._fixed_pages: frozenset[int] = frozenset()
+        self._known_current_page: int | None = None
+        self._last: dict[tuple[str, int] | tuple[str, int, int], int] = {}
         self._pending: dict[tuple[int | str, int], float] = {}
-        self._devices: dict[str, str] = {}
-        # LED frames waiting for their turn: device -> {note: velocity}.  A new
-        # state for the same LED replaces the waiting one and keeps its place.
-        self._outbox: dict[str, dict[int, int]] = {}
+        self._devices: dict[str, tuple[str, int]] = {}
+        self._outbox: dict[str, dict[int | tuple[int, int], int]] = {}
         self._next_send: dict[str, float] = {}
         self._intervals: dict[str, float] = {}
-        # Device -> time since which written bytes have not been consumed.
         self._unconsumed_since: dict[str, float] = {}
+        self._pending_after_send: dict[str, int] = {}
         self._stalled: set[str] = set()
         self._wake = asyncio.Event()
         self.set_config(config)
@@ -345,6 +456,10 @@ class ExecutorFeedback:
 
         self.config = config
         self._targets, self._blocks = build_feedback_targets(config)
+        self._fixed_pages = frozenset(
+            int(page) for page, _ in self._blocks if isinstance(page, int)
+        )
+        self._known_current_page = None
         self._intervals = _frame_intervals(config)
         self._last.clear()
         self._pending.clear()
@@ -356,6 +471,7 @@ class ExecutorFeedback:
 
         self._last.clear()
         self._pending.clear()
+        self._known_current_page = None
         self._clear_output()
         self._drain_responses()
 
@@ -363,8 +479,18 @@ class ExecutorFeedback:
         self._outbox.clear()
         self._next_send.clear()
         self._unconsumed_since.clear()
+        self._pending_after_send.clear()
         if clear_stalled:
             self._stalled.clear()
+
+    def _reset_device(self, device: str) -> None:
+        for key in [k for k in self._last if k[0] == device]:
+            self._last.pop(key, None)
+        self._outbox.pop(device, None)
+        self._next_send.pop(device, None)
+        self._unconsumed_since.pop(device, None)
+        self._pending_after_send.pop(device, None)
+        self._stalled.discard(device)
 
     def _drain_responses(self) -> None:
         """Discard answers that belong to a previous connection or config."""
@@ -391,11 +517,7 @@ class ExecutorFeedback:
         return max(2.0 * self._interval(), 1.0)
 
     async def run(self) -> None:
-        """Poll until cancelled, following later config reloads.
-
-        The daemon always starts this task, so enabling ``[feedback]`` or adding
-        targets at runtime takes effect without a restart.
-        """
+        """Poll until cancelled, following later config reloads."""
 
         pump = asyncio.create_task(self._pump_loop(), name="ma2pi-feedback-pump")
         active = False
@@ -447,16 +569,17 @@ class ExecutorFeedback:
             else:
                 await self._sleep(delay)
 
-    def pump(self) -> float | None:
-        """Send every frame that is due and return the wait for the next one.
+    def _led_cache_key(
+        self, device: str, channel: int, note: int
+    ) -> tuple[str, int] | tuple[str, int, int]:
+        return (device, note) if channel == 1 else (device, channel, note)
 
-        At most one frame per device leaves per call, and never sooner than the
-        device's ``frame_interval_ms`` after the previous one.  ``None`` means
-        nothing is waiting.
-        """
+    def pump(self) -> float | None:
+        """Send every frame that is due and return the wait for the next one."""
 
         now = self._clock()
         wait: float | None = None
+        probe = getattr(self._midi, "output_pending", None)
         for device, outbox in self._outbox.items():
             if not outbox or device in self._stalled:
                 continue
@@ -466,11 +589,19 @@ class ExecutorFeedback:
                 continue
             if self._output_stalled(device, now):
                 continue
-            note, velocity = next(iter(outbox.items()))
+            raw_key, velocity = next(iter(outbox.items()))
+            channel, note = _unpack_outbox_key(raw_key)
+            status_byte = NOTE_ON | ((channel - 1) & 0x0F)
             interval = self._intervals.get(device, _DEFAULT_FRAME_INTERVAL)
-            if self._midi.send(device, bytes((NOTE_ON, note, velocity))):
-                del outbox[note]
-                self._last[(device, note)] = velocity
+            if self._midi.send(device, bytes((status_byte, note, velocity))):
+                del outbox[raw_key]
+                self._last[self._led_cache_key(device, channel, note)] = velocity
+                if probe is not None:
+                    after = probe(device)
+                    if after is not None and after > 0:
+                        self._pending_after_send[device] = after
+                    else:
+                        self._pending_after_send.pop(device, None)
             else:
                 LOGGER.debug("LED-Frame für %s Note %d nicht gesendet", device, note)
                 interval = max(interval, _RETRY_SECONDS)
@@ -480,12 +611,20 @@ class ExecutorFeedback:
         return wait
 
     def _output_stalled(self, device: str, now: float) -> bool:
-        """Pause a device whose written bytes stay unconsumed for too long."""
+        """Pause a device whose written bytes make zero drain progress for 2 s."""
 
         probe = getattr(self._midi, "output_pending", None)
         pending = probe(device) if probe is not None else None
         if not pending:
             self._unconsumed_since.pop(device, None)
+            self._pending_after_send.pop(device, None)
+            return False
+        prev_after = self._pending_after_send.get(device)
+        if prev_after is not None and pending < prev_after:
+            # At least (prev_after - pending) bytes were consumed since the
+            # previous write, so output is actively draining.
+            self._unconsumed_since[device] = now
+            self._pending_after_send[device] = pending
             return False
         since = self._unconsumed_since.setdefault(device, now)
         if now - since < OUTPUT_STALL_SECONDS:
@@ -513,12 +652,21 @@ class ExecutorFeedback:
         self.pump()
 
     def _sync_devices(self) -> None:
-        devices = getattr(self._midi, "open_devices", {}) or {}
-        if devices != self._devices:
-            self._devices = dict(devices)
-            self._last.clear()
-            # A reopened device starts empty and gets the whole state again.
-            self._clear_output(clear_stalled=True)
+        paths = getattr(self._midi, "open_devices", {}) or {}
+        gens = getattr(self._midi, "open_generations", None) or {}
+        current = {
+            name: (path, int(gens.get(name, 1))) for name, path in paths.items()
+        }
+        if current == self._devices:
+            return
+        changed = {
+            name
+            for name in (set(current) | set(self._devices))
+            if current.get(name) != self._devices.get(name)
+        }
+        self._devices = current
+        for name in changed:
+            self._reset_device(name)
 
     async def _request_block(
         self, key: tuple[int | str, int], block: RequestBlock
@@ -529,8 +677,6 @@ class ExecutorFeedback:
             return
         timeout = self._timeout()
         self._pending[key] = now + timeout
-        # Only one request may be in flight, so anything already queued is a
-        # late answer from an earlier cycle and must not be applied.
         self._drain_responses()
         self._client.request_playbacks(
             block.page, block.start, block.count, block.items_type, block.view
@@ -549,9 +695,12 @@ class ExecutorFeedback:
             if snapshot is None:
                 LOGGER.debug("Playbacks-Antwort ohne Executor-Daten verworfen")
                 continue
-            if not _belongs_to_block(snapshot, block):
-                # Keep waiting for our own answer instead of leaving the queue
-                # one position out of step.
+            if not _belongs_to_block(
+                snapshot,
+                block,
+                known_current_page=self._known_current_page,
+                fixed_pages=self._fixed_pages,
+            ):
                 LOGGER.debug(
                     "Playbacks-Antwort passt nicht zu %s.%s und wird verworfen",
                     block.page,
@@ -559,6 +708,8 @@ class ExecutorFeedback:
                 )
                 continue
             self._pending.pop(key, None)
+            if block.page == "current":
+                self._known_current_page = snapshot.page + 1
             self._apply(snapshot, block)
             return
         self._pending.pop(key, None)
@@ -569,26 +720,30 @@ class ExecutorFeedback:
     def _apply(self, snapshot: PlaybackSnapshot, block: RequestBlock) -> None:
         feedback = self.config.feedback
         fallback = palette_index(feedback.fallback_color)
+        empty_page = not snapshot.executors and bool(snapshot.seen_executors)
         for target in self._targets:
             if target.page == "current":
-                # Only a request for the current page reflects the master page;
-                # answers for a fixed page must not drive ``current`` targets.
                 if block.page != "current":
                     continue
             elif target.page != snapshot.page + 1:
                 continue
             state = snapshot.executors.get(target.executor)
-            if state is None:
+            if state is not None:
+                velocity = led_velocity(
+                    state.running, state.color, feedback.off_state, fallback
+                )
+            elif target.executor in snapshot.empty_executors or (
+                empty_page and target.executor in snapshot.seen_executors
+            ):
+                velocity = MODE_BASE["off"]
+            else:
                 continue
-            velocity = led_velocity(
-                state.running, state.color, feedback.off_state, fallback
-            )
-            led = (target.device, target.note)
+            led = self._led_cache_key(target.device, target.channel, target.note)
+            out_key = _outbox_key(target.channel, target.note)
             waiting = self._outbox.get(target.device)
             if self._last.get(led) == velocity:
-                # The LED already shows this state; drop a stale newer request.
                 if waiting is not None:
-                    waiting.pop(target.note, None)
+                    waiting.pop(out_key, None)
                 continue
             if self._dry_run:
                 LOGGER.info(
@@ -599,5 +754,5 @@ class ExecutorFeedback:
                 )
                 self._last[led] = velocity
                 continue
-            self._outbox.setdefault(target.device, {})[target.note] = velocity
+            self._outbox.setdefault(target.device, {})[out_key] = velocity
             self._wake.set()

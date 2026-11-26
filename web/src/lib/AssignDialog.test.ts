@@ -63,6 +63,96 @@ describe('AssignDialog', () => {
       expect.objectContaining({ action: 'hardkey', hardkey: 'GO' }),
     );
   });
+
+  it('defaults fader controls to targetKind = fader when initial is null', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(AssignDialog, {
+      props: {
+        control: 'mc_fader_1',
+        bank: 1,
+        kind: 'fader',
+        count: 1,
+        initial: null,
+        onSave,
+        onClose: vi.fn(),
+      },
+    });
+    expect((screen.getByLabelText('Art') as HTMLSelectElement).value).toBe('fader');
+    expect(screen.queryByLabelText('Button')).toBeNull();
+
+    await fireEvent.click(screen.getByText('Speichern'));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'executor', targetKind: 'fader' }),
+    );
+  });
+
+  it('defaults relative-encoder to encoder action and saves screen = 0 without HTML5 validation block', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(AssignDialog, {
+      props: {
+        control: 'encoder.1',
+        bank: 1,
+        kind: 'relative-encoder',
+        count: 1,
+        initial: null,
+        onSave,
+        onClose: vi.fn(),
+      },
+    });
+    expect((screen.getByLabelText('Aktion') as HTMLSelectElement).value).toBe('encoder');
+    const screenSelect = screen.getByLabelText(/Screen-Encoder/) as HTMLSelectElement;
+    expect(screenSelect.value).toBe('0');
+
+    await fireEvent.click(screen.getByText('Speichern'));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'encoder', slot: 1, screen: 0 }),
+    );
+  });
+
+  it('disables submit when multiple controls are selected with action = encoder', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(AssignDialog, {
+      props: {
+        control: 'encoder.1',
+        bank: 1,
+        kind: 'relative-encoder',
+        count: 2,
+        initial: null,
+        onSave,
+        onClose: vi.fn(),
+      },
+    });
+    expect(screen.getByText('Encoder-Ziele nur für ein einzelnes Control.')).toBeTruthy();
+    const submitButton = screen.getByRole('button', { name: 'Speichern' }) as HTMLButtonElement;
+    expect(submitButton.disabled).toBe(true);
+  });
+
+  it('renders inside a native dialog, closes on Escape, and triggers Belegung löschen', async () => {
+    const onClose = vi.fn();
+    const onClear = vi.fn().mockResolvedValue(undefined);
+    const { container } = render(AssignDialog, {
+      props: {
+        control: 'mc_click_1',
+        bank: 1,
+        kind: 'button',
+        count: 1,
+        initial: { action: 'hardkey', hardkey: 'GO' },
+        hasAssignment: true,
+        onSave: vi.fn(),
+        onClear,
+        onClose,
+      },
+    });
+    const dialog = container.querySelector('dialog');
+    expect(dialog).toBeTruthy();
+    expect(dialog?.hasAttribute('open')).toBe(true);
+
+    await fireEvent.click(screen.getByText('Belegung löschen'));
+    expect(onClear).toHaveBeenCalledTimes(1);
+
+    await fireEvent.keyDown(dialog!, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('AssignDialog special mappings', () => {

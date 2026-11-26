@@ -190,6 +190,82 @@ async def test_events_slow_client_is_dropped():
     assert queue.get_nowait() == {"n": 1}
 
 
+async def test_events_websocket_slow_client_is_disconnected_while_healthy_stays(config):
+    from aiohttp import WSMsgType
+    from ma2pi.web import BUS_KEY
+
+    client = await _client(
+        config,
+        dist_dir=Path("/nonexistent"),
+        status_provider=lambda: {"connected": True},
+        event_queue_size=2,
+    )
+    try:
+        bus = client.app[BUS_KEY]
+        slow = await client.ws_connect("/api/events")
+        fast = await client.ws_connect("/api/events")
+        await slow.receive_json()
+        await fast.receive_json()
+
+        # Pre-fill only `slow`'s server queue so the next 2 events overflow
+        # `slow` while `fast` stays connected and continues receiving events.
+        slow_queue = next(iter(bus._subscribers))
+        slow_queue.put_nowait({"type": "status", "data": {"seq": 0}})
+        bus.publish({"type": "status", "data": {"seq": 1}})
+        bus.publish({"type": "status", "data": {"seq": 2}})
+        assert (await fast.receive_json())["data"] == {"seq": 1}
+        assert (await fast.receive_json())["data"] == {"seq": 2}
+
+        for _ in range(5):
+            msg = await asyncio.wait_for(slow.receive(), timeout=2.0)
+            if msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.CLOSED) or slow.closed:
+                break
+        assert slow.closed
+
+        # Fast client still gets new events; reconnect gets initial status.
+        bus.publish({"type": "status", "data": {"seq": 4}})
+        assert (await fast.receive_json())["data"] == {"seq": 4}
+        await fast.close()
+
+        reconnected = await client.ws_connect("/api/events")
+        assert (await reconnected.receive_json())["type"] == "status"
+        await reconnected.close()
+    finally:
+        await client.close()
+
+
+async def test_host_and_origin_guard_blocks_dns_rebinding_and_foreign_ws(client):
+    # DNS rebinding Host rejected
+    bad_host = await client.get("/api/status", headers={"Host": "attacker.example:8080"})
+    assert bad_host.status == 403
+    assert (await bad_host.json())["error"] == "forbidden_host"
+
+    # LAN IP and .local Host allowed
+    ok_ip = await client.get("/api/status", headers={"Host": "192.168.178.21:8080"})
+    assert ok_ip.status == 200
+    ok_mdns = await client.get("/api/status", headers={"Host": "ma2pi.local:8080"})
+    assert ok_mdns.status == 200
+
+    # Foreign Origin on write and /api/events rejected
+    bad_write = await client.post(
+        "/api/config",
+        json={},
+        headers={
+            "Host": "192.168.178.21:8080",
+            "Origin": "http://evil.example",
+            "X-Ma2pi-Request": "1",
+        },
+    )
+    assert bad_write.status == 403
+    assert (await bad_write.json())["error"] == "forbidden_origin"
+
+    bad_ws = await client.get(
+        "/api/events",
+        headers={"Host": "192.168.178.21:8080", "Origin": "http://evil.example"},
+    )
+    assert bad_ws.status == 403
+
+
 def test_web_config_parsed(make_config):
     cfg = make_config(lambda data: data.update({"web": {"bind": "127.0.0.1", "port": 9000}}))
     assert cfg.web.bind == "127.0.0.1"

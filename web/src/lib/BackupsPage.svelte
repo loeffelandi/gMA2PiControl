@@ -3,7 +3,13 @@
 
   import { ApiError, type ApiClient, type BackupEntry } from './api';
 
-  let { api }: { api: ApiClient } = $props();
+  let {
+    api,
+    onAuthChange,
+  }: {
+    api: ApiClient;
+    onAuthChange?: () => void;
+  } = $props();
 
   let backups = $state<BackupEntry[]>([]);
   let loading = $state(true);
@@ -54,6 +60,7 @@
       await api.restoreBackup(id);
       confirmId = null;
       message = { ok: true, text: `Backup ${id} wiederhergestellt.` };
+      onAuthChange?.();
     } catch (error) {
       message = { ok: false, text: errorText(error) };
     } finally {
@@ -114,7 +121,7 @@
     {/if}
 
     {#if message}
-      <p class:error={!message.ok} class="message" role={message.ok ? 'status' : 'alert'}>
+      <p class={['message', { error: !message.ok }]} role={message.ok ? 'status' : 'alert'}>
         {message.text}
       </p>
     {/if}

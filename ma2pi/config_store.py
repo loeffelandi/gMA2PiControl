@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
+import tomllib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +27,8 @@ CONFIG_MODE = 0o640
 PASSWORD_MODE = 0o600
 DIR_MODE = 0o750
 
+_BACKUP_RE = re.compile(r"^(?P<stem>.+)-(?P<stamp>\d{8}-\d{6})(?:-(?P<seq>\d+))?\.toml$")
+
 
 @dataclass(frozen=True, slots=True)
 class ConfigPaths:
@@ -32,10 +36,11 @@ class ConfigPaths:
 
     state_dir: Path = DEFAULT_STATE_DIR
     etc_dir: Path = DEFAULT_ETC_DIR
+    config_file: str = "config.toml"
 
     @property
     def config(self) -> Path:
-        return self.state_dir / "config.toml"
+        return self.state_dir / self.config_file
 
     @property
     def password(self) -> Path:
@@ -93,17 +98,25 @@ def ensure_layout(paths: ConfigPaths, *, owner: str | None = "ma2pi") -> None:
             _apply(file, mode, owner)
 
 
-def _backup(path: Path, destination_dir: Path) -> Path | None:
+def _backup(
+    path: Path,
+    destination_dir: Path,
+    *,
+    mode: int = CONFIG_MODE,
+    owner: str | None = None,
+    now: datetime | None = None,
+) -> Path | None:
     if not path.is_file():
         return None
     destination_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
     target = destination_dir / f"{path.stem}-{stamp}{path.suffix}"
     suffix = 0
     while target.exists():
         suffix += 1
         target = destination_dir / f"{path.stem}-{stamp}-{suffix}{path.suffix}"
     shutil.copy2(path, target)
+    _apply(target, mode, owner)
     return target
 
 
@@ -141,15 +154,19 @@ def migrate(
     timestamped copy is written to ``backups/`` first.
     """
 
+    stamped = now or datetime.now()
     if paths.config.exists():
-        # The active config may already be in the state dir while the password
-        # still lives in the legacy location (for example after a partial
-        # upgrade).  Migrate that one file and fix the pointer.
         if paths.password.exists() or not paths.legacy_password.is_file():
             return False
         paths.backups.mkdir(parents=True, exist_ok=True)
         _apply(paths.backups, DIR_MODE, owner)
-        _backup(paths.legacy_password, paths.backups)
+        _backup(
+            paths.legacy_password,
+            paths.backups,
+            mode=PASSWORD_MODE,
+            owner=owner,
+            now=stamped,
+        )
         shutil.copy2(paths.legacy_password, paths.password)
         _apply(paths.password, PASSWORD_MODE, owner)
         _rewrite_password_path(paths.config, paths.password, owner)
@@ -161,8 +178,13 @@ def migrate(
     paths.backups.mkdir(parents=True, exist_ok=True)
     _apply(paths.backups, DIR_MODE, owner)
 
-    stamped = now or datetime.now()
-    backup = _backup(paths.legacy_config, paths.backups)
+    backup = _backup(
+        paths.legacy_config,
+        paths.backups,
+        mode=CONFIG_MODE,
+        owner=owner,
+        now=stamped,
+    )
     if backup is not None:
         LOGGER.info("Altkonfiguration gesichert: %s", backup)
 
@@ -170,7 +192,13 @@ def migrate(
     _apply(paths.config, CONFIG_MODE, owner)
 
     if paths.legacy_password.is_file():
-        _backup(paths.legacy_password, paths.backups)
+        _backup(
+            paths.legacy_password,
+            paths.backups,
+            mode=PASSWORD_MODE,
+            owner=owner,
+            now=stamped,
+        )
         shutil.copy2(paths.legacy_password, paths.password)
         _apply(paths.password, PASSWORD_MODE, owner)
         _rewrite_password_path(paths.config, paths.password, owner)
@@ -192,10 +220,25 @@ class BackupError(ValueError):
     """A backup id is unknown or unsafe to restore."""
 
 
+def _clean_container(value: Any) -> Any:
+    """Recursively strip ``None`` keys inside dicts contained in lists."""
+
+    if isinstance(value, dict):
+        return {
+            str(k): _clean_container(v)
+            for k, v in value.items()
+            if v is not None
+        }
+    if isinstance(value, list):
+        return [_clean_container(item) for item in value if item is not None]
+    return value
+
+
 def merge_patch(target: dict, patch: Mapping[str, Any]) -> dict:
     """Apply an RFC 7386 JSON merge patch to ``target`` in place."""
 
-    for key, value in patch.items():
+    for raw_key, value in patch.items():
+        key = str(raw_key)
         if value is None:
             target.pop(key, None)
         elif isinstance(value, dict):
@@ -204,6 +247,8 @@ def merge_patch(target: dict, patch: Mapping[str, Any]) -> dict:
                 existing = {}
                 target[key] = existing
             merge_patch(existing, value)
+        elif isinstance(value, list):
+            target[key] = _clean_container(value)
         else:
             target[key] = value
     return target
@@ -214,7 +259,8 @@ def _apply_patch_to_table(table: Any, patch: Mapping[str, Any]) -> None:
 
     import tomlkit
 
-    for key, value in patch.items():
+    for raw_key, value in patch.items():
+        key = str(raw_key)
         if value is None:
             if key in table:
                 del table[key]
@@ -226,6 +272,8 @@ def _apply_patch_to_table(table: Any, patch: Mapping[str, Any]) -> None:
                 table[key] = tomlkit.table()
                 child = table[key]
             _apply_patch_to_table(child, value)
+        elif isinstance(value, list):
+            table[key] = _clean_container(value)
         else:
             table[key] = value
 
@@ -233,7 +281,7 @@ def _apply_patch_to_table(table: Any, patch: Mapping[str, Any]) -> None:
 def _atomic_write(path: Path, text: str, mode: int, owner: str | None) -> None:
     """Write ``text`` via a synced temporary file and an atomic rename."""
 
-    tmp = path.with_name(f".{path.name}.tmp")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -258,12 +306,33 @@ def _atomic_write(path: Path, text: str, mode: int, owner: str | None) -> None:
         os.close(dir_fd)
 
 
+def _backup_sort_key(path: Path) -> tuple[str, int, int, str]:
+    """Chronological sort key where base ``stamp.toml`` precedes ``stamp-1.toml``."""
+
+    match = _BACKUP_RE.match(path.name)
+    if match is not None:
+        seq = int(match.group("seq") or "0")
+        return (match.group("stamp"), seq, 0, path.name)
+    try:
+        mtime_ns = path.stat().st_mtime_ns
+    except OSError:
+        mtime_ns = 0
+    return ("", 0, mtime_ns, path.name)
+
+
 def rotate_backups(backup_dir: Path, keep: int = MAX_BACKUPS) -> None:
     """Keep the newest ``keep`` timestamped backups, delete the rest."""
 
-    files = sorted(backup_dir.glob("config-*.toml"))
-    if keep <= 0:
+    if not backup_dir.is_dir() or keep <= 0:
         return
+    files = sorted(
+        (
+            path
+            for path in backup_dir.glob("*.toml")
+            if path.is_file() and _BACKUP_RE.match(path.name)
+        ),
+        key=_backup_sort_key,
+    )
     for old in files[:-keep]:
         old.unlink(missing_ok=True)
 
@@ -275,9 +344,12 @@ def _backup_files(backup_dir: Path) -> list[Path]:
         path
         for path in backup_dir.glob("*.toml")
         if path.is_file()
-        and (path.name == LAST_GOOD or path.name.startswith("config-"))
     ]
-    return sorted(files, key=lambda path: path.stat().st_mtime, reverse=True)
+    return sorted(
+        files,
+        key=lambda path: (path.stat().st_mtime_ns, _backup_sort_key(path)),
+        reverse=True,
+    )
 
 
 def _describe_backup(path: Path) -> dict[str, Any]:
@@ -302,7 +374,7 @@ def create_backup(paths: ConfigPaths, *, owner: str | None = "ma2pi") -> dict[st
     ensure_layout(paths, owner=owner)
     if not paths.config.is_file():
         raise ConfigWriteError(f"Konfiguration {paths.config} fehlt")
-    target = _backup(paths.config, paths.backups)
+    target = _backup(paths.config, paths.backups, mode=CONFIG_MODE, owner=owner)
     if target is None:  # pragma: no cover - checked above
         raise ConfigWriteError(f"Konfiguration {paths.config} fehlt")
     rotate_backups(paths.backups)
@@ -325,7 +397,6 @@ def read_backup(paths: ConfigPaths, backup_id: str) -> tuple[Path, str]:
     return path, path.read_text(encoding="utf-8")
 
 
-
 def write_password(
     paths: ConfigPaths, password: str, *, owner: str | None = "ma2pi"
 ) -> None:
@@ -343,12 +414,7 @@ def apply_patch(
     owner: str | None = "ma2pi",
     validate: Callable[[dict[str, Any]], Any] | None = None,
 ) -> Any:
-    """Merge ``patch`` into the active config and write it atomically.
-
-    ``validate`` receives the merged plain dict and must raise on invalid
-    content; it runs *before* anything is written.  On success the previous
-    file is kept in ``backups/`` and as ``last-good.toml``.
-    """
+    """Merge ``patch`` into the active config and write it atomically."""
 
     prepared = prepare_patch(paths, patch, owner=owner, validate=validate)
     commit_prepared(paths, prepared, owner=owner)
@@ -370,12 +436,7 @@ def prepare_patch(
     owner: str | None = "ma2pi",
     validate: Callable[[dict[str, Any]], Any] | None = None,
 ) -> PreparedConfig:
-    """Merge and validate ``patch`` without touching the active file.
-
-    Splitting preparation from :func:`commit_prepared` lets the runtime test
-    new credentials (an asynchronous step) after validation but before the
-    configuration is persisted.
-    """
+    """Merge and validate ``patch`` without touching the active file."""
 
     import copy
     import tomlkit
@@ -390,7 +451,11 @@ def prepare_patch(
     result = validate(candidate) if validate is not None else candidate
 
     _apply_patch_to_table(document, patch)
-    return PreparedConfig(candidate=result, text=tomlkit.dumps(document))
+    rendered = tomlkit.dumps(document)
+    reparsed = tomllib.loads(rendered)
+    if validate is not None:
+        result = validate(reparsed)
+    return PreparedConfig(candidate=result, text=rendered)
 
 
 def commit_prepared(
@@ -404,9 +469,11 @@ def commit_prepared(
     if not paths.config.is_file():
         raise ConfigWriteError(f"Konfiguration {paths.config} fehlt")
 
-    _backup(paths.config, paths.backups)
+    current_text = paths.config.read_text(encoding="utf-8")
+    _backup(paths.config, paths.backups, mode=CONFIG_MODE, owner=owner)
     paths.backups.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(paths.config, paths.backups / LAST_GOOD)
+    _apply(paths.backups, DIR_MODE, owner)
+    _atomic_write(paths.backups / LAST_GOOD, current_text, CONFIG_MODE, owner)
     rotate_backups(paths.backups)
 
     _atomic_write(paths.config, prepared.text, CONFIG_MODE, owner)

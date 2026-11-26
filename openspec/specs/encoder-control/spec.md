@@ -308,12 +308,12 @@ denselben Index wie der Press verwenden. Die Zuordnung erfolgt per
 
 ### Requirement: Auflösung per Taste 2 und Encoder-Klick
 
-Solange der lokale Modifier `asl_button_2` gehalten wird, SHALL ein Encoder-Klick
-die Auflösung des Attributs des Slots in der onPC zyklisch umschalten (Normal →
-Fine → Ultra → Normal) und keinen Encoder-Druck senden. Die Umschaltung MUST per
-nativem `encoder`-Frame mit `name` und `resolution` erfolgen; der Daemon skaliert
-Deltas nicht selbst. Für Screen-Encoder (Screen-Modus oder MA gehalten) MUST
-nichts gesendet und eine Warnung protokolliert werden.
+Solange `asl_button_2` gehalten wird, SHALL ein Encoder-Klick die Auflösung des
+aktuellen Attributs des Slots in der onPC per nativem `encoder`-Frame zyklisch
+umschalten (Normal → Fine → Ultra → Normal), ohne selbst Deltas zu skalieren.
+Vor der Umschaltung MUST der Client bedarfsweise `presetTypes` aktualisieren,
+bei Disconnect den Seitenstand leeren und bei `"update"`-Frames alte `"s"`-Flags
+auf Geschwistern zurücksetzen; für Screen-Encoder MUST nichts gesendet werden.
 
 #### Scenario: Auflösung durchschalten
 
@@ -329,6 +329,13 @@ nichts gesendet und eine Warnung protokolliert werden.
 
 - **WHEN** `asl_button_2` nicht gehalten wird und ein Encoder geklickt wird
 - **THEN** wird der Encoder-Druck an die onPC gesendet und die Auflösung ändert sich nicht
+
+#### Scenario: Feature-Wechsel in onPC vor Auflösungs-Umschaltung
+
+- **WHEN** der Bediener in der onPC von Dimmer auf Position wechselt und danach
+  `asl_button_2` hält und Encoder 1 klickt
+- **THEN** aktualisiert der Client einmalig `presetTypes` und schaltet `PAN`
+  statt des veralteten `DIM` um
 
 ### Requirement: NIPPLE-LED
 
@@ -372,3 +379,15 @@ Helligkeit 25) und solange sie als Fine-Modifier gehalten wird hell
 
 - **WHEN** die mittlere ASL-Taste losgelassen wird
 - **THEN** kehrt die LED auf die gedimmte Stufe zurück
+
+### Requirement: Konsistente Tasten-LEDs bei Moduswechsel und Aufräumen
+
+`ToggleScreenMode` SHALL nur die Modus-LED aktualisieren und MUST gehaltene
+`NIPPLE`- oder `Fine`-LEDs nicht zurücksetzen. Beim Aufräumen gehaltener Tasten
+durch Geräteverlust, Verbindungsverlust oder Apply MUST auch die LED-Anzeigen
+gehaltener lokaler Modifier und der `NIPPLE`-Taste in den Ruhezustand wechseln.
+
+#### Scenario: Modus-Toggle während gehaltener Fine-Taste
+
+- **WHEN** `asl_button_2` gehalten wird und der Screen-Modus umgeschaltet wird
+- **THEN** wechselt die Modus-LED die Farbe und die `Fine`-LED bleibt hell

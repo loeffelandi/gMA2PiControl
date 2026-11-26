@@ -29,30 +29,7 @@ async def wait_until(predicate, timeout: float = 5.0) -> None:
         await asyncio.sleep(0.01)
 
 
-class NullSink:
-    def press(self, keyname: str, hold: bool = False) -> None:
-        pass
-
-    def release(self, keyname: str) -> None:
-        pass
-
-    def command(self, text: str) -> None:
-        pass
-
-    def encoder_slot(self, slot: int, delta: float, screen: bool = False) -> None:
-        pass
-
-    def encoder_attribute(self, name: str, value: float) -> None:
-        pass
-
-    def toggle_screen_mode(self) -> None:
-        pass
-
-    def toggle_fine(self, slot: int) -> None:
-        pass
-
-    def screen_shortcut(self, screen: int) -> None:
-        pass
+from .conftest import NullSink
 
 
 def _write_config(paths: ConfigPaths, raw_config: dict, port: int) -> AppConfig:

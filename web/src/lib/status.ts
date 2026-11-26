@@ -4,6 +4,8 @@ import type {
   ActivityDevice,
   ActivityEntry,
   ActivityInfo,
+  BackupEntry,
+  DeviceLearnStatus,
   LearnResult,
   NetworkLastResult,
   NetworkPending,
@@ -17,6 +19,11 @@ export interface NetworkEventData {
   last_result: NetworkLastResult | null;
 }
 
+export interface BackupRestoredEventData {
+  id: string;
+  generation: number;
+}
+
 export interface ActivityState {
   devices: Record<string, ActivityDevice>;
   entries: ActivityEntry[];
@@ -27,14 +34,32 @@ export interface StatusState {
   reconnecting: boolean;
   status: StatusInfo | null;
   learn: LearnResult | null;
+  deviceLearn: DeviceLearnStatus | null;
   network: NetworkEventData | null;
   activity: ActivityState;
+  configGeneration: number | null;
+  backup: BackupEntry | null;
+  backupRestored: BackupRestoredEventData | null;
   lastError: string | null;
 }
 
 export const LOG_LIMIT = 100;
 
 const emptyActivity = (): ActivityState => ({ devices: {}, entries: [] });
+
+export const emptyStatusState = (): StatusState => ({
+  connection: 'closed',
+  reconnecting: false,
+  status: null,
+  learn: null,
+  deviceLearn: null,
+  network: null,
+  activity: emptyActivity(),
+  configGeneration: null,
+  backup: null,
+  backupRestored: null,
+  lastError: null,
+});
 
 function mergeSnapshot(incoming: ActivityInfo | undefined): ActivityState {
   return {
@@ -95,15 +120,7 @@ export class StatusStore {
   private wanted = false;
   private attempts = 0;
 
-  state: StatusState = {
-    connection: 'closed',
-    reconnecting: false,
-    status: null,
-    learn: null,
-    network: null,
-    activity: emptyActivity(),
-    lastError: null,
-  };
+  state: StatusState = emptyStatusState();
 
   constructor(options: StatusStoreOptions = {}) {
     this.url = options.url ?? defaultUrl();
@@ -123,8 +140,9 @@ export class StatusStore {
     this.open();
   }
 
-  disconnect(): void {
+  disconnect(options: { clear?: boolean } = {}): void {
     this.wanted = false;
+    this.attempts = 0;
     if (this.timer !== null) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -134,7 +152,15 @@ export class StatusStore {
     if (socket !== null) {
       socket.close();
     }
-    this.patch({ connection: 'closed', reconnecting: false });
+    if (options.clear) {
+      this.patch(emptyStatusState());
+    } else {
+      this.patch({ connection: 'closed', reconnecting: false });
+    }
+  }
+
+  reset(): void {
+    this.disconnect({ clear: true });
   }
 
   private patch(values: Partial<StatusState>): void {
@@ -175,7 +201,7 @@ export class StatusStore {
     };
   }
 
-  private receive(raw: string): void {
+  receive(raw: string): void {
     let message: { type?: string; data?: unknown };
     try {
       message = JSON.parse(raw);
@@ -198,8 +224,25 @@ export class StatusStore {
       });
     } else if (message.type === 'learn' && message.data) {
       this.patch({ learn: message.data as LearnResult });
+    } else if (message.type === 'device_learn' && message.data) {
+      this.patch({ deviceLearn: message.data as DeviceLearnStatus });
     } else if (message.type === 'network' && message.data) {
       this.patch({ network: message.data as NetworkEventData });
+    } else if (message.type === 'config' && message.data) {
+      const data = message.data as { generation?: number };
+      if (typeof data.generation === 'number') {
+        this.patch({ configGeneration: data.generation });
+      }
+    } else if (message.type === 'backup' && message.data) {
+      this.patch({ backup: message.data as BackupEntry });
+    } else if (message.type === 'backup_restored' && message.data) {
+      const data = message.data as BackupRestoredEventData;
+      this.patch({
+        backupRestored: data,
+        ...(typeof data.generation === 'number'
+          ? { configGeneration: data.generation }
+          : {}),
+      });
     }
   }
 

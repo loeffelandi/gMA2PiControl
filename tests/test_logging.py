@@ -36,3 +36,19 @@ def test_password_keyword_is_redacted():
     logging.getLogger("ma2pi.test").info("password='hunter2'")
     output = stream.getvalue()
     assert "hunter2" not in output
+
+
+def test_dict_json_pin_psk_and_traceback_secrets_are_redacted():
+    stream = io.StringIO()
+    setup_logging("INFO", stream)
+    logger = logging.getLogger("ma2pi.test")
+    logger.info("payload=%r", {"password": "dict-secret", "pin": "9876", "psk": "wlan-geheim"})
+    logger.info('json={"password": "json-secret", "token": "tok-abc123"}')
+    try:
+        raise RuntimeError('{"password": "trace-secret", "wifi-sec.psk": "ap-pass"}')
+    except RuntimeError:
+        logger.exception("fehler beim anwenden")
+    output = stream.getvalue()
+    for leaked in ("dict-secret", "9876", "wlan-geheim", "json-secret", "tok-abc123", "trace-secret", "ap-pass"):
+        assert leaked not in output
+    assert "***" in output

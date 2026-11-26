@@ -41,4 +41,30 @@ describe('PinGate', () => {
       expect(screen.getByRole('alert').textContent).toContain('PIN falsch');
     });
   });
+
+  it('displays the lockout message on 429 pin_locked with role="alert"', async () => {
+    const api = fakeApi(async () => {
+      throw new ApiError(
+        429,
+        'pin_locked',
+        'Zu viele Fehlversuche – bitte 15 s warten',
+        undefined,
+        15,
+      );
+    });
+    const unlocked = vi.fn();
+    render(PinGate, { props: { api, onUnlocked: unlocked } });
+
+    const input = screen.getByLabelText('PIN') as HTMLInputElement;
+    await fireEvent.input(input, { target: { value: '000000' } });
+    await fireEvent.click(screen.getByText('Entsperren'));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain(
+        'Zu viele Fehlversuche – bitte 15 s warten',
+      );
+    });
+    expect(unlocked).not.toHaveBeenCalled();
+    expect(input.value).toBe('');
+  });
 });

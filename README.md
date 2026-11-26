@@ -207,6 +207,9 @@ sind erwartet und betreffen nur die Live-Daten, nicht das Laden der Oberfläche.
 ### `[led]`
 
 LED feedback for the ASL mode indicator (protocol verified live on the device).
+Changes to `[led]` (`enabled`, `device`, notes, colours, brightness) take effect
+at runtime on config reload without restarting the daemon, sharing the single
+non-blocking `MidiManager` output handle.
 Executor LEDs of other controllers are configured with `[feedback]` (see below).
 
 | Key | Type | Default | Meaning |

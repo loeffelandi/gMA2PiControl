@@ -47,8 +47,8 @@ if ! id -u "${APP_USER}" >/dev/null 2>&1; then
         --shell /usr/sbin/nologin "${APP_USER}"
 fi
 
-install -d -o "${APP_USER}" -g "${APP_GROUP}" -m 0755 "${BASE_DIR}"
-install -d -o "${APP_USER}" -g "${APP_GROUP}" -m 0755 "${APP_DIR}"
+install -d -o root -g root -m 0755 "${BASE_DIR}"
+install -d -o root -g root -m 0755 "${APP_DIR}"
 install -d -o root -g "${APP_GROUP}" -m 0750 "${CONFIG_DIR}"
 install -d -o "${APP_USER}" -g "${APP_GROUP}" -m 0750 "${STATE_DIR}"
 install -d -o "${APP_USER}" -g "${APP_GROUP}" -m 0750 "${BACKUP_DIR}"
@@ -70,18 +70,18 @@ if [[ ! -f "${WEB_DIST}/index.html" ]]; then
     exit 1
 fi
 rm -rf "${APP_DIR}/web/dist"
-install -d -o "${APP_USER}" -g "${APP_GROUP}" -m 0755 "${APP_DIR}/web"
+install -d -o root -g root -m 0755 "${APP_DIR}/web"
 cp -a "${WEB_DIST}" "${APP_DIR}/web/dist"
 
 find "${APP_DIR}" -type d -name '__pycache__' -prune -exec rm -rf {} +
-chown -R "${APP_USER}:${APP_GROUP}" "${APP_DIR}"
+chown -R root:root "${APP_DIR}"
 
 if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
     /usr/bin/python3 -m venv "${VENV_DIR}"
 fi
 "${VENV_DIR}/bin/python" -m pip install --quiet --upgrade pip
 "${VENV_DIR}/bin/python" -m pip install --quiet "${APP_DIR}"
-chown -R "${APP_USER}:${APP_GROUP}" "${BASE_DIR}"
+chown -R root:root "${VENV_DIR}"
 
 install -m 0644 "${REPO_DIR}/deploy/ma2pi.service" "${SERVICE_FILE}"
 install -m 0644 "${REPO_DIR}/deploy/99-ma2pi.rules" "${UDEV_FILE}"

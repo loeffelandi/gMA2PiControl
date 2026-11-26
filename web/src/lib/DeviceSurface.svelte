@@ -21,8 +21,6 @@
     onToggle,
   }: Props = $props();
 
-  let surfaceEl = $state<HTMLDivElement>();
-
   function hintFor(kind: string | null): string {
     if (kind === 'encoder' || kind === 'relative-encoder' || kind === 'poti') {
       return '↻ Drehen';
@@ -31,13 +29,29 @@
     return '● Drücken';
   }
 
-  $effect(() => {
-    if (!activeControl) return;
-    const element = surfaceEl?.querySelector<HTMLElement>(
-      `[data-control="${activeControl}"]`,
-    );
-    element?.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'smooth' });
-  });
+  function escapeControl(value: string): string {
+    return typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+      ? CSS.escape(value)
+      : value.replace(/["\\]/g, '\\$&');
+  }
+
+  function scrollActive(target: string | null) {
+    return (node: HTMLElement): void => {
+      if (!target) return;
+      const escaped = escapeControl(target);
+      const element = node.querySelector<HTMLElement>(
+        `[data-control="${escaped}"]`,
+      );
+      const reduced =
+        typeof window !== 'undefined' &&
+        Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches);
+      element?.scrollIntoView?.({
+        block: 'nearest',
+        inline: 'nearest',
+        behavior: reduced ? 'auto' : 'smooth',
+      });
+    };
+  }
 
   const palette: Record<string, string> = {
     // Reale Keycap-Farben aus config.toml; bewusst außerhalb der UI-Tokens.
@@ -61,7 +75,9 @@
     }
     if (cell.color && palette[cell.color]) {
       parts.push(`background: ${palette[cell.color]}`);
-      parts.push('color: var(--on-accent)');
+      parts.push(
+        cell.color === 'black' ? 'color: var(--text)' : 'color: var(--on-accent)',
+      );
     }
     return parts.join('; ');
   }
@@ -88,25 +104,39 @@
     return value;
   }
 
-  const cells = $derived(
-    layout.rows.flatMap((row) => row.cells),
-  );
+  const keyedCells = $derived.by(() => {
+    const counts: Record<string, number> = Object.create(null);
+    return layout.rows.flatMap((row, rowIdx) =>
+      row.cells.map((cell, colIdx) => {
+        const base =
+          cell.control ??
+          `${cell.row ?? rowIdx + 1}:${cell.col ?? colIdx + 1}:${cell.label}`;
+        const n = (counts[base] ?? 0) + 1;
+        counts[base] = n;
+        return { key: n === 1 ? base : `${base}#${n}`, cell };
+      }),
+    );
+  });
 </script>
 
 <div
   class="surface"
   data-testid="device-surface"
-  bind:this={surfaceEl}
+  {@attach scrollActive(activeControl)}
   style={`grid-template-columns: repeat(${layout.columns}, minmax(3.6rem, 1fr));`}
 >
-  {#each cells as cell}
+  {#each keyedCells as { key, cell } (key)}
     {@const assignment = showAssignment(cell)}
     <button
       type="button"
-      class="cell"
-      class:selected={cell.control !== null && selected.includes(cell.control)}
-      class:active={cell.control !== null && cell.control === activeControl}
-      class:static={cell.control === null}
+      class={[
+        'cell',
+        {
+          selected: cell.control !== null && selected.includes(cell.control),
+          active: cell.control !== null && cell.control === activeControl,
+          static: cell.control === null,
+        },
+      ]}
       disabled={cell.control === null}
       data-control={cell.control ?? undefined}
       style={styleFor(cell)}

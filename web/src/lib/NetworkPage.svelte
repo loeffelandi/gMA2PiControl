@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
 
   import {
     ApiError,
@@ -39,7 +39,69 @@
   let recoveryPassword = $state('');
   let recoveryAuto = $state(true);
   let recoveryInitialized = $state(false);
-  let recoveryMessage = $state<string | null>(null);
+  let recoveryMessage = $state<{ ok: boolean; text: string } | null>(null);
+  let recoveryFieldError = $state<string | null>(null);
+
+  let ticker: ReturnType<typeof setInterval> | null = null;
+  let poller: ReturnType<typeof setInterval> | null = null;
+  let destroyed = false;
+
+  function stopPendingTimers(): void {
+    if (ticker !== null) {
+      clearInterval(ticker);
+      ticker = null;
+    }
+    if (poller !== null) {
+      clearInterval(poller);
+      poller = null;
+    }
+  }
+
+  function setPending(nextPending: NetworkPending | null): void {
+    now = Date.now();
+    pending = nextPending;
+    if (nextPending !== null && !destroyed) {
+      if (ticker === null) {
+        ticker = setInterval(() => {
+          now = Date.now();
+        }, 1000);
+      }
+      if (poller === null) {
+        poller = setInterval(() => {
+          void load(false);
+        }, 5000);
+      }
+    } else {
+      stopPendingTimers();
+    }
+  }
+
+  function modalDialog(el: HTMLDialogElement): () => void {
+    if (typeof el.showModal === 'function') {
+      if (!el.open) {
+        try {
+          el.showModal();
+        } catch {
+          el.setAttribute('open', '');
+        }
+      }
+    } else {
+      el.setAttribute('open', '');
+    }
+    return () => {
+      if (el.hasAttribute('open')) {
+        if (typeof el.close === 'function') {
+          try {
+            el.close();
+          } catch {
+            el.removeAttribute('open');
+          }
+        } else {
+          el.removeAttribute('open');
+        }
+      }
+    };
+  }
 
   function errorText(value: unknown): string {
     if (value instanceof ApiError) return value.detail || value.message;
@@ -88,7 +150,7 @@
     try {
       const next = await api.network();
       status = next;
-      pending = next.pending;
+      setPending(next.pending);
       lastResult = next.last_result;
       if (initial || (hadPending && next.pending === null)) {
         initialized = false;
@@ -114,13 +176,14 @@
         recoveryInitialized = true;
       }
     } catch (value) {
-      recoveryMessage = errorText(value);
+      recoveryMessage = { ok: false, text: errorText(value) };
     }
   }
 
   async function saveRecovery(): Promise<void> {
     busy = true;
     recoveryMessage = null;
+    recoveryFieldError = null;
     try {
       const next = await api.saveRecovery({
         enabled: recoveryEnabled,
@@ -129,43 +192,50 @@
         auto: recoveryAuto,
       });
       recovery = next;
-      recoveryMessage = next.active
-        ? `Rettungs-WLAN aktiv: ${next.ssid}`
-        : 'Rettungs-WLAN ist aus.';
+      recoveryMessage = {
+        ok: true,
+        text: next.active
+          ? `Rettungs-WLAN aktiv: ${next.ssid}`
+          : 'Rettungs-WLAN ist aus.',
+      };
     } catch (value) {
-      recoveryMessage = errorText(value);
+      recoveryFieldError =
+        value instanceof ApiError && value.field ? value.field : null;
+      recoveryMessage = { ok: false, text: errorText(value) };
     } finally {
       busy = false;
     }
   }
 
   onMount(() => {
+    if (store?.state.network) {
+      setPending(store.state.network.pending);
+      lastResult = store.state.network.last_result;
+    }
     void load(true);
     void loadRecovery();
-    const ticker = setInterval(() => {
-      now = Date.now();
-    }, 1000);
-    const poller = setInterval(() => {
-      if (pending) void load(false);
-    }, 5000);
-    return () => {
-      clearInterval(ticker);
-      clearInterval(poller);
-    };
-  });
 
-  $effect(() => {
     if (!store) return;
     let previous = store.state.network;
     return store.subscribe(() => {
       const event = store.state.network;
       if (!event || event === previous) return;
       previous = event;
-      pending = event.pending;
+      setPending(event.pending);
       lastResult = event.last_result;
       if (event.pending === null) void load(false);
     });
   });
+
+  onDestroy(() => {
+    destroyed = true;
+    stopPendingTimers();
+  });
+
+  function closeDialog(): void {
+    if (busy) return;
+    dialogOpen = false;
+  }
 
   async function check(): Promise<boolean> {
     busy = true;
@@ -206,7 +276,7 @@
     fieldErrors = {};
     try {
       const result = await api.applyNetwork(candidate());
-      pending = result.pending;
+      setPending(result.pending);
       targetUrl = result.target_url;
       if (status) status = { ...status, pending: result.pending };
       message = null;
@@ -224,7 +294,7 @@
     try {
       const next = await api.confirmNetwork();
       status = next;
-      pending = next.pending;
+      setPending(next.pending);
       lastResult = next.last_result;
       message = { ok: true, text: 'Netzwerkkonfiguration gespeichert.' };
       initialized = false;
@@ -242,7 +312,7 @@
     try {
       const next = await api.rollbackNetwork();
       status = next;
-      pending = next.pending;
+      setPending(next.pending);
       lastResult = next.last_result;
       message = null;
       initialized = false;
@@ -345,7 +415,7 @@
       </dl>
 
       {#if lastResult && !pending && !message}
-        <p class:error={lastResult.status === 'failed'} class="message">
+        <p class={['message', { error: lastResult.status === 'failed' }]}>
           {#if lastResult.status === 'confirmed'}
             Netzwerkkonfiguration gespeichert.
           {:else if lastResult.status === 'rolled_back'}
@@ -484,14 +554,14 @@
 
       {#if warnings.length}
         <ul class="network-warnings">
-          {#each warnings as warning}
+          {#each warnings as warning (warning)}
             <li>{warning}</li>
           {/each}
         </ul>
       {/if}
 
       {#if message}
-        <p class:error={!message.ok} class="message" role={message.ok ? 'status' : 'alert'}>
+        <p class={['message', { error: !message.ok }]} role={message.ok ? 'status' : 'alert'}>
           {message.text}
         </p>
       {/if}
@@ -522,21 +592,37 @@
         {/if}
         <form class="form network-form" onsubmit={(event) => event.preventDefault()}>
           <label for="recovery-enabled">Aktiv</label>
-          <input id="recovery-enabled" type="checkbox" bind:checked={recoveryEnabled} />
+          <input
+            id="recovery-enabled"
+            type="checkbox"
+            bind:checked={recoveryEnabled}
+            aria-invalid={recoveryFieldError === 'enabled'}
+          />
 
           <label for="recovery-ssid">SSID</label>
-          <input id="recovery-ssid" bind:value={recoverySsid} autocomplete="off" />
+          <input
+            id="recovery-ssid"
+            bind:value={recoverySsid}
+            autocomplete="off"
+            aria-invalid={recoveryFieldError === 'ssid'}
+          />
 
           <label for="recovery-password">WLAN-Passwort</label>
           <input
             id="recovery-password"
             bind:value={recoveryPassword}
             autocomplete="new-password"
+            aria-invalid={recoveryFieldError === 'password'}
           />
           <p class="hint">8 bis 63 Zeichen; das Standardpasswort sollte geändert werden.</p>
 
           <label for="recovery-auto">Automatik</label>
-          <input id="recovery-auto" type="checkbox" bind:checked={recoveryAuto} />
+          <input
+            id="recovery-auto"
+            type="checkbox"
+            bind:checked={recoveryAuto}
+            aria-invalid={recoveryFieldError === 'auto'}
+          />
           <p class="hint">
             Nach 60 Sekunden ohne nutzbares LAN automatisch einschalten und nach
             stabiler LAN-Rückkehr wieder ausschalten.
@@ -553,14 +639,33 @@
           getrennt. Das ist für den Rettungszugang beabsichtigt.
         </p>
         {#if recoveryMessage}
-          <p class="message" role="status">{recoveryMessage}</p>
+          <p
+            class={['message', { error: !recoveryMessage.ok }]}
+            role={recoveryMessage.ok ? 'status' : 'alert'}
+          >
+            {recoveryMessage.text}
+          </p>
         {/if}
       {/if}
     </section>
   {/if}
 
   {#if dialogOpen}
-    <div class="network-dialog" role="dialog" aria-modal="true" aria-labelledby="network-dialog-title">
+    <dialog
+      {@attach modalDialog}
+      class="network-dialog"
+      aria-labelledby="network-dialog-title"
+      oncancel={(event) => {
+        event.preventDefault();
+        closeDialog();
+      }}
+      onkeydown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeDialog();
+        }
+      }}
+    >
       <h2 id="network-dialog-title">Netzwerkkonfiguration anwenden?</h2>
       <p>
         Die neue Konfiguration wird sofort aktiviert; ein Neustart ist nicht
@@ -580,8 +685,8 @@
       </p>
       <div class="actions">
         <button type="button" onclick={applyChange} disabled={busy}>Jetzt anwenden</button>
-        <button type="button" onclick={() => (dialogOpen = false)} disabled={busy}>Abbrechen</button>
+        <button type="button" onclick={closeDialog} disabled={busy}>Abbrechen</button>
       </div>
-    </div>
+    </dialog>
   {/if}
 </section>

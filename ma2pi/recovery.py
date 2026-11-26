@@ -278,7 +278,7 @@ class RecoveryService:
         self._store = store
         self.port = port
         self.publish = publish
-        self._clock = clock or time.time
+        self._clock = clock or time.monotonic
         self._down_grace = down_grace
         self._up_grace = up_grace
         self._lock = asyncio.Lock()
@@ -344,6 +344,73 @@ class RecoveryService:
             "error": error,
         }
 
+    async def _save_locked(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        auto_triggered_override: bool | None = None,
+    ) -> None:
+        raw_ssid = payload.get("ssid", self._settings.ssid)
+        if not isinstance(raw_ssid, str):
+            raise RecoveryValidationError("ssid", "muss eine Zeichenkette sein")
+        ssid = raw_ssid.strip()
+        if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in ssid):
+            raise RecoveryValidationError("ssid", "darf keine Steuerzeichen enthalten")
+        if not 1 <= len(ssid.encode("utf-8")) <= 32:
+            raise RecoveryValidationError("ssid", "muss 1 bis 32 UTF-8-Bytes lang sein")
+
+        raw_password = payload.get("password", self._settings.password)
+        if not isinstance(raw_password, str):
+            raise RecoveryValidationError("password", "muss eine Zeichenkette sein")
+        password = raw_password
+        if not 8 <= len(password) <= 63 or not all(
+            0x20 <= ord(ch) <= 0x7E for ch in password
+        ):
+            raise RecoveryValidationError(
+                "password", "muss 8 bis 63 druckbare ASCII-Zeichen enthalten"
+            )
+
+        raw_enabled = payload.get("enabled", self._settings.enabled)
+        if not isinstance(raw_enabled, bool):
+            raise RecoveryValidationError("enabled", "muss true oder false sein")
+        enabled = raw_enabled
+
+        raw_auto = payload.get("auto", self._settings.auto)
+        if not isinstance(raw_auto, bool):
+            raise RecoveryValidationError("auto", "muss true oder false sein")
+        auto = raw_auto
+
+        previous = self._settings
+        auto_triggered = (
+            auto_triggered_override
+            if auto_triggered_override is not None
+            else (previous.auto_triggered if enabled else False)
+        )
+        candidate = RecoverySettings(
+            enabled=enabled,
+            ssid=ssid,
+            password=password,
+            auto=auto,
+            auto_triggered=auto_triggered if enabled else False,
+        )
+        try:
+            if enabled:
+                await self._backend.apply(candidate)
+            else:
+                await self._backend.disable()
+        except Exception as exc:
+            self._settings = previous
+            raise RecoveryError(f"Rettungs-WLAN nicht anwendbar: {exc}") from exc
+
+        try:
+            await asyncio.to_thread(self._store.save, candidate)
+        except OSError as exc:
+            self._settings = previous
+            raise RecoveryError(f"Rettungs-Einstellungen nicht schreibbar: {exc}") from exc
+
+        self._settings = candidate
+        self._emit()
+
     async def save(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(payload, Mapping):
             raise RecoveryValidationError("body", "JSON-Objekt erwartet")
@@ -352,70 +419,39 @@ class RecoveryService:
         if unknown:
             raise RecoveryValidationError("body", f"unbekannte Felder: {', '.join(unknown)}")
         async with self._lock:
-            ssid = str(payload.get("ssid", self._settings.ssid)).strip()
-            password = str(payload.get("password", self._settings.password))
-            enabled = bool(payload.get("enabled", self._settings.enabled))
-            auto = bool(payload.get("auto", self._settings.auto))
-            if not 1 <= len(ssid) <= 32:
-                raise RecoveryValidationError("ssid", "muss 1 bis 32 Zeichen lang sein")
-            if not 8 <= len(password) <= 63:
-                raise RecoveryValidationError("password", "muss 8 bis 63 Zeichen lang sein")
-            self._settings = RecoverySettings(
-                enabled=enabled,
-                ssid=ssid,
-                password=password,
-                auto=auto,
-                auto_triggered=self._settings.auto_triggered if enabled else False,
-            )
-            try:
-                self._store.save(self._settings)
-            except OSError as exc:
-                raise RecoveryError(f"Rettungs-Einstellungen nicht schreibbar: {exc}") from exc
-            try:
-                if enabled:
-                    await self._backend.apply(self._settings)
-                else:
-                    await self._backend.disable()
-            except Exception as exc:
-                self._settings.enabled = False
-                with contextlib.suppress(OSError):
-                    self._store.save(self._settings)
-                raise RecoveryError(f"Rettungs-WLAN nicht anwendbar: {exc}") from exc
-            self._emit()
+            await self._save_locked(payload)
         return await self.status()
 
     async def set_enabled(self, enabled: bool) -> dict[str, Any]:
         return await self.save({"enabled": enabled})
 
     async def auto_cycle(self, wired_ok: bool) -> None:
-        """Enable the hotspot after a wired outage, disable after recovery.
-
-        Only a sustained outage or recovery changes the state.  A single lost
-        packet or a short reconnect does not toggle the WiFi.
-        """
-        if not self._settings.auto:
-            return
-        now = self._clock()
-        if self._last_wired_ok is None or self._last_wired_ok != wired_ok:
-            self._last_wired_ok = wired_ok
-            self._wired_since = now
-            return
-        if wired_ok:
-            if self._settings.auto_triggered and self._wired_since is not None:
-                if now - self._wired_since >= self._up_grace:
+        """Enable the hotspot after a wired outage, disable after recovery."""
+        async with self._lock:
+            if not self._settings.auto:
+                return
+            now = self._clock()
+            if self._last_wired_ok is None or self._last_wired_ok != wired_ok:
+                self._last_wired_ok = wired_ok
+                self._wired_since = now
+                return
+            if wired_ok:
+                if self._settings.auto_triggered and self._wired_since is not None:
+                    if now - self._wired_since >= self._up_grace:
+                        try:
+                            await self._save_locked(
+                                {"enabled": False}, auto_triggered_override=False
+                            )
+                            LOGGER.info("Rettungs-WLAN automatisch deaktiviert")
+                        except Exception as exc:
+                            LOGGER.error("Rettungs-WLAN konnte nicht deaktiviert werden: %s", exc)
+                return
+            if not self._settings.enabled and self._wired_since is not None:
+                if now - self._wired_since >= self._down_grace:
                     try:
-                        await self.set_enabled(False)
-                        self._settings.auto_triggered = False
-                        self._store.save(self._settings)
-                        LOGGER.info("Rettungs-WLAN automatisch deaktiviert")
+                        await self._save_locked(
+                            {"enabled": True}, auto_triggered_override=True
+                        )
+                        LOGGER.warning("Rettungs-WLAN automatisch aktiviert (LAN fehlt)")
                     except Exception as exc:
-                        LOGGER.error("Rettungs-WLAN konnte nicht deaktiviert werden: %s", exc)
-            return
-        if not self._settings.enabled and self._wired_since is not None:
-            if now - self._wired_since >= self._down_grace:
-                try:
-                    self._settings.auto_triggered = True
-                    await self.save({"enabled": True})
-                    LOGGER.warning("Rettungs-WLAN automatisch aktiviert (LAN fehlt)")
-                except Exception as exc:
-                    LOGGER.error("Rettungs-WLAN konnte nicht aktiviert werden: %s", exc)
+                        LOGGER.error("Rettungs-WLAN konnte nicht aktiviert werden: %s", exc)

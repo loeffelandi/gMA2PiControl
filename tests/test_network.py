@@ -893,3 +893,53 @@ async def test_wired_ok_is_false_on_emergency_address(tmp_path):
         address="192.168.178.21", subnet_mask="255.255.255.0"
     )
     assert await service.wired_ok() is True
+
+
+async def test_ntp_wall_clock_jump_does_not_rollback_monotonic_window(tmp_path):
+    from ma2pi.network import NetworkValidationError, PendingStore
+
+    backend = FakeBackend()
+    wall = [1_700_000_000.0]
+    mono = [100.0]
+
+    async def fake_sleep(delay: float) -> None:
+        await asyncio.sleep(0)
+
+    service = NetworkService(
+        backend,
+        PendingStore(tmp_path / "pending.json"),
+        clock=lambda: wall[0],
+        monotonic=lambda: mono[0],
+        sleep=fake_sleep,
+        confirm_timeout=180.0,
+        activation_delay=0.0,
+    )
+    # Loopback DNS rejected
+    with pytest.raises(NetworkValidationError, match="DNS"):
+        await service.validate(
+            {
+                "mode": "static",
+                "address": "192.168.10.50",
+                "subnet_mask": "255.255.255.0",
+                "dns": ["127.0.0.1"],
+            }
+        )
+
+    await service.apply(
+        {
+            "mode": "static",
+            "address": "192.168.10.50",
+            "subnet_mask": "255.255.255.0",
+        }
+    )
+    assert service._apply_task is not None
+    await service._apply_task
+    assert service.pending is not None
+
+    # Simulate Raspberry Pi NTP jumping wall clock forward by 5 hours while only
+    # 5 monotonic seconds elapsed -> confirm() MUST still succeed!
+    wall[0] += 5 * 3600.0
+    mono[0] += 5.0
+    res = await service.confirm(local_ip="192.168.10.50")
+    assert res["last_result"]["status"] == "confirmed"
+    await service.close()

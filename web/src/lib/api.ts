@@ -7,6 +7,7 @@ export interface ApiErrorPayload {
   error: string;
   detail?: string;
   field?: string;
+  retry_after?: number;
 }
 
 export class ApiError extends Error {
@@ -14,14 +15,22 @@ export class ApiError extends Error {
   readonly code: string;
   readonly detail: string;
   readonly field?: string;
+  readonly retryAfter?: number;
 
-  constructor(status: number, code: string, detail = '', field?: string) {
+  constructor(
+    status: number,
+    code: string,
+    detail = '',
+    field?: string,
+    retryAfter?: number,
+  ) {
     super(detail ? `${code}: ${detail}` : code);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.detail = detail;
     this.field = field;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -249,6 +258,9 @@ export interface DeviceLearnStatus {
   paused?: boolean;
   error?: string | null;
   elapsed?: number;
+  cancelled?: boolean;
+  saved?: boolean;
+  abandoned?: boolean;
 }
 
 export interface BackupEntry {
@@ -279,14 +291,17 @@ export interface LearnResult {
 export interface ApiClientOptions {
   baseUrl?: string;
   fetchImpl?: typeof fetch;
+  onUnauthorized?: (() => void) | null;
 }
 
 export class ApiClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  onUnauthorized: (() => void) | null;
 
   constructor(options: ApiClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? '').replace(/\/$/, '');
+    this.onUnauthorized = options.onUnauthorized ?? null;
     const impl = options.fetchImpl ?? fetch;
     // Bind explicitly: calling a stored fetch as a method sets `this` to the
     // client and Chrome rejects it with "Illegal invocation".
@@ -331,11 +346,31 @@ export class ApiClient {
 
     if (!response.ok) {
       const failure = (payload ?? {}) as Partial<ApiErrorPayload>;
+      const headerRetry = response.headers?.get?.('Retry-After');
+      const parsedHeader =
+        headerRetry !== null && headerRetry !== undefined && headerRetry !== ''
+          ? Number(headerRetry)
+          : undefined;
+      const retryAfter =
+        typeof failure.retry_after === 'number' && Number.isFinite(failure.retry_after)
+          ? failure.retry_after
+          : parsedHeader !== undefined && Number.isFinite(parsedHeader)
+            ? parsedHeader
+            : undefined;
+      const detail =
+        failure.detail ??
+        (response.status === 429 && failure.error === 'pin_locked' && retryAfter !== undefined
+          ? `Zu viele Fehlversuche – bitte ${retryAfter} s warten`
+          : response.statusText);
+      if (response.status === 401 && path !== '/api/auth/login') {
+        this.onUnauthorized?.();
+      }
       throw new ApiError(
         response.status,
         failure.error ?? 'http_error',
-        failure.detail ?? response.statusText,
+        detail,
         failure.field,
+        retryAfter,
       );
     }
     return payload as T;

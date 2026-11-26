@@ -179,5 +179,18 @@ async def test_recovery_api_roundtrip(make_config, tmp_path):
         )
         assert invalid.status == 422
         assert (await invalid.json())["field"] == "password"
+
+        # Multi-byte SSID > 32 UTF-8 bytes (< 32 chars) rejected with field='ssid'
+        multibyte = await client.put(
+            "/api/recovery", json={"ssid": "ä" * 20}, headers=HEADERS
+        )
+        assert multibyte.status == 422
+        assert (await multibyte.json())["field"] == "ssid"
+
+        # Non-bool 'enabled' string rejected
+        bad_bool = await client.put(
+            "/api/recovery", json={"enabled": "false"}, headers=HEADERS
+        )
+        assert bad_bool.status == 422
     finally:
         await client.close()

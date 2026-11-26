@@ -767,3 +767,84 @@ def test_stalled_device_does_not_hold_back_another_device(config):
     # The slow device stalled after 2 s of unconsumed bytes and stopped there.
     assert "slow" in feedback._stalled
     assert by_device.get("slow", 0) < 8
+
+
+def test_replug_onto_same_path_with_new_generation_resets_only_that_device(config):
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    midi.open_devices = {"midicraft-enc": "/dev/snd/midiC4D0", "other": "/dev/snd/midiC5D0"}
+    midi.open_generations = {"midicraft-enc": 1, "other": 1}
+    feedback = ExecutorFeedback(config, FakeClient([]), midi, clock=clock)
+    feedback._sync_devices()
+    feedback._stalled.add("midicraft-enc")
+    feedback._last[("midicraft-enc", 65)] = 16
+    feedback._last[("other", 10)] = 99
+
+    # Replug onto the exact same /dev/snd/midiC4D0 node bumps generation 1 -> 2
+    midi.open_generations = {"midicraft-enc": 2, "other": 1}
+    feedback._sync_devices()
+    assert "midicraft-enc" not in feedback._stalled
+    assert ("midicraft-enc", 65) not in feedback._last
+    assert feedback._last[("other", 10)] == 99
+
+
+def test_continuous_draining_updates_do_not_false_stall(config):
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(config, FakeClient([]), midi, clock=clock)
+    block = RequestBlock("current", 0, 5, 2, 2)
+
+    # Simulate 3 seconds of continuous chase where after each send pending=6,
+    # and before the next send 3 bytes were consumed (pending=3).
+    running = False
+    for _ in range(150):
+        running = not running
+        midi.pending["midicraft-enc"] = 3
+        feedback._apply(_running_snapshot(running), block)
+        orig_send = midi.send
+
+        def send_and_bump(dev, data):
+            ok = orig_send(dev, data)
+            midi.pending[dev] = 6
+            return ok
+
+        midi.send = send_and_bump  # type: ignore[method-assign]
+        feedback.pump()
+        midi.send = orig_send  # type: ignore[method-assign]
+        clock.now += 0.025
+
+    assert "midicraft-enc" not in feedback._stalled
+
+
+def test_bank_channel_and_empty_page_turn_leds_off(make_config):
+    def mutate(data):
+        data["profiles"]["midicraft-enc"]["banks"][1]["notes"] = {"65": "mc_row1_1"}
+        data["mapping"].setdefault("device_banks", {})["midicraft-enc"] = {"bank_size": 5}
+
+    cfg = make_config(mutate)
+    targets, _ = build_feedback_targets(cfg)
+    ch2 = [t for t in targets if t.channel == 2 and t.note == 65]
+    assert len(ch2) == 1
+    assert ch2[0].executor == 6  # Bank 2 offset: 1 + 5
+
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(cfg, FakeClient([]), midi, clock=clock)
+    block = RequestBlock("current", 0, 10, 2, 2)
+    snap_on = parse_playbacks(
+        playbacks_payload(1, 2, [{"iExec": 5, "isRun": True, "bC": "#ff0000"}])
+    )
+    assert snap_on is not None
+    feedback._apply(snap_on, block)
+    drain(feedback, clock)
+    assert any(frame == bytes((0x91, 65, 16)) for _, frame in midi.sent)
+
+    # Empty page (unassigned executors with no `isRun`) turns lit LEDs off!
+    midi.sent.clear()
+    snap_empty = parse_playbacks(
+        playbacks_payload(2, 2, [{"iExec": i} for i in range(10)])
+    )
+    assert snap_empty is not None
+    feedback._apply(snap_empty, block)
+    drain(feedback, clock)
+    assert any(frame == bytes((0x91, 65, 0)) for _, frame in midi.sent)

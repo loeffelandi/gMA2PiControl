@@ -148,4 +148,54 @@ describe('ApiClient', () => {
 
     await expect(client.status()).rejects.toBeInstanceOf(ApiError);
   });
+
+  it('invokes onUnauthorized on 401 except for /api/auth/login', async () => {
+    const onUnauthorized = vi.fn();
+    const fetchImpl = vi.fn().mockResolvedValueOnce(
+      response({ error: 'pin_invalid', detail: 'PIN falsch' }, 401),
+    );
+    const client = new ApiClient({ fetchImpl, onUnauthorized });
+
+    await expect(client.login('0000')).rejects.toMatchObject({
+      status: 401,
+      code: 'pin_invalid',
+    });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+
+    fetchImpl.mockResolvedValueOnce(
+      response({ error: 'pin_required', detail: 'PIN erforderlich' }, 401),
+    );
+    await expect(client.status()).rejects.toMatchObject({
+      status: 401,
+      code: 'pin_required',
+    });
+    expect(onUnauthorized).toHaveBeenCalledOnce();
+  });
+
+  it('parses retry_after on 429 pin_locked responses', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: 'pin_locked',
+          detail: 'Zu viele Fehlversuche – bitte 15 s warten',
+          retry_after: 15,
+        }),
+        {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': '15',
+          },
+        },
+      ),
+    );
+    const client = new ApiClient({ fetchImpl });
+
+    await expect(client.login('0000')).rejects.toMatchObject({
+      status: 429,
+      code: 'pin_locked',
+      detail: 'Zu viele Fehlversuche – bitte 15 s warten',
+      retryAfter: 15,
+    });
+  });
 });

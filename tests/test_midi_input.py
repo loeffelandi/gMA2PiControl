@@ -716,3 +716,71 @@ async def test_manager_stop_does_not_wait_for_a_backed_up_device(monkeypatch):
     assert time.monotonic() - started < 1.0
     assert manager._open == {}
     del config
+
+
+def test_real_handle_on_readable_detaches_reader_immediately_on_oserror(monkeypatch):
+    from ma2pi import midi_input
+
+    handle = _real_handle(midi_input)
+    handle._reader_removed = False
+    handle._queue = asyncio.Queue()
+    removed: list[int] = []
+
+    class DummyLoop:
+        def remove_reader(self, fd: int) -> None:
+            removed.append(fd)
+
+    handle._loop = DummyLoop()
+
+    def broken_read(fd: int, size: int) -> bytes:
+        raise OSError(19, "No such device")
+
+    monkeypatch.setattr(midi_input.os, "read", broken_read)
+    handle._on_readable()
+    assert removed == [9]
+    assert isinstance(handle._queue.get_nowait(), OSError)
+
+
+def test_real_handle_refuses_partial_frame_when_buffer_nearly_full(monkeypatch):
+    from ma2pi import midi_input
+
+    handle = _real_handle(midi_input, out_size=4096)
+    monkeypatch.setattr(midi_input, "rawmidi_output_free", lambda fd: 2)
+    monkeypatch.setattr(
+        midi_input.os,
+        "write",
+        lambda fd, data: (_ for _ in ()).throw(AssertionError("must not split 3-byte frame")),
+    )
+    assert handle.write(b"\x90\x41\x7f") is False
+
+
+def test_rawmidi_output_free_falls_back_to_status64(monkeypatch):
+    from ma2pi import midi_input
+
+    monkeypatch.setattr(midi_input, "_RAWMIDI_IOCTL_STATUS", 0xC0205720)
+    monkeypatch.setattr(midi_input, "_RAWMIDI_IOCTL_STATUS64", 0xC0305720)
+
+    def fake_ioctl(fd, request, buffer, mutate):
+        if request == 0xC0205720:
+            raise OSError(25, "Inappropriate ioctl")
+        s64 = midi_input._RawmidiStatus64.from_buffer(buffer)
+        s64.avail = 3072
+        return 0
+
+    monkeypatch.setattr(midi_input.fcntl, "ioctl", fake_ioctl)
+    assert midi_input.rawmidi_output_free(9) == 3072
+
+
+def test_select_midi_devices_assigns_distinct_nodes(make_config):
+    from ma2pi.midi_input import select_midi_devices
+
+    def mutate(data):
+        dev_name = next(k for k, v in data["devices"].items() if v["profile"] == "midicraft-enc")
+        data["devices"]["midicraft_two"] = dict(data["devices"][dev_name])
+
+    cfg = make_config(mutate)
+    m1 = midicraft_info("/dev/snd/midiC3D0")
+    m2 = midicraft_info("/dev/snd/midiC4D0")
+    selected = select_midi_devices(cfg, [m1, m2])
+    paths = sorted(info.path for info in selected.values())
+    assert paths == ["/dev/snd/midiC3D0", "/dev/snd/midiC4D0"]

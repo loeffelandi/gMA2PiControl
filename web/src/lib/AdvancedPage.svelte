@@ -3,7 +3,13 @@
 
   import { ApiError, type ApiClient } from './api';
 
-  let { api }: { api: ApiClient } = $props();
+  let {
+    api,
+    onAuthChange,
+  }: {
+    api: ApiClient;
+    onAuthChange?: () => void;
+  } = $props();
 
   let loading = $state(true);
   let busy = $state(false);
@@ -12,9 +18,9 @@
   let rate = $state(25);
   let burst = $state(10);
   let level = $state('INFO');
-  let pinEnabled = $state(true);
+  let pinEnabled = $state(false);
   let pin = $state('');
-  let pinSet = $state(true);
+  let pinSet = $state(false);
 
   function errorText(error: unknown): string {
     if (error instanceof ApiError) return error.detail || error.message;
@@ -31,8 +37,8 @@
       rate = Number(rateLimit.messages_per_second ?? 25);
       burst = Number(rateLimit.burst ?? 10);
       level = String(logging.level ?? 'INFO');
-      pinEnabled = Boolean(web.pin_enabled ?? true);
-      pinSet = Boolean(web.pin_set ?? true);
+      pinEnabled = Boolean(web.pin_enabled ?? false);
+      pinSet = Boolean(web.pin_set ?? false);
     } catch (error) {
       message = { ok: false, text: errorText(error) };
     } finally {
@@ -60,6 +66,7 @@
         pin = '';
       }
       message = { ok: true, text: 'Erweiterte Einstellungen gespeichert.' };
+      onAuthChange?.();
     } catch (error) {
       message = { ok: false, text: errorText(error) };
     } finally {
@@ -96,7 +103,7 @@
 
       <h2>Rate &amp; Logging</h2>
       <label for="rate">Frames pro Sekunde</label>
-      <input id="rate" type="number" min="1" bind:value={rate} />
+      <input id="rate" type="number" min="5" max="40" bind:value={rate} />
 
       <label for="burst">Burst</label>
       <input id="burst" type="number" min="1" bind:value={burst} />
@@ -107,6 +114,7 @@
         <option value="INFO">INFO</option>
         <option value="WARNING">WARNING</option>
         <option value="ERROR">ERROR</option>
+        <option value="CRITICAL">CRITICAL</option>
       </select>
 
       <div class="actions">
@@ -115,7 +123,7 @@
     </form>
 
     {#if message}
-      <p class:error={!message.ok} class="message" role={message.ok ? 'status' : 'alert'}>
+      <p class={['message', { error: !message.ok }]} role={message.ok ? 'status' : 'alert'}>
         {message.text}
       </p>
     {/if}

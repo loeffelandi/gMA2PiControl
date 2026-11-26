@@ -153,3 +153,57 @@ async def test_engine_frozen_discards_input_and_flushes(tmp_path):
     engine.unfreeze()
     engine.handle(_key("fix", 1))
     assert sink.actions == [("press", "FIX")]
+
+
+async def test_failed_credential_test_does_not_freeze_live_input(tmp_path):
+    import asyncio
+    from ma2pi.ma2_client import LoginError
+
+    entered = asyncio.Event()
+    proceed = asyncio.Event()
+
+    async def slow_failing_tester(_candidate, _password):
+        entered.set()
+        await proceed.wait()
+        raise LoginError("onPC nicht erreichbar")
+
+    paths = ConfigPaths(state_dir=tmp_path / "state", etc_dir=tmp_path / "etc")
+    paths.state_dir.mkdir(parents=True)
+    shutil.copy(ROOT / "config.toml", paths.config)
+    config = load_config(paths.config)
+    sink = Sink()
+    engine = MappingEngine(config, sink)
+    store = ConfigStore(config, engine, paths, tester=slow_failing_tester)
+
+    apply_task = asyncio.create_task(store.apply({"ma2": {"host": "10.99.99.99"}}))
+    await entered.wait()
+
+    # Live inputs must still work while the credential check is in flight!
+    assert engine.frozen is False
+    engine.handle(_key("fix", 1))
+    engine.handle(_key("fix", 0))
+    assert sink.actions == [("press", "FIX"), ("release", "FIX")]
+
+    proceed.set()
+    with pytest.raises(LoginError):
+        await apply_task
+    assert store.generation == 0
+
+
+async def test_password_rolls_back_when_commit_prepared_fails(tmp_path, monkeypatch):
+    import asyncio
+    import ma2pi.runtime as rt
+
+    paths, store, _, _ = _setup(tmp_path)
+    paths.password.write_text("old-pass\n", encoding="utf-8")
+
+    def boom(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(rt, "commit_prepared", boom)
+    store._tester = lambda _c, _p: asyncio.sleep(0)
+
+    with pytest.raises(OSError, match="disk full"):
+        await store.apply({"logging": {"level": "DEBUG"}}, password="new-pass")
+
+    assert paths.password.read_text(encoding="utf-8") == "old-pass\n"

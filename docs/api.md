@@ -103,8 +103,8 @@ Mismatch einen Hinweis. `ui` ist ein Build-Stempel aus `web/dist/index.html`.
     },
     "log": [
       { "seq": 210, "ts": 1790000000.91, "direction": "tx",
-        "device": "ma2", "kind": "playbacksRequest",
-        "summary": "playbacksRequest" }
+        "device": "ma2", "kind": "playbackButton",
+        "summary": "playbackButton · page current · executor 1 · button 1" }
     ]
   }
 }
@@ -130,6 +130,7 @@ Beim Verbinden wird ein `status`-Ereignis gesendet. Danach folgen:
 | `status` | Laufzeitstatus, etwa einmal pro Sekunde; enthält den vollständigen Aktivitäts-Ring als Resync |
 | `activity` | Neue RX-/TX-Aktivität und aktuelle Zähler, gebündelt höchstens alle 250 ms; höchstens 100 Einträge pro Event |
 | `learn` | Learn-Sitzung gestartet, erfasst, abgebrochen oder abgelaufen |
+| `device_learn` | Geführte Bank-Learn-Sitzung gestartet, fortgeschritten, pausiert, abgebrochen oder gespeichert |
 | `config` | Konfiguration wurde angewendet (`generation`) |
 | `backup` | Backup wurde angelegt |
 | `backup_restored` | Backup wurde wiederhergestellt (`id`, `generation`) |
@@ -253,11 +254,16 @@ Verbindung geöffnet wurde.
   "vendor_product": "046a:0000",
   "name_contains": "Cherry",
   "detected": { "path": "/dev/input/event0", "readable": true },
+  "bank_size": 5,
+  "layout": { "columns": 18, "rows": [] },
   "controls": {
     "keys": [ { "code": "KEY_HOME", "control": "fix" } ],
     "notes": [],
+    "values": [],
     "encoders": [],
     "midi_encoders": [],
+    "inventory": [ { "id": "fix", "kind": "button" } ],
+    "banks": [],
     "logical": ["fix"]
   }
 } ] }
@@ -284,6 +290,14 @@ Mapping-Frames gesendet.
 ```
 
 Ohne aktive Sitzung ist `cancelled` `false`, der Status bleibt `200`.
+
+### `GET /api/device-learn` & `POST /api/device-learn/{start,skip,cancel,finish}`
+
+Geführter Lernablauf zum Binden physischer MIDI-Noten an das Control-Inventar
+einer Gerätebank (`device`, `bank`). `start` akzeptiert optional `control` zum
+gezielten Neulernen eines einzelnen Controls; `skip` überspringt das aktuelle
+Control; `cancel` verwirft noch nicht gespeicherte Noten; `finish` schreibt die
+erfassten Noten atomar in `profiles.<id>.banks`.
 
 ### `GET /api/backups`
 

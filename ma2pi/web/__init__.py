@@ -9,11 +9,18 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import hashlib
 import hmac
+import ipaddress
 import logging
+import math
+import os
 import secrets
+import socket
+import time
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from aiohttp import web
 
@@ -52,6 +59,108 @@ WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 #: Default location of the built SPA, relative to the repository root.
 DEFAULT_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
 
+
+def _resolve_default_dist() -> Path:
+    """Locate ``web/dist`` across repo checkouts and installed wheel layouts."""
+
+    env = os.environ.get("MA2PI_WEB_DIST")
+    candidates = [
+        Path(env) if env else None,
+        DEFAULT_DIST,
+        Path.cwd() / "web" / "dist",
+        Path("/opt/ma2pi/app/web/dist"),
+    ]
+    for candidate in candidates:
+        if candidate is not None and (candidate / "index.html").is_file():
+            return candidate
+    return DEFAULT_DIST
+
+
+SESSION_TTL = 12 * 3600.0
+MAX_FREE_FAILURES = 5
+INITIAL_LOCKOUT = 15.0
+MAX_LOCKOUT = 300.0
+
+
+class PinSessions:
+    """Server-side PIN sessions with fixed 12 h TTL and exponential lockout."""
+
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._lock = asyncio.Lock()
+        self._tokens: dict[str, float] = {}
+        self._failures = 0
+        self._locked_until = 0.0
+        self._last_lockout = 0.0
+
+    def _prune(self, now: float) -> None:
+        expired = [tok for tok, exp in self._tokens.items() if exp <= now]
+        for tok in expired:
+            self._tokens.pop(tok, None)
+
+    def issue(self) -> str:
+        now = self._clock()
+        self._prune(now)
+        token = secrets.token_urlsafe(32)
+        self._tokens[token] = now + SESSION_TTL
+        return token
+
+    def valid(self, token: str | None) -> bool:
+        if not token:
+            return False
+        now = self._clock()
+        self._prune(now)
+        return token in self._tokens
+
+    def revoke(self, token: str | None) -> None:
+        if token:
+            self._tokens.pop(token, None)
+
+    def clear(self) -> None:
+        self._tokens.clear()
+        self._failures = 0
+        self._locked_until = 0.0
+        self._last_lockout = 0.0
+
+    async def authenticate(
+        self, supplied: str, expected: str
+    ) -> tuple[str | None, int | None]:
+        """Verify ``supplied`` against ``expected`` under a single lock.
+
+        Returns ``(token, None)`` on success, ``(None, None)`` on ordinary
+        mismatch, or ``(None, retry_after_seconds)`` when locked out.
+        Attempts during an active lockout do not advance the failure counter.
+        """
+
+        async with self._lock:
+            now = self._clock()
+            self._prune(now)
+            if now < self._locked_until:
+                return None, max(1, math.ceil(self._locked_until - now))
+
+            supplied_digest = hashlib.sha256(supplied.encode("utf-8")).digest()
+            expected_digest = hashlib.sha256(expected.encode("utf-8")).digest()
+            if hmac.compare_digest(supplied_digest, expected_digest):
+                self._failures = 0
+                self._locked_until = 0.0
+                self._last_lockout = 0.0
+                token = secrets.token_urlsafe(32)
+                self._tokens[token] = now + SESSION_TTL
+                return token, None
+
+            self._failures += 1
+            if self._failures >= MAX_FREE_FAILURES:
+                duration = (
+                    INITIAL_LOCKOUT
+                    if self._last_lockout == 0.0
+                    else min(MAX_LOCKOUT, self._last_lockout * 2.0)
+                )
+                self._last_lockout = duration
+                self._locked_until = now + duration
+                return None, max(1, math.ceil(duration))
+            return None, None
+
+
 CONFIG_KEY: web.AppKey[AppConfig] = web.AppKey("config", AppConfig)
 CONFIG_STORE_KEY: web.AppKey[ConfigStore] = web.AppKey("config_store", ConfigStore)
 LEARN_KEY: web.AppKey[LearnManager] = web.AppKey("learn", LearnManager)
@@ -60,7 +169,7 @@ NETWORK_KEY: web.AppKey[NetworkService] = web.AppKey("network", NetworkService)
 RECOVERY_KEY: web.AppKey[RecoveryService] = web.AppKey("recovery", RecoveryService)
 DIST_KEY: web.AppKey[Path] = web.AppKey("dist_dir", Path)
 BUS_KEY: web.AppKey[EventBus] = web.AppKey("bus", EventBus)
-PIN_TOKENS_KEY: web.AppKey[set[str]] = web.AppKey("pin_tokens", set[str])
+PIN_SESSIONS_KEY: web.AppKey[PinSessions] = web.AppKey("pin_sessions", PinSessions)
 
 PIN_COOKIE = "ma2pi_pin"
 PUBLIC_API_PATHS = frozenset(
@@ -71,6 +180,77 @@ PUBLIC_API_PATHS = frozenset(
 def _current_config(app: web.Application) -> AppConfig:
     store = app.get(CONFIG_STORE_KEY)
     return store.config if store is not None else app[CONFIG_KEY]
+
+
+def _extract_host(raw_host: str) -> str:
+    value = raw_host.strip()
+    if not value:
+        return ""
+    if value.startswith("["):
+        end = value.find("]")
+        return value[1:end] if end > 0 else value
+    if ":" in value:
+        host_part, _, _ = value.rpartition(":")
+        return host_part
+    return value
+
+
+def _is_allowed_host(raw_host: str) -> bool:
+    host = _extract_host(raw_host).rstrip(".").lower()
+    if not host or host in {"localhost", "testserver"}:
+        return True
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    if host.endswith(".local"):
+        return True
+    try:
+        local_name = socket.gethostname().rstrip(".").lower()
+    except Exception:
+        local_name = ""
+    if local_name:
+        short_name = local_name.split(".", 1)[0]
+        if host in {local_name, short_name}:
+            return True
+    return False
+
+
+def _origin_matches_host(origin: str, request_host: str) -> bool:
+    try:
+        parsed = urlsplit(origin)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+    origin_netloc = parsed.netloc.lower()
+    req_netloc = request_host.strip().lower()
+    if origin_netloc == req_netloc:
+        return True
+    # Allow default-port omission (e.g. Origin http://10.0.0.1 vs Host 10.0.0.1:80).
+    default_port = 80 if parsed.scheme == "http" else 443
+    if parsed.port is None and f"{origin_netloc}:{default_port}" == req_netloc:
+        return True
+    return False
+
+
+@web.middleware
+async def host_origin_guard(
+    request: web.Request, handler: Callable[[web.Request], Any]
+) -> web.StreamResponse:
+    """Reject external DNS-rebinding Host headers and foreign Origins."""
+
+    raw_host = request.headers.get("Host", "")
+    if raw_host and not _is_allowed_host(raw_host):
+        return _json_error(403, "forbidden_host", "Unzulässiger Host-Header")
+    origin = request.headers.get("Origin")
+    if origin and (
+        request.method in WRITE_METHODS or request.path == "/api/events"
+    ):
+        if not _origin_matches_host(origin, raw_host or request.host):
+            return _json_error(403, "forbidden_origin", "Unzulässiger Origin-Header")
+    return await handler(request)
 
 
 @web.middleware
@@ -85,7 +265,7 @@ async def pin_guard(
     if not request.path.startswith("/api/") or request.path in PUBLIC_API_PATHS:
         return await handler(request)
     token = request.cookies.get(PIN_COOKIE)
-    if token and token in request.app[PIN_TOKENS_KEY]:
+    if request.app[PIN_SESSIONS_KEY].valid(token):
         return await handler(request)
     return _json_error(401, "pin_required", "PIN erforderlich")
 
@@ -214,16 +394,20 @@ def create_app(
     device_learn_manager: Any | None = None,
     network_service: NetworkService | None = None,
     recovery_service: RecoveryService | None = None,
+    pin_clock: Callable[[], float] = time.monotonic,
+    event_queue_size: int | None = None,
 ) -> web.Application:
     """Build the aiohttp application for the configuration UI."""
-    dist = Path(dist_dir) if dist_dir is not None else DEFAULT_DIST
+    dist = Path(dist_dir) if dist_dir is not None else _resolve_default_dist()
 
-    app = web.Application(middlewares=[no_cors, pin_guard, request_guard])
-    bus = EventBus()
+    app = web.Application(
+        middlewares=[no_cors, host_origin_guard, pin_guard, request_guard]
+    )
+    bus = EventBus(queue_size=event_queue_size) if event_queue_size else EventBus()
     app[CONFIG_KEY] = config
     app[DIST_KEY] = dist
     app[BUS_KEY] = bus
-    app[PIN_TOKENS_KEY] = set()
+    app[PIN_SESSIONS_KEY] = PinSessions(clock=pin_clock)
     if config_store is not None:
         app[CONFIG_STORE_KEY] = config_store
     if learn_manager is not None:
@@ -244,7 +428,7 @@ def create_app(
         token = request.cookies.get(PIN_COOKIE)
         authenticated = (
             not current.web.pin_enabled
-            or bool(token and token in request.app[PIN_TOKENS_KEY])
+            or request.app[PIN_SESSIONS_KEY].valid(token)
         )
         return web.json_response(
             {
@@ -261,12 +445,26 @@ def create_app(
         current = _current_config(request.app)
         if not current.web.pin_enabled:
             return web.json_response({"ok": True})
-        supplied = str(body.get("pin", ""))
-        if not hmac.compare_digest(supplied, current.web.pin):
-            await asyncio.sleep(0.2)
+        raw_pin = body.get("pin", "")
+        if not isinstance(raw_pin, (str, int)) or isinstance(raw_pin, bool):
+            return _json_error(400, "invalid_json", "PIN muss eine Zeichenkette sein")
+        supplied = str(raw_pin)
+        token, retry_after = await request.app[PIN_SESSIONS_KEY].authenticate(
+            supplied, current.web.pin
+        )
+        if retry_after is not None:
+            return web.json_response(
+                {
+                    "error": "pin_locked",
+                    "detail": f"Zu viele Fehlversuche – bitte {retry_after} s warten",
+                    "retry_after": retry_after,
+                },
+                status=429,
+                headers={"Retry-After": str(retry_after)},
+            )
+        if token is None:
+            await asyncio.sleep(0.05)
             return _json_error(401, "pin_invalid", "PIN falsch")
-        token = secrets.token_urlsafe(32)
-        request.app[PIN_TOKENS_KEY].add(token)
         response = web.json_response({"ok": True})
         response.set_cookie(
             PIN_COOKIE,
@@ -274,14 +472,15 @@ def create_app(
             httponly=True,
             samesite="Strict",
             path="/",
-            max_age=12 * 3600,
+            max_age=int(SESSION_TTL),
         )
         return response
 
     async def auth_logout(request: web.Request) -> web.Response:
         token = request.cookies.get(PIN_COOKIE)
-        if token:
-            request.app[PIN_TOKENS_KEY].discard(token)
+        request.app[PIN_SESSIONS_KEY].revoke(token)
+        if _current_config(request.app).web.pin_enabled:
+            bus.close_all()
         response = web.json_response({"ok": True})
         response.del_cookie(PIN_COOKIE, path="/")
         return response
@@ -313,6 +512,16 @@ def create_app(
             return _json_error(503, "config_store_unavailable", "Kein Config-Store aktiv")
         return web.json_response(redacted_config(store.config))
 
+    def _sanitize_web_config_patch(body: dict[str, Any]) -> dict[str, Any]:
+        cleaned = dict(body)
+        ma2 = cleaned.get("ma2")
+        if isinstance(ma2, dict):
+            ma2 = dict(ma2)
+            ma2.pop("password_file", None)
+            ma2.pop("password_env", None)
+            cleaned["ma2"] = ma2
+        return cleaned
+
     async def put_config(request: web.Request) -> web.Response:
         store = request.app.get(CONFIG_STORE_KEY)
         if store is None:
@@ -324,8 +533,9 @@ def create_app(
         password = ma2.get("password") if isinstance(ma2, dict) else None
         if password is not None and not isinstance(password, str):
             return _json_error(422, "invalid_request", "password muss eine Zeichenkette sein")
+        sanitized = _sanitize_web_config_patch(body)
         try:
-            config = await store.apply(body, password=password)
+            config = await store.apply(sanitized, password=password)
         except ApplyBusy as exc:
             return _json_error(409, "apply_busy", str(exc))
         except Exception as exc:
@@ -340,18 +550,18 @@ def create_app(
         if isinstance(web_patch, dict) and (
             "pin" in web_patch or "pin_enabled" in web_patch
         ):
-            tokens = request.app[PIN_TOKENS_KEY]
-            tokens.clear()
+            sessions = request.app[PIN_SESSIONS_KEY]
+            sessions.clear()
+            bus.close_all()
             if config.web.pin_enabled:
-                token = secrets.token_urlsafe(32)
-                tokens.add(token)
+                token = sessions.issue()
                 response.set_cookie(
                     PIN_COOKIE,
                     token,
                     httponly=True,
                     samesite="Strict",
                     path="/",
-                    max_age=12 * 3600,
+                    max_age=int(SESSION_TTL),
                 )
         return response
 
@@ -365,7 +575,7 @@ def create_app(
         ma2 = body.get("ma2")
         password = ma2.get("password") if isinstance(ma2, dict) else None
         try:
-            store.validate(body, password=password)
+            store.validate(_sanitize_web_config_patch(body), password=password)
         except Exception as exc:
             return _apply_error(exc)
         return web.json_response({"valid": True})
@@ -394,10 +604,9 @@ def create_app(
         learn = request.app.get(LEARN_KEY)
         if learn is None:
             return _json_error(503, "learn_unavailable", "Learn-Modus nicht aktiv")
-        try:
-            body = await request.json()
-        except Exception:
-            return _json_error(400, "invalid_json", "JSON-Körper erwartet")
+        body = await _json_body(request)
+        if body is None:
+            return _json_error(400, "invalid_json", "JSON-Objekt erwartet")
         try:
             result = learn.start(body.get("kind"), device=body.get("device"))
         except LearnBusy as exc:
@@ -471,78 +680,85 @@ def create_app(
         if manager is None:
             return _json_error(503, "device_learn_unavailable", "Learn-Modus nicht aktiv")
         result = manager.cancel()
+        if result is not None:
+            bus.publish({"type": "device_learn", "data": {"active": False, "cancelled": True}})
         return web.json_response({"cancelled": result is not None, "learn": result})
+
+    device_learn_lock = asyncio.Lock()
 
     async def device_learn_finish(request: web.Request) -> web.Response:
         manager = request.app.get(DEVICE_LEARN_KEY)
         if manager is None:
             return _json_error(503, "device_learn_unavailable", "Learn-Modus nicht aktiv")
-        try:
-            device, bank, captured = manager.peek()
-        except DeviceLearnError as exc:
-            return _json_error(409, "device_learn_inactive", str(exc))
-        if not captured:
+        async with device_learn_lock:
+            try:
+                device, bank, captured = manager.peek()
+            except DeviceLearnError as exc:
+                return _json_error(409, "device_learn_inactive", str(exc))
+            if not captured:
+                manager.clear()
+                bus.publish({"type": "device_learn", "data": {"active": False}})
+                return web.json_response({"saved": False, "device": device, "bank": bank})
+            store = request.app.get(CONFIG_STORE_KEY)
+            if store is None:
+                return _json_error(503, "config_store_unavailable", "Kein Config-Store aktiv")
+            config = store.config
+            try:
+                profile_name = config.devices[device].profile
+                profile = config.profiles[profile_name]
+            except KeyError:
+                manager.clear()
+                return _json_error(
+                    409, "device_learn_stale", f"Gerät {device!r} ist nicht mehr konfiguriert"
+                )
+            bank_profile = profile.bank(bank)
+            if bank_profile is not None:
+                for note, control in captured.items():
+                    for entry in profile.banks:
+                        if entry.channel != bank_profile.channel:
+                            continue
+                        existing = entry.notes.get(note)
+                        if existing is not None and existing != control:
+                            return _json_error(
+                                409,
+                                "device_learn_conflict",
+                                f"Note {note} ist inzwischen {existing} zugeordnet",
+                            )
+            banks = []
+            for entry in profile.banks:
+                notes = {str(note): control for note, control in entry.notes.items()}
+                if entry.number == bank:
+                    relearned = set(captured.values())
+                    notes = {
+                        note: control
+                        for note, control in notes.items()
+                        if control not in relearned
+                    }
+                    notes.update({str(note): control for note, control in captured.items()})
+                banks.append({"number": entry.number, "channel": entry.channel, "notes": notes})
+            patch = {"profiles": {profile_name: {"banks": banks}}}
+            try:
+                updated = await store.apply(patch)
+            except ApplyBusy as exc:
+                return _json_error(409, "apply_busy", str(exc))
+            except Exception as exc:
+                return _apply_error(exc)
+            manager.set_config(updated)
             manager.clear()
-            return web.json_response({"saved": False, "device": device, "bank": bank})
-        store = request.app.get(CONFIG_STORE_KEY)
-        if store is None:
-            return _json_error(503, "config_store_unavailable", "Kein Config-Store aktiv")
-        config = store.config
-        try:
-            profile_name = config.devices[device].profile
-            profile = config.profiles[profile_name]
-        except KeyError:
-            manager.clear()
-            return _json_error(
-                409, "device_learn_stale", f"Gerät {device!r} ist nicht mehr konfiguriert"
-            )
-        bank_profile = profile.bank(bank)
-        if bank_profile is not None:
-            for note, control in captured.items():
-                for entry in profile.banks:
-                    if entry.channel != bank_profile.channel:
-                        continue
-                    existing = entry.notes.get(note)
-                    if existing is not None and existing != control:
-                        return _json_error(
-                            409,
-                            "device_learn_conflict",
-                            f"Note {note} ist inzwischen {existing} zugeordnet",
-                        )
-        banks = []
-        for entry in profile.banks:
-            notes = {str(note): control for note, control in entry.notes.items()}
-            if entry.number == bank:
-                relearned = set(captured.values())
-                notes = {
-                    note: control
-                    for note, control in notes.items()
-                    if control not in relearned
+            bus.publish({"type": "device_learn", "data": {"active": False, "saved": True}})
+            bus.publish({"type": "config", "data": {"generation": store.generation}})
+            return web.json_response(
+                {
+                    "saved": True,
+                    "device": device,
+                    "bank": bank,
+                    "generation": store.generation,
+                    "notes": [
+                        {"note": note, "control": control}
+                        for note, control in sorted(captured.items())
+                    ],
                 }
-                notes.update({str(note): control for note, control in captured.items()})
-            banks.append({"number": entry.number, "channel": entry.channel, "notes": notes})
-        patch = {"profiles": {profile_name: {"banks": banks}}}
-        try:
-            updated = await store.apply(patch)
-        except ApplyBusy as exc:
-            return _json_error(409, "apply_busy", str(exc))
-        except Exception as exc:
-            return _apply_error(exc)
-        manager.set_config(updated)
-        manager.clear()
-        bus.publish({"type": "config", "data": {"generation": store.generation}})
-        return web.json_response(
-            {
-                "saved": True,
-                "device": device,
-                "bank": bank,
-                "generation": store.generation,
-                "notes": [
-                    {"note": note, "control": control}
-                    for note, control in sorted(captured.items())
-                ],
-            }
-        )
+            )
 
     async def backups(request: web.Request) -> web.Response:
         store = request.app.get(CONFIG_STORE_KEY)
@@ -566,6 +782,7 @@ def create_app(
         if store is None:
             return _json_error(503, "config_store_unavailable", "Kein Config-Store aktiv")
         backup_id = request.match_info["backup_id"]
+        old_pin = (store.config.web.pin_enabled, store.config.web.pin)
         try:
             restored = await store.restore(backup_id)
         except ApplyBusy as exc:
@@ -574,6 +791,9 @@ def create_app(
             return _json_error(422, "invalid_backup", str(exc))
         except (ConfigWriteError, OSError) as exc:
             return _json_error(500, "restore_failed", str(exc))
+        if (restored.web.pin_enabled, restored.web.pin) != old_pin:
+            request.app[PIN_SESSIONS_KEY].clear()
+            bus.close_all()
         bus.publish(
             {
                 "type": "backup_restored",

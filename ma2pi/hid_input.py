@@ -90,8 +90,13 @@ class DeviceSource(Protocol):
 
 
 class EvdevHandle:
-    def __init__(self, device: "evdev.InputDevice") -> None:
+    def __init__(
+        self,
+        device: "evdev.InputDevice",
+        abs_ranges: Mapping[str, tuple[int, int]] | None = None,
+    ) -> None:
         self._device = device
+        self._abs_ranges: dict[str, tuple[int, int]] = dict(abs_ranges or {})
 
     async def events(self) -> AsyncIterator[RawEvent]:
         assert ecodes is not None
@@ -104,8 +109,12 @@ class EvdevHandle:
                 elif event.type == ecodes.EV_ABS:
                     name = _name(ecodes.ABS, event.code)
                     if name:
-                        info = self._device.absinfo(event.code)
-                        yield RawEvent("abs", name, event.value, info.min, info.max)
+                        bounds = self._abs_ranges.get(name)
+                        if bounds is None:
+                            info = self._device.absinfo(event.code)
+                            bounds = (info.min, info.max)
+                            self._abs_ranges[name] = bounds
+                        yield RawEvent("abs", name, event.value, bounds[0], bounds[1])
                 elif event.type == ecodes.EV_REL:
                     name = _name(ecodes.REL, event.code)
                     if name:
@@ -193,7 +202,7 @@ class EvdevSource:
         if evdev is None:  # pragma: no cover
             raise RuntimeError("evdev ist nicht verfügbar")
         device = evdev.InputDevice(info.path)
-        return EvdevHandle(device)
+        return EvdevHandle(device, info.abs_ranges)
 
 
 def _name(table: Mapping[int, str], code: int) -> str | None:
@@ -226,17 +235,24 @@ def select_devices(
     """
 
     pool = list(devices)
+    claimed_paths: set[str] = set()
     selected: dict[str, DeviceInfo] = {}
     for name, device_config in config.devices.items():
         if device_config.backend != backend:
             continue
-        candidates = [info for info in pool if device_matches(device_config, info)]
+        candidates = [
+            info
+            for info in pool
+            if info.path not in claimed_paths and device_matches(device_config, info)
+        ]
         if not candidates:
             continue
         candidates.sort(
             key=lambda info: (-info.keyboard_score, -info.input_score, info.path)
         )
-        selected[name] = candidates[0]
+        chosen = candidates[0]
+        selected[name] = chosen
+        claimed_paths.add(chosen.path)
         for ignored in candidates[1:]:
             LOGGER.info(
                 "Ignoriere zusätzliches Interface %s (%s) für %s",
@@ -363,6 +379,7 @@ class HidManager:
         self.config = config
         self._unknown_codes.clear()
         self._missing_warned.clear()
+        self._decoders.clear()
 
     async def run(self, queue: "asyncio.Queue[InputEvent | DeviceLost]") -> None:
         try:
@@ -403,11 +420,14 @@ class HidManager:
 
                 device = self.config.devices[name]
                 profile = self.config.profiles[device.profile]
-                validate_profile(name, device, profile, info)
-
                 now = self._clock()
                 retry = self._retry.get(name)
                 if retry is not None and now < retry[0]:
+                    continue
+                try:
+                    validate_profile(name, device, profile, info)
+                except ProfileError as exc:
+                    self._schedule_retry(name, now, str(exc))
                     continue
                 try:
                     handle = await self._source.open(info)
@@ -507,6 +527,8 @@ class HidManager:
         queue: "asyncio.Queue[InputEvent | DeviceLost]",
         reason: str,
     ) -> None:
+        for key in [k for k in self._decoders if k[0] == name]:
+            self._decoders.pop(key, None)
         entry = self._open.pop(name, None)
         if entry is None:
             return

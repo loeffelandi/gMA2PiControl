@@ -991,3 +991,35 @@ def test_profile_led_feedback_frame_interval_is_read(make_config):
 
     cfg = make_config(mutate)
     assert cfg.profiles["midicraft-enc"].led_feedback.frame_interval_ms == 50
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_config_rejects_non_finite_floats(make_config, bad):
+    def mutate(data):
+        data["ma2"]["keepalive_interval"] = bad
+
+    with pytest.raises(ConfigError, match="endliche Zahl"):
+        make_config(mutate)
+
+
+def test_lua_hardkey_codes_required_for_device_bank_keys(make_config):
+    def mutate(data):
+        dev_name = next(
+            name
+            for name, dev in data["devices"].items()
+            if dev["profile"] == "midicraft-enc"
+        )
+        ctrl_id = next(
+            c["id"]
+            for c in data["profiles"]["midicraft-enc"]["controls"]
+            if c.get("kind", "button") == "button"
+        )
+        data["ma2"]["hardkey_transport"] = "lua"
+        data["hardkeys"].pop("MACRO", None)
+        banks = data["mapping"].setdefault("device_banks", {})
+        banks.setdefault(dev_name, {})["2"] = {
+            "keys": {ctrl_id: {"hardkey": "Macro"}}
+        }
+
+    with pytest.raises(ConfigError, match="hardkeys.MACRO"):
+        make_config(mutate)

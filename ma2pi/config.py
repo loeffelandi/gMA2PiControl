@@ -7,6 +7,7 @@ produce frames.
 
 from __future__ import annotations
 
+import math
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -151,6 +152,7 @@ class ControlProfile:
     id: str
     kind: str = "button"
     label: str | None = None
+    encoder_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,6 +185,7 @@ class DeviceLayout:
     profile: str
     columns: int
     rows: tuple[LayoutRow, ...] = ()
+    name: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +233,20 @@ class ProfileConfig:
         for enc in self.encoders:
             kinds.setdefault(f"encoder.{enc.id}", "relative-encoder")
         return kinds
+
+    @property
+    def relative_encoder_ids(self) -> dict[str, int]:
+        """Map control name -> integer encoder id for relative encoders."""
+
+        result: dict[str, int] = {}
+        for enc in self.encoders:
+            result[f"encoder.{enc.id}"] = enc.id
+        for enc in self.midi_encoders:
+            result[f"encoder.{enc.id}"] = enc.id
+        for ctrl in self.controls:
+            if ctrl.kind == "relative-encoder" and ctrl.encoder_id is not None:
+                result[ctrl.id] = ctrl.encoder_id
+        return result
 
     @property
     def control_names(self) -> set[str]:
@@ -444,7 +461,10 @@ def _int(value: Any, path: str) -> int:
 def _float(value: Any, path: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ConfigError(path, "muss eine Zahl sein")
-    return float(value)
+    result = float(value)
+    if not math.isfinite(result):
+        raise ConfigError(path, "muss eine endliche Zahl sein")
+    return result
 
 
 def _bool(value: Any, path: str) -> bool:
@@ -675,9 +695,12 @@ def _parse_led(raw: Any) -> LedSettings:
         raise ConfigError(f"{path}.note", "muss zwischen 1 und 127 liegen")
     try:
         attribute_color = parse_color(data.get("attribute_color", "red"))
-        screen_color = parse_color(data.get("screen_color", "green"))
     except ValueError as exc:
         raise ConfigError(f"{path}.attribute_color", str(exc)) from exc
+    try:
+        screen_color = parse_color(data.get("screen_color", "green"))
+    except ValueError as exc:
+        raise ConfigError(f"{path}.screen_color", str(exc)) from exc
     brightness = _int(data.get("brightness", 127), f"{path}.brightness")
     if not 0 <= brightness <= 127:
         raise ConfigError(f"{path}.brightness", "muss zwischen 0 und 127 liegen")
@@ -889,7 +912,9 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
         for index, raw_control in enumerate(controls_raw):
             control_path = f"{item_path}.controls[{index}]"
             control_item = _table(raw_control, control_path)
-            _reject_unknown(control_item, {"id", "kind", "label"}, control_path)
+            _reject_unknown(
+                control_item, {"id", "kind", "label", "encoder_id"}, control_path
+            )
             control_id = _string(
                 _require(control_item, "id", control_path), f"{control_path}.id"
             )
@@ -906,7 +931,25 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
             label = control_item.get("label")
             if label is not None:
                 label = _string(label, f"{control_path}.label", allow_empty=True)
-            controls.append(ControlProfile(control_id, kind, label))
+            ctrl_enc_id: int | None = None
+            if "encoder_id" in control_item:
+                if kind != "relative-encoder":
+                    raise ConfigError(
+                        f"{control_path}.encoder_id",
+                        'nur bei kind = "relative-encoder" erlaubt',
+                    )
+                ctrl_enc_id = _int(
+                    control_item["encoder_id"], f"{control_path}.encoder_id"
+                )
+                if ctrl_enc_id <= 0:
+                    raise ConfigError(
+                        f"{control_path}.encoder_id", "muss größer 0 sein"
+                    )
+            elif kind == "relative-encoder" and control_id.startswith("encoder."):
+                suffix = control_id[len("encoder.") :]
+                if suffix.isdigit() and int(suffix) > 0:
+                    ctrl_enc_id = int(suffix)
+            controls.append(ControlProfile(control_id, kind, label, ctrl_enc_id))
         declared_controls = {control.id for control in controls}
         encoders_raw = item.get("encoders", [])
         if not isinstance(encoders_raw, list):
@@ -1090,6 +1133,31 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
                 item_path,
                 "Bänke und flache Noten schließen sich aus; Noten je Bank definieren",
             )
+
+        # Assign/check integer encoder IDs for banked relative-encoder controls.
+        if banks and controls:
+            next_auto_id = 1
+            resolved_controls: list[ControlProfile] = []
+            for ctrl in controls:
+                if ctrl.kind != "relative-encoder":
+                    resolved_controls.append(ctrl)
+                    continue
+                chosen_id = ctrl.encoder_id
+                if chosen_id is None:
+                    while next_auto_id in global_encoder_ids:
+                        next_auto_id += 1
+                    chosen_id = next_auto_id
+                    next_auto_id += 1
+                if chosen_id in global_encoder_ids:
+                    raise ConfigError(
+                        f"{item_path}.controls",
+                        f"Encoder-ID {chosen_id} ist bereits in einem anderen Profil definiert",
+                    )
+                global_encoder_ids.add(chosen_id)
+                resolved_controls.append(
+                    ControlProfile(ctrl.id, ctrl.kind, ctrl.label, chosen_id)
+                )
+            controls = resolved_controls
 
         led_feedback: LedFeedbackProfile | None = None
         if "led_feedback" in item:
@@ -1300,7 +1368,9 @@ def _parse_layouts(
                                 f"Zellen überlappen sich bei Zeile {grid_row}, Spalte {grid_col}",
                             )
                         occupied.add((grid_row, grid_col))
-        layouts[profile_name] = DeviceLayout(profile_name, columns, tuple(rows))
+        layouts[profile_name] = DeviceLayout(
+            profile_name, columns, tuple(rows), name=name
+        )
     return layouts
 
 
@@ -1341,6 +1411,11 @@ def _require_hardkey_codes(
     for control, entry in mapping.modifiers.items():
         if entry.hardkey is not None:
             used[control] = entry.hardkey
+    for dev_name, dev_banks in mapping.device_banks.items():
+        for bank_num, layer in dev_banks.banks.items():
+            for control, entry in layer.keys.items():
+                if entry.hardkey is not None:
+                    used[f"{dev_name}.{bank_num}.{control}"] = entry.hardkey
 
     for control, value in sorted(used.items()):
         canonical = hardkeys.resolve(value)
@@ -1445,8 +1520,7 @@ def _parse_mapping(
     for profile in profiles.values():
         controls.update(profile.control_names)
         value_kinds.update(profile.control_kinds)
-        encoder_ids.update(enc.id for enc in profile.encoders)
-        encoder_ids.update(enc.id for enc in profile.midi_encoders)
+        encoder_ids.update(profile.relative_encoder_ids.values())
 
     modifiers_raw = _table(data.get("modifiers", {}), f"{path}.modifiers")
     modifiers: dict[str, ModifierMapping] = {}
@@ -1608,10 +1682,7 @@ def _parse_mapping(
                     _table(entry, item_path), item_path, control, layer_controls
                 )
             layer_encoders: dict[int, EncoderMapping] = {}
-            profile_encoder_ids = {encoder.id for encoder in profile.encoders}
-            profile_encoder_ids.update(
-                encoder.id for encoder in profile.midi_encoders
-            )
+            profile_encoder_ids = set(profile.relative_encoder_ids.values())
             layer_encoders_raw = layer_item.get("encoders", [])
             if not isinstance(layer_encoders_raw, list):
                 raise ConfigError(

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import DevicesPage from './DevicesPage.svelte';
-import type { ApiClient, DeviceEntry } from './api';
+import { ApiError, type ApiClient, type DeviceEntry } from './api';
 
 const device: DeviceEntry = {
   name: 'banktest',
@@ -48,7 +48,7 @@ const config = {
   profiles: {
     'bank-test': {
       banks: [
-        { number: 1, channel: 1, notes: { 70: 'bt_fader' } },
+        { number: 1, channel: 1, notes: { '70': 'bt_fader' } },
         { number: 2, channel: 2, notes: {} },
       ],
     },
@@ -61,7 +61,7 @@ const config = {
   },
 };
 
-function fakeApi(devices: DeviceEntry[], cfg = config) {
+function fakeApi(devices: DeviceEntry[], cfg: Record<string, unknown> = config) {
   return {
     devices: vi.fn().mockResolvedValue(devices),
     config: vi.fn().mockResolvedValue(cfg),
@@ -84,13 +84,19 @@ describe('DevicesPage', () => {
     expect(screen.getByText('Goto')).toBeTruthy();
   });
 
-  it('switches the visible bank without touching the API', async () => {
+  it('switches the visible bank without touching the API or overwriting unsaved bankSize', async () => {
     const api = fakeApi([device]);
     render(DevicesPage, { props: { api } });
     await waitFor(() => expect(screen.getAllByRole('option').length).toBe(2));
+
+    const sizeInput = screen.getByLabelText('Bankgröße') as HTMLInputElement;
+    await fireEvent.input(sizeInput, { target: { value: '8' } });
+
     const select = screen.getByLabelText('Bank') as HTMLSelectElement;
     await fireEvent.change(select, { target: { value: '2' } });
     expect(api.updateConfig).not.toHaveBeenCalled();
+    expect(sizeInput.value).toBe('8');
+    expect((screen.getByLabelText('Kanal') as HTMLInputElement).value).toBe('2');
   });
 
   it('falls back to a table without a layout', async () => {
@@ -99,8 +105,21 @@ describe('DevicesPage', () => {
     await waitFor(() => expect(screen.getByText('Control')).toBeTruthy());
     expect(screen.queryByTestId('device-surface')).toBeNull();
   });
-});
 
+  it('formats ApiError detail cleanly without raw error codes', async () => {
+    const api = fakeApi([device]);
+    vi.mocked(api.updateConfig).mockRejectedValue(
+      new ApiError(422, 'validation_error', 'Kanal bereits vergeben'),
+    );
+    render(DevicesPage, { props: { api } });
+    await waitFor(() => expect(screen.getByText('Einstellungen speichern')).toBeTruthy());
+
+    await fireEvent.click(screen.getByText('Einstellungen speichern'));
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toBe('Kanal bereits vergeben');
+    });
+  });
+});
 
 describe('DevicesPage filtering', () => {
   it('hides configured but disconnected devices', async () => {
@@ -112,27 +131,31 @@ describe('DevicesPage filtering', () => {
   });
 });
 
-
 describe('DevicesPage encoder assignments', () => {
   const encoderDevice: DeviceEntry = {
     ...device,
     layout: {
       profile: 'bank-test',
-      columns: 2,
+      columns: 3,
       rows: [
         {
           cells: [
             { label: 'E1', control: 'encoder.1', col_span: 1, row_span: 1, color: 'blue', row: 1, col: 1 },
-            { label: 'B', control: 'bt_button', col_span: 1, row_span: 1, color: null, row: 1, col: 2 },
+            { label: 'E2', control: 'encoder.2', col_span: 1, row_span: 1, color: 'blue', row: 1, col: 2 },
+            { label: 'B', control: 'bt_button', col_span: 1, row_span: 1, color: null, row: 1, col: 3 },
           ],
         },
       ],
     },
     controls: {
       ...device.controls,
-      encoders: [{ id: 1, axis: 'ABS_X', detents_per_revolution: 24, direction: 1, threshold: 1 }],
+      encoders: [
+        { id: 1, axis: 'ABS_X', detents_per_revolution: 24, direction: 1, threshold: 1 },
+        { id: 2, axis: 'ABS_Y', detents_per_revolution: 24, direction: 1, threshold: 1 },
+      ],
       inventory: [
         { id: 'encoder.1', kind: 'relative-encoder', label: 'Encoder 1' },
+        { id: 'encoder.2', kind: 'relative-encoder', label: 'Encoder 2' },
         { id: 'bt_button', kind: 'button', label: null },
       ],
     },
@@ -143,7 +166,7 @@ describe('DevicesPage encoder assignments', () => {
     mapping: {
       ...config.mapping,
       encoders: [{ id: 1, slot: 1 }],
-      screen_encoders: { 1: 8 },
+      screen_encoders: { '1': 8 },
     },
   };
 
@@ -155,14 +178,14 @@ describe('DevicesPage encoder assignments', () => {
     );
   });
 
-  it('stores slot and screen encoder through the encoder action', async () => {
+  it('stores slot and screen encoder through the encoder select', async () => {
     const api = fakeApi([encoderDevice], encoderConfig);
     render(DevicesPage, { props: { api } });
     await waitFor(() => expect(screen.getByText('E1')).toBeTruthy());
     await fireEvent.click(screen.getByText('E1'));
     await fireEvent.click(screen.getByText('Zuweisen'));
-    const screenInput = screen.getByLabelText(/Screen-Encoder/) as HTMLInputElement;
-    await fireEvent.input(screenInput, { target: { value: '7' } });
+    const screenSelect = screen.getByLabelText(/Screen-Encoder/) as HTMLSelectElement;
+    await fireEvent.change(screenSelect, { target: { value: '7' } });
     await fireEvent.click(screen.getByText('Speichern'));
     await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
     expect(api.updateConfig).toHaveBeenCalledWith({
@@ -172,10 +195,103 @@ describe('DevicesPage encoder assignments', () => {
       },
     });
   });
+
+  it('saves an encoder with screen = 0 (keiner) and clears an existing screen_encoders entry', async () => {
+    const api = fakeApi([encoderDevice], encoderConfig);
+    render(DevicesPage, { props: { api } });
+    await waitFor(() => expect(screen.getByText('E1')).toBeTruthy());
+    await fireEvent.click(screen.getByText('E1'));
+    await fireEvent.click(screen.getByText('Zuweisen'));
+
+    const screenSelect = screen.getByLabelText(/Screen-Encoder/) as HTMLSelectElement;
+    await fireEvent.change(screenSelect, { target: { value: '0' } });
+    await fireEvent.click(screen.getByText('Speichern'));
+
+    await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
+    expect(api.updateConfig).toHaveBeenCalledWith({
+      mapping: {
+        encoders: [{ id: 1, slot: 1 }],
+        screen_encoders: { '1': null },
+      },
+    });
+  });
+
+  it('clears previous slot screen_encoders entry when switching encoder to attribute', async () => {
+    const api = fakeApi([encoderDevice], encoderConfig);
+    render(DevicesPage, { props: { api } });
+    await waitFor(() => expect(screen.getByText('E1')).toBeTruthy());
+    await fireEvent.click(screen.getByText('E1'));
+    await fireEvent.click(screen.getByText('Zuweisen'));
+
+    await fireEvent.change(screen.getByLabelText('Ziel'), {
+      target: { value: 'attribute' },
+    });
+    await fireEvent.input(screen.getByLabelText('Attributname'), {
+      target: { value: 'Dimmer' },
+    });
+    await fireEvent.click(screen.getByText('Speichern'));
+
+    await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
+    expect(api.updateConfig).toHaveBeenCalledWith({
+      mapping: {
+        encoders: [{ id: 1, attribute: 'Dimmer' }],
+        screen_encoders: { '1': null },
+      },
+    });
+  });
+
+  it('loads and preserves canonical flat device_banks with ma_page and multiple encoders', async () => {
+    const bankedCfg = {
+      ...encoderConfig,
+      mapping: {
+        ...encoderConfig.mapping,
+        device_banks: {
+          banktest: {
+            bank_size: 5,
+            '2': {
+              ma_page: 3,
+              encoders: [
+                { id: 1, slot: 2 },
+                { id: 2, attribute: 'Pan' },
+              ],
+            },
+          },
+        },
+      },
+    };
+    const api = fakeApi([encoderDevice], bankedCfg);
+    render(DevicesPage, { props: { api } });
+    await waitFor(() => expect(screen.getByText('E1')).toBeTruthy());
+
+    await fireEvent.change(screen.getByLabelText('Bank'), { target: { value: '2' } });
+    expect((screen.getByLabelText('MA-Page') as HTMLInputElement).value).toBe('3');
+    expect(screen.getByText('Attribut 2')).toBeTruthy();
+    expect(screen.getByText('Attribut Pan')).toBeTruthy();
+
+    await fireEvent.click(screen.getByText('E1'));
+    await fireEvent.click(screen.getByText('Zuweisen'));
+    await fireEvent.input(screen.getByLabelText('Slot'), { target: { value: '4' } });
+    await fireEvent.click(screen.getByText('Speichern'));
+
+    await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
+    expect(api.updateConfig).toHaveBeenCalledWith({
+      mapping: {
+        device_banks: {
+          banktest: {
+            '2': {
+              encoders: [
+                { id: 1, slot: 4 },
+                { id: 2, attribute: 'Pan' },
+              ],
+            },
+          },
+        },
+      },
+    });
+  });
 });
 
-
-describe('DevicesPage special key assignments', () => {
+describe('DevicesPage special key assignments and deletion', () => {
   it('stores a screen-mode toggle without a hardkey', async () => {
     const api = fakeApi([device]);
     render(DevicesPage, { props: { api } });
@@ -201,17 +317,130 @@ describe('DevicesPage special key assignments', () => {
       },
     });
   });
+
+  it('deletes a global assignment on Bank 1 via Belegung löschen', async () => {
+    const api = fakeApi([device]);
+    render(DevicesPage, { props: { api } });
+    await waitFor(() => expect(screen.getByText('B')).toBeTruthy());
+
+    await fireEvent.click(screen.getByText('B'));
+    await fireEvent.click(screen.getByText('Zuweisen'));
+    await fireEvent.click(screen.getByText('Belegung löschen'));
+
+    await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
+    expect(api.updateConfig).toHaveBeenCalledWith({
+      mapping: {
+        keys: { bt_button: null },
+        playbacks: { bt_button: null },
+      },
+    });
+  });
+
+  it('deletes a Bank 2 override to restore inheritance without touching Bank 1', async () => {
+    const withOverride = {
+      ...config,
+      mapping: {
+        ...config.mapping,
+        playbacks: {
+          bt_fader: { page: 1, executor: 1, kind: 'fader' },
+        },
+        device_banks: {
+          banktest: {
+            bank_size: 5,
+            '2': {
+              playbacks: {
+                bt_fader: { page: 2, executor: 99, kind: 'fader' },
+              },
+            },
+          },
+        },
+      },
+    };
+    const api = fakeApi([device], withOverride);
+    render(DevicesPage, { props: { api } });
+    await waitFor(() => expect(screen.getByText('Exec 1 Fader')).toBeTruthy());
+
+    await fireEvent.change(screen.getByLabelText('Bank'), { target: { value: '2' } });
+    expect(screen.getByText('Exec 99 Fader')).toBeTruthy();
+
+    await fireEvent.click(screen.getByText('F'));
+    await fireEvent.click(screen.getByText('Zuweisen'));
+    await fireEvent.click(screen.getByText('Belegung löschen'));
+
+    await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
+    expect(api.updateConfig).toHaveBeenCalledWith({
+      mapping: {
+        device_banks: {
+          banktest: {
+            '2': {
+              keys: { bt_fader: null },
+              playbacks: { bt_fader: null },
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it('clears stale Bank 1 layer override when saving a global Bank 1 assignment', async () => {
+    const withStaleBank1 = {
+      ...config,
+      mapping: {
+        ...config.mapping,
+        device_banks: {
+          banktest: {
+            bank_size: 5,
+            '1': {
+              keys: { bt_button: { hardkey: 'Store' } },
+            },
+          },
+        },
+      },
+    };
+    const api = fakeApi([device], withStaleBank1);
+    render(DevicesPage, { props: { api } });
+    await waitFor(() => expect(screen.getByText('Store')).toBeTruthy());
+
+    await fireEvent.click(screen.getByText('B'));
+    await fireEvent.click(screen.getByText('Zuweisen'));
+    await fireEvent.input(screen.getByLabelText('Hardkey'), {
+      target: { value: 'Clear' },
+    });
+    await fireEvent.click(screen.getByText('Speichern'));
+
+    await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
+    expect(api.updateConfig).toHaveBeenCalledWith({
+      mapping: {
+        keys: {
+          bt_button: {
+            hardkey: 'Clear',
+            command: null,
+            screen_mode: null,
+            encoder_press: null,
+            screen: null,
+          },
+        },
+        playbacks: { bt_button: null },
+        device_banks: {
+          banktest: {
+            '1': {
+              keys: { bt_button: null },
+            },
+          },
+        },
+      },
+    });
+  });
 });
 
-
 describe('DevicesPage bank offset', () => {
-  it('shows and preselects the effective executor in bank 2', async () => {
+  it('shows inherited hint in bank 2 and writes un-offset base executor in Global scope', async () => {
     const withPlayback = {
       ...config,
       mapping: {
         ...config.mapping,
         playbacks: {
-          bt_fader: { page: 1, executor: 1, kind: 'fader', button: 1 },
+          bt_fader: { page: 1, executor: 1, kind: 'fader' },
         },
       },
     };
@@ -224,7 +453,28 @@ describe('DevicesPage bank offset', () => {
 
     await fireEvent.click(screen.getByText('F'));
     await fireEvent.click(screen.getByText('Zuweisen'));
-    expect((screen.getByLabelText('Executor') as HTMLInputElement).value).toBe('6');
+    expect(screen.getByText('Geerbt von Bank 1 (inkl. Bank-Offset)')).toBeTruthy();
+
+    const execInput = screen.getByLabelText('Executor') as HTMLInputElement;
+    expect(execInput.value).toBe('6');
+    await fireEvent.input(execInput, { target: { value: '7' } });
+    await fireEvent.click(screen.getByText('Speichern'));
+
+    await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
+    expect(api.updateConfig).toHaveBeenCalledWith({
+      mapping: {
+        keys: { bt_fader: null },
+        playbacks: {
+          bt_fader: {
+            page: 1,
+            executor: 2,
+            kind: 'fader',
+            button: null,
+            accelerated: null,
+          },
+        },
+      },
+    });
   });
 });
 

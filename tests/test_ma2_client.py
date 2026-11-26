@@ -897,3 +897,29 @@ async def test_disconnect_clears_playback_responses(make_config):
     assert not client.playback_responses.empty()
     await client._handle_disconnect("test")
     assert client.playback_responses.empty()
+
+
+async def test_failed_login_closes_transport_and_send_queue_prioritises_controls(small_config):
+    transport = MockTransport()
+    transport.incoming.put_nowait('{"status": "server ready"}')
+    transport.incoming.put_nowait('{"session": 9}')
+    transport.incoming.put_nowait('{"requestType": "loginResponse", "result": false}')
+
+    client = _client(small_config, transport)
+    with pytest.raises(LoginError):
+        await client.connect_once()
+    assert transport.closed is True
+
+    # PlaybacksRequest coalesces at lowest priority behind controls, encoders, faders
+    q = SendQueue()
+    q.put(PlaybacksRequest("current", 0, 5, 2, 2))
+    q.put(PlaybacksRequest("current", 0, 5, 2, 2))
+    q.put(PlaybackFader(1, 1, 0.5))
+    q.put(EncoderSlot(1, 2.0))
+    q.put(Release("GO"))
+    assert q.control_depth == 1
+    assert isinstance(await q.get(), Release)
+    assert isinstance(await q.get(), EncoderSlot)
+    assert isinstance(await q.get(), PlaybackFader)
+    assert isinstance(await q.get(), PlaybacksRequest)
+    assert len(q) == 0

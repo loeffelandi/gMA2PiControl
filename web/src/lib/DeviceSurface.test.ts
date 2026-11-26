@@ -70,6 +70,63 @@ describe('DeviceSurface', () => {
     await fireEvent.click(screen.getByText('Fix'));
     expect(onToggle).not.toHaveBeenCalled();
   });
+
+  it('uses light text on black keycaps and respects reduced motion + selector escaping', () => {
+    const specialLayout: DeviceLayout = {
+      profile: 'custom',
+      columns: 2,
+      rows: [
+        {
+          cells: [
+            {
+              label: 'Black Key',
+              control: 'ctrl"quote\\1',
+              col_span: 1,
+              row_span: 1,
+              color: 'black',
+              row: 1,
+              col: 1,
+            },
+            {
+              label: 'White Key',
+              control: 'encoder.1',
+              col_span: 1,
+              row_span: 1,
+              color: 'white',
+              row: 1,
+              col: 2,
+            },
+          ],
+        },
+      ],
+    };
+
+    const scrollSpy = vi.fn();
+    HTMLElement.prototype.scrollIntoView = scrollSpy;
+    const matchMediaOrig = window.matchMedia;
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true });
+
+    try {
+      render(DeviceSurface, {
+        props: {
+          layout: specialLayout,
+          activeControl: 'ctrl"quote\\1',
+        },
+      });
+
+      const blackBtn = screen.getByText('Black Key').closest('button')!;
+      const whiteBtn = screen.getByText('White Key').closest('button')!;
+      expect(blackBtn.getAttribute('style')).toContain('color: var(--text)');
+      expect(whiteBtn.getAttribute('style')).toContain('color: var(--on-accent)');
+      expect(scrollSpy).toHaveBeenCalledWith({
+        block: 'nearest',
+        inline: 'nearest',
+        behavior: 'auto',
+      });
+    } finally {
+      window.matchMedia = matchMediaOrig;
+    }
+  });
 });
 
 

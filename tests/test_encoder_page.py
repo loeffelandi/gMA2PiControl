@@ -185,3 +185,40 @@ def test_resolution_for_reads_encoder_resolution():
     assert page.resolution_for(1) == 2
     assert page.resolution_for(2) == 0
     assert page.resolution_for(4) == 0
+
+
+def test_incremental_update_clears_previous_sibling_selection():
+    from ma2pi.encoder_page import EncoderPage
+
+    page = EncoderPage()
+    page.update(
+        {
+            "responseType": "presetTypes",
+            "type": "full",
+            "pre": [
+                {
+                    "i": 1,
+                    "np": "Dimmer",
+                    "s": True,
+                    "fea": [{"i": 1, "np": "Dimmer", "s": True, "att": [{"n": "DIM", "s": True}]}],
+                },
+                {
+                    "i": 2,
+                    "np": "Position",
+                    "s": False,
+                    "fea": [{"i": 1, "np": "Position", "s": True, "att": [{"n": "PAN", "s": True}]}],
+                },
+            ],
+        }
+    )
+    assert page.name_for(1) == "DIM"
+
+    # Incremental update selects Position (i=2) without explicitly sending i=1 s=False
+    page.update(
+        {
+            "responseType": "presetTypes",
+            "type": "update",
+            "pre": [{"i": 2, "s": True}],
+        }
+    )
+    assert page.name_for(1) == "PAN"

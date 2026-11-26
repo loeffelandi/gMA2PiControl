@@ -11,8 +11,9 @@ capture (MIDI-OX):
 * ``9F 7F 7E`` – releases LED control; the buttons return to keypress mode.
   It MUST NOT be sent after colour updates, only when closing the port.
 
-The port is kept open for the daemon lifetime: opening and closing the raw
-MIDI port repeatedly resets the LED state.
+In the daemon, ``LedOutput`` sends through ``MidiManager.send`` so a single
+non-blocking rawmidi descriptor serves both input and LED output without
+competing for the ALSA output substream.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 LOGGER = logging.getLogger("ma2pi.led")
 
@@ -80,27 +82,31 @@ class LedSettings:
 
 
 class LedOutput:
-    """Writes LED frames to one ASL button over a persistent MIDI handle."""
+    """Writes LED frames to ASL buttons via ``MidiManager`` or a non-blocking fd."""
 
-    def __init__(self, path: str | Path, settings: LedSettings) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        settings: LedSettings,
+        *,
+        sender: Callable[[bytes], bool] | None = None,
+    ) -> None:
         self.path = Path(path)
         self.settings = settings
         self.device_name = settings.device or "asl"
+        self._sender = sender
+        self._active = False
         self._fd: int | None = None
         self.on_write: Callable[[str], None] | None = None
 
     @property
     def is_open(self) -> bool:
-        return self._fd is not None
+        return self._active if self._sender is not None else self._fd is not None
 
     def still_attached(self) -> bool:
-        """True, wenn der offene Handle noch zum aktuellen Gerät gehört.
-
-        Nach einem Replug wird der Geräteknoten neu erzeugt (neue Inode); der
-        alte fd ist dann tot, obwohl ``is_open`` weiter True wäre. Der Vergleich
-        von ``fstat(fd)`` und ``stat(path)`` erkennt das, damit die LED-Schleife
-        neu öffnet und das Enable-Sequenz erneut sendet.
-        """
+        """True when the open handle still refers to the current device node."""
+        if self._sender is not None:
+            return self._active and self.path.exists()
         if self._fd is None:
             return False
         try:
@@ -111,30 +117,55 @@ class LedOutput:
         return (cur.st_dev, cur.st_ino) == (old.st_dev, old.st_ino)
 
     def open(self) -> None:
+        if self._sender is not None:
+            self._active = True
+            LOGGER.debug("LED-Ausgabe über MidiManager verbunden: %s", self.path)
+            return
         if self._fd is not None:
             return
-        self._fd = os.open(self.path, os.O_WRONLY)
+        self._fd = os.open(self.path, os.O_WRONLY | os.O_NONBLOCK)
         LOGGER.debug("LED-Ausgabe geöffnet: %s", self.path)
 
     def close(self) -> None:
+        if self._sender is not None:
+            if not self._active:
+                return
+            try:
+                self._write(DISABLE, "disable")
+            finally:
+                self._active = False
+            return
         if self._fd is None:
             return
         try:
             self._write(DISABLE, "disable")
         finally:
             try:
+                from .midi_input import rawmidi_drop_output
+
+                try:
+                    rawmidi_drop_output(self._fd)
+                except OSError:
+                    pass
                 os.close(self._fd)
             finally:
                 self._fd = None
 
     def _write(self, payload: bytes, label: str = "led") -> None:
-        if self._fd is None:
-            return
-        try:
-            os.write(self._fd, payload)
-        except OSError as exc:
-            LOGGER.warning("LED-Frame konnte nicht gesendet werden: %s", exc)
-            return
+        if self._sender is not None:
+            if not self._active:
+                return
+            if not self._sender(payload):
+                LOGGER.debug("LED-Frame (%s) an %s nicht gesendet", label, self.path)
+                return
+        else:
+            if self._fd is None:
+                return
+            try:
+                os.write(self._fd, payload)
+            except OSError as exc:
+                LOGGER.warning("LED-Frame konnte nicht gesendet werden: %s", exc)
+                return
         if self.on_write is not None:
             try:
                 self.on_write(label)
@@ -146,11 +177,7 @@ class LedOutput:
         self._write(ENABLE, "enable")
 
     def set_color(self, index: int) -> None:
-        """Set brightness and colour index in one write; no release frame.
-
-        Sending ``9F 7F 7E`` here would hand the LEDs back to keypress mode
-        and the colour would never show.
-        """
+        """Set brightness and colour index in one write; no release frame."""
         note = self.settings.note
         self._write(
             ENABLE

@@ -24,6 +24,12 @@ class FakeClient:
     def playback_fader(self, page: int, executor: int, value: float) -> None:
         self.faders.append((page, executor, value))
 
+    def press(self, keyname: str, hold: bool = False) -> None:
+        pass
+
+    def release(self, keyname: str) -> None:
+        pass
+
 
 class FakeClock:
     def __init__(self) -> None:
@@ -353,3 +359,41 @@ def test_bank_key_override_takes_precedence_over_global_playback(make_config):
     )
     assert not router.handle(InputEvent("key", "bt_button", 1, "banktest", 2))
     assert client.buttons == []
+
+
+def test_playback_button_release_after_bank_switch_and_device_lost(make_config):
+    router, client, engine = _router(
+        make_config, {"keys": {"bt_button": {"hardkey": "BLACKOUT"}}}
+    )
+    # Press on Bank 1 (Exec 2) -> switch to Bank 2 -> release still hits Exec 2!
+    assert router.handle(InputEvent("key", "bt_button", 1, "banktest", 1)) is True
+    assert router.handle(InputEvent("key", "bt_button", 0, "banktest", 2)) is True
+    assert client.buttons == [(1, 10, 2, True), (1, 10, 2, False)]
+
+    # Press on Bank 2 (Hardkey BLACKOUT in engine) -> switch to Bank 1 -> release
+    # must pass through PlaybackRouter so engine releases BLACKOUT!
+    ev_press = InputEvent("key", "bt_button", 1, "banktest", 2)
+    assert router.handle(ev_press) is False
+    engine.handle(ev_press)
+    assert ("banktest", "bt_button") in engine.held
+    ev_rel = InputEvent("key", "bt_button", 0, "banktest", 1)
+    assert router.handle(ev_rel) is False
+    engine.handle(ev_rel)
+    assert engine.held == {}
+
+    # DeviceLost releases held playback button
+    client.buttons.clear()
+    router.handle(InputEvent("key", "bt_button", 1, "banktest", 1))
+    router.release_device("banktest")
+    assert client.buttons == [(1, 10, 2, True), (1, 10, 2, False)]
+
+
+def test_acceleration_separates_banks_and_emits_no_info_log(make_config, caplog):
+    router, _, client, clock = _accelerated_router(make_config)
+    with caplog.at_level("INFO", logger="ma2pi.playback"):
+        router.handle(InputEvent("value", "mc_encoder_1", 1.0, "midicraft", bank=1))
+        clock.now += 0.01
+        router.handle(InputEvent("value", "mc_encoder_1", 0.2, "midicraft", bank=2))
+    # Bank 2 starts cleanly at 0.2 instead of amplifying -0.8 against Bank 1!
+    assert client.faders[-1][2] == pytest.approx(0.2)
+    assert caplog.records == []

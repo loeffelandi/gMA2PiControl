@@ -970,7 +970,8 @@ class NetworkService:
         *,
         port: int = 8080,
         publish: Callable[[dict[str, Any]], None] | None = None,
-        clock: Callable[[], float] = time.time,
+        clock: Callable[[], float] | None = None,
+        monotonic: Callable[[], float] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         confirm_timeout: float = CONFIRM_TIMEOUT,
         activation_timeout: float = ACTIVATION_TIMEOUT,
@@ -980,13 +981,18 @@ class NetworkService:
         self._store = store
         self.port = port
         self.publish = publish
-        self._clock = clock
+        self._clock = clock or time.time
+        # Use monotonic clock in production so NTP jumps cannot trigger or
+        # suppress rollbacks; when tests inject ``clock`` without ``monotonic``,
+        # share it so fake-clock tests stay deterministic.
+        self._mono = monotonic or (clock if clock is not None else time.monotonic)
         self._sleep = sleep
         self._confirm_timeout = confirm_timeout
         self._activation_timeout = activation_timeout
         self._activation_delay = activation_delay
         self._lock = asyncio.Lock()
         self._pending: PendingChange | None = None
+        self._mono_deadline: float | None = None
         self._last_result: LastResult | None = None
         self._pending_error: str | None = None
         self._timer: asyncio.Task[None] | None = None
@@ -1014,23 +1020,30 @@ class NetworkService:
         if self._timer is not None:
             self._timer.cancel()
             self._timer = None
+        self._mono_deadline = None
 
-    def _start_timer(self, deadline: float) -> None:
+    def _start_timer(self, remaining: float) -> None:
         self._cancel_timer()
+        mono_deadline = self._mono() + max(0.0, remaining)
+        self._mono_deadline = mono_deadline
         self._timer = asyncio.create_task(
-            self._timer_loop(deadline), name="ma2pi-network-rollback"
+            self._timer_loop(mono_deadline), name="ma2pi-network-rollback"
         )
 
-    async def _timer_loop(self, deadline: float) -> None:
+    async def _timer_loop(self, mono_deadline: float) -> None:
         try:
-            await self._sleep(max(0.0, deadline - self._clock()))
+            while True:
+                remaining = mono_deadline - self._mono()
+                if remaining <= 0:
+                    break
+                await self._sleep(remaining)
             async with self._lock:
                 pending = self._pending
                 if (
                     pending is not None
                     and pending.phase == "awaiting_confirmation"
-                    and pending.deadline is not None
-                    and pending.deadline <= self._clock()
+                    and self._mono_deadline is not None
+                    and self._mono_deadline <= self._mono()
                 ):
                     await self._rollback_locked(pending, "Bestätigungsfenster abgelaufen")
         except asyncio.CancelledError:
@@ -1182,6 +1195,16 @@ class NetworkService:
                     raise NetworkValidationError(
                         "gateway", "keine gültige IPv4-Adresse"
                     ) from exc
+                if (
+                    gateway.is_unspecified
+                    or gateway.is_loopback
+                    or gateway.is_multicast
+                    or gateway.is_reserved
+                    or str(gateway) == "255.255.255.255"
+                ):
+                    raise NetworkValidationError(
+                        "gateway", "Gateway-Adresse ist nicht zulässig"
+                    )
                 if gateway not in network:
                     raise NetworkValidationError(
                         "gateway", "Gateway liegt nicht im gewählten Subnetz"
@@ -1213,7 +1236,13 @@ class NetworkService:
                     raise NetworkValidationError(
                         "dns", f"'{value}' ist keine gültige IPv4-Adresse"
                     ) from exc
-                if resolver.is_multicast or resolver.is_unspecified:
+                if (
+                    resolver.is_multicast
+                    or resolver.is_unspecified
+                    or resolver.is_loopback
+                    or resolver.is_reserved
+                    or str(resolver) == "255.255.255.255"
+                ):
                     raise NetworkValidationError("dns", "DNS-Adresse ist nicht zulässig")
                 if value in seen:
                     raise NetworkValidationError("dns", "DNS-Einträge müssen eindeutig sein")
@@ -1253,6 +1282,8 @@ class NetworkService:
         }
 
     async def apply(self, payload: Mapping[str, Any]) -> PendingChange:
+        if self._pending is not None:
+            raise PendingExists("Es wartet bereits eine Netzwerkänderung")
         if self._lock.locked() or self._apply_in_progress:
             raise ApplyBusy("Es läuft bereits ein Netzwerk-Apply")
         self._apply_in_progress = True
@@ -1285,7 +1316,7 @@ class NetworkService:
                     previous_profile_name=None if same_profile else (active.name if active else None),
                 )
                 try:
-                    self._store.save(pending)
+                    await asyncio.to_thread(self._store.save, pending)
                 except OSError as exc:
                     if target.created:
                         with contextlib.suppress(Exception):
@@ -1328,13 +1359,13 @@ class NetworkService:
             pending.phase = "awaiting_confirmation"
             pending.deadline = self._clock() + self._confirm_timeout
             try:
-                self._store.save(pending)
+                await asyncio.to_thread(self._store.save, pending)
             except OSError as exc:
                 await self._rollback_locked(
                     pending, f"Pending-Zustand nicht schreibbar: {exc}"
                 )
                 return
-            self._start_timer(pending.deadline)
+            self._start_timer(self._confirm_timeout)
             LOGGER.info(
                 "Netzwerkänderung aktiviert; Bestätigung bis %s",
                 _iso(pending.deadline),
@@ -1348,7 +1379,12 @@ class NetworkService:
                 raise NoPending("Keine offene Netzwerkänderung")
             if pending.phase != "awaiting_confirmation":
                 raise PendingExists("Die Änderung ist noch nicht bestätigungsbereit")
-            if pending.deadline is not None and pending.deadline <= self._clock():
+            expired = (
+                self._mono_deadline <= self._mono()
+                if self._mono_deadline is not None
+                else (pending.deadline is not None and pending.deadline <= self._clock())
+            )
+            if expired:
                 await self._rollback_locked(
                     pending, "Bestätigungsfenster abgelaufen", status="failed"
                 )
@@ -1371,7 +1407,7 @@ class NetworkService:
                 raise NetworkError(f"Bestätigung fehlgeschlagen: {exc}") from exc
             pending.phase = "confirmed"
             try:
-                self._store.save(pending)
+                await asyncio.to_thread(self._store.save, pending)
             except OSError as exc:
                 await self._rollback_locked(
                     pending,
@@ -1567,7 +1603,12 @@ class NetworkService:
                     except NetworkError as exc:
                         LOGGER.error("Rollback beim Start fehlgeschlagen: %s", exc)
                 else:
-                    self._start_timer(pending.deadline or self._clock())
+                    remaining = (
+                        max(0.0, pending.deadline - self._clock())
+                        if pending.deadline is not None
+                        else 0.0
+                    )
+                    self._start_timer(remaining)
                     self._emit()
 
     async def close(self) -> None:

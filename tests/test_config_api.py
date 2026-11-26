@@ -19,30 +19,7 @@ from ma2pi.web.serialize import redacted_config
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class NullSink:
-    def press(self, keyname: str, hold: bool = False) -> None:
-        pass
-
-    def release(self, keyname: str) -> None:
-        pass
-
-    def command(self, text: str) -> None:
-        pass
-
-    def encoder_slot(self, slot: int, delta: float, screen: bool = False) -> None:
-        pass
-
-    def encoder_attribute(self, name: str, value: float) -> None:
-        pass
-
-    def toggle_screen_mode(self) -> None:
-        pass
-
-    def toggle_fine(self, slot: int) -> None:
-        pass
-
-    def screen_shortcut(self, screen: int) -> None:
-        pass
+from .conftest import NullSink
 
 
 def _setup(tmp_path: Path, *, tester=None) -> tuple[ConfigPaths, ConfigStore]:
@@ -287,11 +264,64 @@ def test_redacted_config_contains_layouts_profiles_and_bank_layers(make_config):
 
     config = make_config(mutate)
     data = redacted_config(config)
-    assert data["layouts"]["bank-test"]["columns"] == 1
-    assert data["profiles"]["bank-test"]["banks"][0]["notes"] == {70: "bt_fader"}
+    assert data["layouts"]["surface"]["columns"] == 1
+    assert data["layouts"]["surface"]["profile"] == "bank-test"
+    assert data["profiles"]["bank-test"]["banks"][0]["notes"] == {"70": "bt_fader"}
     assert data["mapping"]["device_banks"]["banktest"]["bank_size"] == 5
+    assert data["mapping"]["device_banks"]["banktest"]["1"]["ma_page"] == 2
+    assert "banks" not in data["mapping"]["device_banks"]["banktest"]
     assert "password_file" not in data["ma2"]
     assert "pin" not in data["web"]
+
+
+async def test_redacted_config_roundtrips_cleanly_through_prepare_patch(tmp_path):
+    from ma2pi.config_store import prepare_patch
+
+    paths, store = _setup(tmp_path)
+    payload = redacted_config(store.config)
+    cleaned = store._clean_patch(payload, None)
+    prepared = prepare_patch(
+        paths,
+        cleaned,
+        validate=lambda raw: load_config(paths.config).__class__
+        if False
+        else store._validate(raw),
+    )
+    assert prepared.candidate.mapping.encoders == store.config.mapping.encoders
+    assert prepared.candidate.mapping.device_banks == store.config.mapping.device_banks
+
+
+async def test_put_config_strips_password_file_and_list_nones(tmp_path):
+    paths, store = _setup(tmp_path)
+    secret_probe = tmp_path / "probe.txt"
+    secret_probe.write_text("do-not-read", encoding="utf-8")
+    client = await _app(store)
+    headers = {"X-Ma2pi-Request": "1"}
+    try:
+        response = await client.put(
+            "/api/config",
+            json={
+                "ma2": {
+                    "password_file": str(secret_probe),
+                    "password_env": "EVIL_ENV",
+                },
+                "mapping": {
+                    "encoders": [
+                        {"id": 1, "slot": 1, "attribute": None},
+                        {"id": 2, "slot": 2, "attribute": None},
+                        {"id": 3, "slot": 3, "attribute": None},
+                        {"id": 4, "slot": 4, "attribute": None},
+                    ]
+                },
+            },
+            headers=headers,
+        )
+        assert response.status == 200
+        loaded = load_config(paths.config)
+        assert loaded.ma2.password_file != str(secret_probe)
+        assert loaded.ma2.password_env is None
+    finally:
+        await client.close()
 
 
 async def test_store_roundtrips_led_feedback_fields_and_keeps_others(tmp_path):

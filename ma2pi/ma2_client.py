@@ -87,14 +87,27 @@ class WebSocketTransport:
         self._ws: Any = None
 
     async def connect(self, uri: str) -> None:
+        import socket as _socket
         import websockets
 
+        if self._ws is not None:
+            await self.close()
+        # grandMA2 onPC's embedded WebSocket server does not answer RFC 6455
+        # PING control frames (verified on hardware: ping_interval=10 drops the
+        # session after 20 s with 1011 keepalive ping timeout).  Keep
+        # ping_interval=None and enable OS-level TCP keepalive instead.
         self._ws = await websockets.connect(
             uri,
             open_timeout=10,
             ping_interval=None,
+            close_timeout=2.0,
             max_size=2 * 1024 * 1024,
         )
+        transport = getattr(self._ws, "transport", None)
+        sock = transport.get_extra_info("socket") if transport is not None else None
+        if sock is not None:
+            with contextlib.suppress(OSError):
+                sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_KEEPALIVE, 1)
 
     async def recv(self) -> str | bytes | None:
         assert self._ws is not None
@@ -199,34 +212,39 @@ async def authenticate(
     """
 
     await transport.connect(ma2_uri(ma2))
+    try:
+        async with asyncio.timeout(ma2.login_timeout):
+            message = await _read_json(transport, ma2.login_timeout)
+            while not _server_ready(message):
+                message = await _read_json(transport, ma2.login_timeout)
 
-    message = await _read_json(transport, ma2.login_timeout)
-    while not _server_ready(message):
-        message = await _read_json(transport, ma2.login_timeout)
+            await transport.send(frames.session_request_frame())
 
-    await transport.send(frames.session_request_frame())
+            message = await _read_json(transport, ma2.login_timeout)
+            while "session" not in message:
+                message = await _read_json(transport, ma2.login_timeout)
+            session = message.get("session")
+            if not isinstance(session, int) or session <= 0:
+                raise HandshakeError(f"ungültige Session-ID in {message!r}")
 
-    message = await _read_json(transport, ma2.login_timeout)
-    while "session" not in message:
-        message = await _read_json(transport, ma2.login_timeout)
-    session = message.get("session")
-    if not isinstance(session, int) or session <= 0:
-        raise HandshakeError(f"ungültige Session-ID in {message!r}")
+            secret = password if password is not None else ma2.read_password()
+            digest = hashlib.md5(secret.encode("utf-8")).hexdigest()
+            await transport.send(frames.login_frame(ma2.username, digest, session))
 
-    secret = password if password is not None else ma2.read_password()
-    digest = hashlib.md5(secret.encode("utf-8")).hexdigest()
-    await transport.send(frames.login_frame(ma2.username, digest, session))
+            message = await _read_json(transport, ma2.login_timeout)
+            while not _login_response(message):
+                message = await _read_json(transport, ma2.login_timeout)
+            result = message.get("result")
+            if isinstance(result, dict):
+                result = result.get("result")
+            if result is not True:
+                raise LoginError(message.get("error") or "ungültige Zugangsdaten")
 
-    message = await _read_json(transport, ma2.login_timeout)
-    while not _login_response(message):
-        message = await _read_json(transport, ma2.login_timeout)
-    result = message.get("result")
-    if isinstance(result, dict):
-        result = result.get("result")
-    if result is not True:
-        raise LoginError(message.get("error") or "ungültige Zugangsdaten")
-
-    return session
+            return session
+    except BaseException:
+        with contextlib.suppress(Exception):
+            await transport.close()
+        raise
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,12 +307,13 @@ async def check_connection(
 
 
 class SendQueue:
-    """One queue, three priorities; encoders and faders coalesce per target."""
+    """One queue, four priorities; encoders, faders and requests coalesce."""
 
     def __init__(self) -> None:
         self._control: deque[Action] = deque()
         self._encoder: OrderedDict[tuple[str, str | int], EncoderAction] = OrderedDict()
-        self._playback: OrderedDict[tuple[int, int], PlaybackFader] = OrderedDict()
+        self._playback: OrderedDict[tuple[int | str, int], PlaybackFader] = OrderedDict()
+        self._requests: OrderedDict[tuple[int | str, int, int, int], PlaybacksRequest] = OrderedDict()
         self._ready = asyncio.Event()
         self.closed = False
 
@@ -316,6 +335,9 @@ class SendQueue:
         elif isinstance(action, PlaybackFader):
             # Absolute values: only the latest value per executor matters.
             self._playback[(action.page, action.executor)] = action
+        elif isinstance(action, PlaybacksRequest):
+            # Background polling sits below live controls and coalesces per block.
+            self._requests[(action.page, action.start, action.count, action.items_type)] = action
         else:
             self._control.append(action)
         self._ready.set()
@@ -330,6 +352,9 @@ class SendQueue:
             if self._playback:
                 _, action = self._playback.popitem(last=False)
                 return action
+            if self._requests:
+                _, action = self._requests.popitem(last=False)
+                return action
             self._ready.clear()
             await self._ready.wait()
 
@@ -337,6 +362,7 @@ class SendQueue:
         self._control.clear()
         self._encoder.clear()
         self._playback.clear()
+        self._requests.clear()
 
     @property
     def control_depth(self) -> int:
@@ -344,7 +370,12 @@ class SendQueue:
 
     @property
     def total_depth(self) -> int:
-        return len(self._control) + len(self._encoder) + len(self._playback)
+        return (
+            len(self._control)
+            + len(self._encoder)
+            + len(self._playback)
+            + len(self._requests)
+        )
 
     def __len__(self) -> int:
         return self.total_depth
@@ -466,6 +497,7 @@ class Ma2Client:
             maxsize=16
         )
         self._page = EncoderPage()
+        self._page_updated = asyncio.Event()
         self._page_task: asyncio.Task[None] | None = None
         self._screen_mode = False
         self._ma_held = False
@@ -642,14 +674,22 @@ class Ma2Client:
         if self._shutting_down:
             return
         self._shutting_down = True
-        deadline = self._clock() + min(timeout, 5.0) - 1.0
+        drain_budget = max(0.0, min(timeout, 5.0) * 0.8)
+        deadline = self._clock() + drain_budget
         while self._queue.total_depth and self._authenticated and self._clock() < deadline:
             await self._sleep(0.01)
         if self._authenticated:
             session = self._session or 0
             with contextlib.suppress(Exception):
-                await self._send_raw(frames.close_frame(session), "closeConnection")
-        await self._transport.close()
+                await asyncio.wait_for(
+                    self._send_raw(frames.close_frame(session), "closeConnection"),
+                    timeout=max(0.1, min(timeout * 0.2, 1.0)),
+                )
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(
+                self._transport.close(),
+                timeout=max(0.1, min(timeout, 2.0)),
+            )
         self._authenticated = False
         self._stop_sender = True
         for task in (
@@ -771,7 +811,9 @@ class Ma2Client:
             if message.get("responseType") == "playbacks":
                 self._deliver_playbacks(message)
                 continue
-            if not self._page.update(message):
+            if self._page.update(message):
+                self._page_updated.set()
+            else:
                 LOGGER.debug("rx message type=%s", frames.frame_type(message))
 
     def _deliver_playbacks(self, message: dict[str, Any]) -> None:
@@ -791,9 +833,9 @@ class Ma2Client:
         return await _read_json(self._transport, timeout)
 
     async def _keepalive_loop(self, session: int) -> None:
-        interval = self.config.ma2.keepalive_interval
         try:
             while not self._shutting_down and self._authenticated:
+                interval = self.config.ma2.keepalive_interval
                 await self._sleep(interval)
                 if not self._authenticated or self._shutting_down:
                     break
@@ -808,11 +850,18 @@ class Ma2Client:
         was_connected = self._authenticated or self._session is not None
         self._authenticated = False
         self._session = None
-        if self._keepalive_task is not None:
-            self._keepalive_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await self._keepalive_task
-            self._keepalive_task = None
+        for attr in ("_keepalive_task", "_page_task"):
+            task = getattr(self, attr, None)
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+                setattr(self, attr, None)
+        if was_connected:
+            with contextlib.suppress(Exception):
+                await self._transport.close()
+        self._page = EncoderPage()
+        self._page_updated.clear()
         self._rest.clear()
         self._queue.clear()
         while True:
@@ -825,6 +874,9 @@ class Ma2Client:
             if self._ma_held:
                 self._ma_held = False
                 self._refresh_mode_led()
+            if self._led is not None:
+                with contextlib.suppress(Exception):
+                    self._led.set_nipple(False)
             for callback in list(self._connection_lost_callbacks):
                 try:
                     callback()
@@ -990,6 +1042,18 @@ class Ma2Client:
                     action.slot,
                 )
                 return
+            if (
+                not self.dry_run
+                and self._authenticated
+                and self._session_task is not None
+                and not self._session_task.done()
+            ):
+                self._page_updated.clear()
+                with contextlib.suppress(Exception):
+                    await self._send_raw(
+                        frames.preset_types_frame("full", session), "encoderPage"
+                    )
+                    await asyncio.wait_for(self._page_updated.wait(), timeout=0.2)
             name = self._page.name_for(action.slot)
             if name is None:
                 LOGGER.warning(
@@ -1024,7 +1088,7 @@ class Ma2Client:
                 "Screen" if self._screen_mode else "Attribut",
             )
             if self._led is not None:
-                self._led.apply_mode(self.screen_encoder_active)
+                self._led.set_mode_color(self.screen_encoder_active)
             return
         else:  # pragma: no cover - exhaustive
             raise TypeError(f"unbekannte Aktion {action!r}")

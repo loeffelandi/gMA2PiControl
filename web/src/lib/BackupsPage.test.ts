@@ -24,7 +24,8 @@ function fakeApi() {
 describe('BackupsPage', () => {
   it('requires a confirmation before restoring', async () => {
     const api = fakeApi();
-    render(BackupsPage, { props: { api } });
+    const onAuthChange = vi.fn();
+    render(BackupsPage, { props: { api, onAuthChange } });
 
     await waitFor(() => {
       expect(screen.getByText(backups[0].id)).toBeTruthy();
@@ -41,6 +42,7 @@ describe('BackupsPage', () => {
     });
     expect(screen.getByRole('status').textContent).toContain('wiederhergestellt');
     expect(screen.queryByTestId('restore-confirm')).toBeNull();
+    expect(onAuthChange).toHaveBeenCalledOnce();
   });
 
   it('shows a restore error and keeps the confirmation', async () => {

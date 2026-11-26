@@ -56,11 +56,35 @@ def describe_frame(kind: str, frame: dict[str, Any]) -> str:
     """Describe an onPC frame by kind and coarse target fields only."""
 
     parts = [kind]
-    for key in ("page", "executor", "button", "note"):
-        value = frame.get(key)
-        if value is not None:
-            parts.append(f"{key} {value}")
-    if kind == "keyname" and frame.get("keyname"):
+    if "pageIndex" in frame and isinstance(frame["pageIndex"], int):
+        idx = frame["pageIndex"]
+        parts.append("page current" if idx < 0 else f"page {idx + 1}")
+    elif frame.get("page") is not None:
+        parts.append(f"page {frame['page']}")
+
+    if "execIndex" in frame and isinstance(frame["execIndex"], int):
+        parts.append(f"executor {frame['execIndex'] + 1}")
+    elif frame.get("executor") is not None:
+        parts.append(f"executor {frame['executor']}")
+
+    if "buttonId" in frame and isinstance(frame["buttonId"], int):
+        parts.append(f"button {frame['buttonId'] + 1}")
+    elif frame.get("button") is not None:
+        parts.append(f"button {frame['button']}")
+
+    if frame.get("faderValue") is not None:
+        try:
+            parts.append(f"fader {float(frame['faderValue']):.2f}")
+        except (TypeError, ValueError):
+            pass
+
+    if frame.get("name"):
+        parts.append(str(frame["name"]))
+
+    if frame.get("note") is not None:
+        parts.append(f"note {frame['note']}")
+
+    if kind in {"keyname", "hardkeyPress", "hardkeyRelease"} and frame.get("keyname"):
         parts.append(str(frame["keyname"]))
     return _clean(" · ".join(parts))
 

@@ -572,7 +572,8 @@ h2 {
   justify-self: start;
 }
 
-.form input {
+.form input,
+.form select {
   font: inherit;
   color: inherit;
   background: var(--surface-inset);
@@ -581,7 +582,8 @@ h2 {
   padding: 0.4rem 0.55rem;
 }
 
-.form input:focus {
+.form input:focus,
+.form select:focus {
   outline: 2px solid var(--accent-hover);
   outline-offset: 2px;
 }
@@ -677,7 +679,12 @@ h2 {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--surface);
+  color: var(--text);
   box-shadow: 0 1rem 3rem rgb(0 0 0 / 0.65);
+}
+
+.network-dialog::backdrop {
+  background: rgb(10 10 10 / 0.65);
 }
 
 .mapping-page table {

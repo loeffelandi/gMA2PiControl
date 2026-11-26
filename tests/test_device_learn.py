@@ -180,3 +180,38 @@ def test_start_with_explicit_bound_control(bank_config):
         "banktest", RawEvent("note_on", "72", 127, channel=1)
     )
     assert manager.status()["captured"] == [{"note": 72, "control": "bt_fader"}]
+
+
+def test_fader_sweep_does_not_conflict_button_release_ignored_and_abandoned_expires(bank_config):
+    now = [0.0]
+    events: list[dict] = []
+    manager = DeviceLearnManager(
+        bank_config,
+        clock=lambda: now[0],
+        timeout=10.0,
+        abandon_timeout=30.0,
+        publish=events.append,
+    )
+    manager.start("banktest", 2)  # order: bt_fader, bt_button, bt_encoder
+    # Fader sweep sends consecutive velocities on note 15 within 0.35 s
+    manager.handle_raw("banktest", RawEvent("note_on", "15", 40, channel=2))
+    now[0] = 0.05
+    manager.handle_raw("banktest", RawEvent("note_on", "15", 41, channel=2))
+    assert manager.status()["error"] is None
+    assert manager.status()["current"] == "bt_button"
+
+    # Next control is bt_button: velocity 1 release must be ignored!
+    now[0] = 1.0
+    manager.handle_raw("banktest", RawEvent("note_on", "20", 1, channel=2))
+    assert manager.status()["current"] == "bt_button"
+    manager.handle_raw("banktest", RawEvent("note_on", "20", 127, channel=2))
+    assert manager.status()["current"] == "bt_encoder"
+    assert len(events) >= 2
+
+    # Pause at timeout, then auto-expire after abandon_timeout
+    now[0] = 12.0
+    assert manager.poll()["paused"] is True  # type: ignore[index]
+    now[0] = 45.0
+    abandoned = manager.poll()
+    assert abandoned == {"active": False, "abandoned": True}
+    assert manager.active is False

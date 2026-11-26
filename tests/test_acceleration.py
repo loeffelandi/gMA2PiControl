@@ -136,3 +136,22 @@ def test_accelerator_resynchronises_at_lower_stop():
 
     assert raw == 0.0
     assert value == pytest.approx(0.0)
+
+
+def test_accelerator_smooth_return_avoids_large_final_snap():
+    accelerator = ValueAccelerator(ValueAccelerationSettings(max_multiplier=8))
+    accelerator.apply("encoder", 0.0, 0.0)
+    now = 0.0
+    for step in range(1, 22):
+        now += 0.005
+        value = accelerator.apply("encoder", step / 127, now)
+    assert value == pytest.approx(1.0)
+
+    # Now slowly step back down from 21/127 to 0/127: no single step jumps > 10%.
+    prev = value
+    for step in range(20, -1, -1):
+        now += 0.3
+        cur = accelerator.apply("encoder", step / 127, now)
+        assert prev - cur < 0.10
+        prev = cur
+    assert prev == pytest.approx(0.0)

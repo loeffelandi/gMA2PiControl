@@ -49,4 +49,29 @@ describe('AdvancedPage', () => {
     expect(screen.getByText('Rate & Logging')).toBeTruthy();
     expect(screen.queryByText('Konfigurations-Backups')).toBeNull();
   });
+
+  it('exposes rate bounds 5..40, CRITICAL log level and notifies onAuthChange', async () => {
+    const api = fakeApi();
+    const onAuthChange = vi.fn();
+    render(AdvancedPage, { props: { api, onAuthChange } });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Frames pro Sekunde')).toBeTruthy();
+    });
+
+    const rateInput = screen.getByLabelText('Frames pro Sekunde') as HTMLInputElement;
+    expect(rateInput.min).toBe('5');
+    expect(rateInput.max).toBe('40');
+
+    const levelSelect = screen.getByLabelText('Log-Level') as HTMLSelectElement;
+    await fireEvent.change(levelSelect, { target: { value: 'CRITICAL' } });
+    await fireEvent.click(screen.getByText('Einstellungen speichern'));
+
+    await waitFor(() => {
+      expect(api.updateConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ logging: { level: 'CRITICAL' } }),
+      );
+    });
+    expect(onAuthChange).toHaveBeenCalledOnce();
+  });
 });

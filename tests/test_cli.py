@@ -44,3 +44,35 @@ def test_dump_input_delegates(monkeypatch, config):
 
     monkeypatch.setattr("ma2pi.__main__.run_dump_input", fake)
     assert main(["--config", str(config.source_path), "--dump-input"]) == 0
+
+
+async def test_run_daemon_shutdown_leaves_no_ma2pi_tasks(monkeypatch, make_config):
+    import asyncio
+    from ma2pi import __main__ as main_mod
+
+    cfg = make_config(lambda d: d["led"].update({"enabled": False}))
+    monkeypatch.setattr(main_mod, "_start_web", lambda *a, **kw: asyncio.sleep(0))
+    monkeypatch.setattr("ma2pi.hid_input.EvdevSource.list_devices", lambda self: [])
+    monkeypatch.setattr("ma2pi.midi_input.list_midi_devices", lambda: [])
+
+    stop_holder: list[asyncio.Event] = []
+    orig_event = main_mod.asyncio.Event
+
+    class CapturingEvent(asyncio.Event):
+        def __init__(self) -> None:
+            super().__init__()
+            stop_holder.append(self)
+
+    monkeypatch.setattr(main_mod.asyncio, "Event", CapturingEvent)
+    daemon_task = asyncio.create_task(main_mod.run_daemon(cfg, dry_run=True))
+    await asyncio.sleep(0.05)
+    for ev in stop_holder:
+        ev.set()
+    rc = await asyncio.wait_for(daemon_task, timeout=3.0)
+    assert rc == 0
+    leaked = [
+        t.get_name()
+        for t in asyncio.all_tasks()
+        if t is not asyncio.current_task() and t.get_name().startswith("ma2pi-") and not t.done()
+    ]
+    assert leaked == []

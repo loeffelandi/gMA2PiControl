@@ -259,16 +259,47 @@ def test_format_devices():
     assert "KEY_F1" not in text  # only count is printed
 
 
-async def test_profile_with_missing_control_aborts(config):
-    from ma2pi.hid_input import ProfileError
-
+async def test_profile_with_missing_control_isolates_device_without_crash(config, caplog):
     source = FakeSource([info("/dev/input/event1", keys=("KEY_F1",))])
     manager = HidManager(config, source=source)
     queue: asyncio.Queue = asyncio.Queue()
-    with pytest.raises(ProfileError, match="KEY_F2"):
+    with caplog.at_level(logging.ERROR):
         await manager.reconcile(queue)
+    assert "KEY_F2" in caplog.text
     assert source.attempts == 0
     assert manager.open_devices == {}
+
+
+def test_select_devices_assigns_distinct_nodes_to_identical_controllers(make_config):
+    import dataclasses
+    from ma2pi.hid_input import select_devices
+
+    def mutate(data):
+        data["devices"]["cherry2"] = dict(data["devices"]["cherry-g86"])
+
+    cfg = make_config(mutate)
+    d1 = cherry()
+    d2 = dataclasses.replace(cherry(), path="/dev/input/event2")
+    selected = select_devices(cfg, [d1, d2])
+    assert selected["cherry-g86"].path == "/dev/input/event1"
+    assert selected["cherry2"].path == "/dev/input/event2"
+
+
+async def test_set_config_and_close_clear_encoder_decoders(config):
+    from ma2pi.config import EncoderProfile
+
+    manager = HidManager(config, source=FakeSource([]))
+    manager._decoders[("asl-mk2-e4b3", "ABS_X")] = EncoderDecoder(
+        EncoderProfile(1, "ABS_X", 24, 1)
+    )
+    await manager._close_device("asl-mk2-e4b3", asyncio.Queue(), "test")
+    assert manager._decoders == {}
+
+    manager._decoders[("other", "ABS_X")] = EncoderDecoder(
+        EncoderProfile(1, "ABS_X", 24, 1)
+    )
+    manager.set_config(config)
+    assert manager._decoders == {}
 
 
 async def test_open_failure_uses_backoff(config, caplog):

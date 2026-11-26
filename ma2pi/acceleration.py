@@ -1,9 +1,9 @@
 """Rate-based acceleration for absolute MIDI values.
 
 An absolute encoder reports a position, not a velocity.  To make a fast turn
-travel further than its raw delta, the router keeps a virtual value per control
-and amplifies each raw change by a multiplier derived from how often the
-control changed inside a short time window.
+travel further than its raw delta, the router keeps a virtual value per
+``(device, bank, control)`` key and amplifies each raw change by a multiplier
+derived from how often the control changed inside a short time window.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ class ValueAccelerator:
 
     def __init__(self, settings: ValueAccelerationSettings) -> None:
         self._settings = settings
-        self._states: dict[str, _State] = {}
+        self._states: dict[object, _State] = {}
 
     @property
     def settings(self) -> ValueAccelerationSettings:
@@ -56,14 +56,15 @@ class ValueAccelerator:
     def reset(self) -> None:
         self._states.clear()
 
-    def apply(self, control: str, raw: float, now: float) -> float:
+    def apply(self, key: object, raw: float, now: float) -> float:
         raw = max(0.0, min(1.0, raw))
-        state = self._states.get(control)
+        state = self._states.get(key)
         if state is None:
-            self._states[control] = _State(raw, raw, deque([now]))
+            self._states[key] = _State(raw, raw, deque([now]))
             return raw
 
-        delta = raw - state.last_raw
+        prev_raw = state.last_raw
+        delta = raw - prev_raw
         state.last_raw = raw
         if delta == 0:
             return state.value
@@ -74,11 +75,20 @@ class ValueAccelerator:
             state.times.popleft()
 
         rate = len(state.times)
-        value = state.value + delta * multiplier(self._settings, rate)
-        if raw <= 0.0 or raw >= 1.0:
-            # Physical stop: re-synchronise the virtual value.  A previous fast
-            # turn can leave it short of the stop, and without the anchor it
-            # would never catch up again because the raw value cannot grow.
-            value = raw
+        step = delta * multiplier(self._settings, rate)
+        # Smooth proportional catch-up toward the physical stop so a slow
+        # return reaches 0.0 / 1.0 cleanly without a sudden final-click snap.
+        if delta < 0 and prev_raw > 0.0 and state.value > prev_raw:
+            homing_step = -state.value * (-delta / prev_raw)
+            step = min(step, homing_step)
+        elif delta > 0 and prev_raw < 1.0 and (1.0 - state.value) > (1.0 - prev_raw):
+            homing_step = (1.0 - state.value) * (delta / (1.0 - prev_raw))
+            step = max(step, homing_step)
+
+        value = state.value + step
+        if raw <= 0.0 and delta < 0:
+            value = 0.0
+        elif raw >= 1.0 and delta > 0:
+            value = 1.0
         state.value = max(0.0, min(1.0, value))
         return state.value

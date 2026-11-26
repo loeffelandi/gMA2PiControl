@@ -105,12 +105,25 @@ class MidiHandle(Protocol):
 
 
 class _RawmidiStatus(ctypes.Structure):
-    """``struct snd_rawmidi_status`` from ``<sound/asound.h>``."""
+    """``struct snd_rawmidi_status`` from ``<sound/asound.h>`` (native long)."""
 
     _fields_ = [
         ("stream", ctypes.c_int),
         ("tv_sec", ctypes.c_long),
         ("tv_nsec", ctypes.c_long),
+        ("avail", ctypes.c_size_t),
+        ("xruns", ctypes.c_size_t),
+        ("reserved", ctypes.c_ubyte * 16),
+    ]
+
+
+class _RawmidiStatus64(ctypes.Structure):
+    """64-bit ``time_t`` variant used on 32-bit userland with ``_TIME_BITS=64``."""
+
+    _fields_ = [
+        ("stream", ctypes.c_int),
+        ("tv_sec", ctypes.c_int64),
+        ("tv_nsec", ctypes.c_int64),
         ("avail", ctypes.c_size_t),
         ("xruns", ctypes.c_size_t),
         ("reserved", ctypes.c_ubyte * 16),
@@ -124,6 +137,7 @@ def _rawmidi_ioc(direction: int, number: int, size: int) -> int:
 
 _RAWMIDI_STREAM_OUTPUT = 0
 _RAWMIDI_IOCTL_STATUS = _rawmidi_ioc(3, 0x20, ctypes.sizeof(_RawmidiStatus))
+_RAWMIDI_IOCTL_STATUS64 = _rawmidi_ioc(3, 0x20, ctypes.sizeof(_RawmidiStatus64))
 _RAWMIDI_IOCTL_DROP = _rawmidi_ioc(1, 0x30, ctypes.sizeof(ctypes.c_int))
 
 
@@ -135,9 +149,18 @@ def rawmidi_output_free(fd: int) -> int | None:
     buffer = bytearray(bytes(status))
     try:
         fcntl.ioctl(fd, _RAWMIDI_IOCTL_STATUS, buffer, True)
+        return int(_RawmidiStatus.from_buffer_copy(buffer).avail)
+    except OSError:
+        if _RAWMIDI_IOCTL_STATUS64 == _RAWMIDI_IOCTL_STATUS:
+            return None
+    status64 = _RawmidiStatus64()
+    status64.stream = _RAWMIDI_STREAM_OUTPUT
+    buffer64 = bytearray(bytes(status64))
+    try:
+        fcntl.ioctl(fd, _RAWMIDI_IOCTL_STATUS64, buffer64, True)
     except OSError:
         return None
-    return int(_RawmidiStatus.from_buffer_copy(buffer).avail)
+    return int(_RawmidiStatus64.from_buffer_copy(buffer64).avail)
 
 
 def rawmidi_drop_output(fd: int) -> None:
@@ -221,16 +244,38 @@ class RealMidiHandle:
             )
             self._writable = False
             self._fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
-        self._queue: asyncio.Queue[RawEvent | BaseException | None] = asyncio.Queue()
-        self._parser = MidiStreamParser()
-        self._loop = asyncio.get_running_loop()
-        self._loop.add_reader(self._fd, self._on_readable)
-        self._closed = False
-        self._write_warned = False
-        # A fresh output buffer is empty, so its free space is the buffer size.
-        self._out_size: int | None = (
-            rawmidi_output_free(self._fd) if self._writable else None
-        )
+        self._reader_removed = False
+        try:
+            self._queue: asyncio.Queue[RawEvent | BaseException | None] = asyncio.Queue()
+            self._parser = MidiStreamParser()
+            self._loop = asyncio.get_running_loop()
+            self._loop.add_reader(self._fd, self._on_readable)
+            self._closed = False
+            self._write_warned = False
+            # A fresh output buffer is empty, so its free space is the buffer size.
+            self._out_size: int | None = (
+                rawmidi_output_free(self._fd) if self._writable else None
+            )
+        except BaseException:
+            try:
+                if hasattr(self, "_loop"):
+                    self._loop.remove_reader(self._fd)
+            except Exception:
+                pass
+            try:
+                os.close(self._fd)
+            except OSError:
+                pass
+            raise
+
+    def _detach_reader(self) -> None:
+        if getattr(self, "_reader_removed", False):
+            return
+        self._reader_removed = True
+        try:
+            self._loop.remove_reader(self._fd)
+        except Exception:  # pragma: no cover - defensive
+            pass
 
     def _on_readable(self) -> None:
         try:
@@ -238,16 +283,18 @@ class RealMidiHandle:
         except BlockingIOError:
             return
         except OSError as exc:
+            self._detach_reader()
             self._queue.put_nowait(exc)
             return
         if not data:
+            self._detach_reader()
             self._queue.put_nowait(None)
             return
         for event in self._parser.feed(data):
             self._queue.put_nowait(event)
 
     def write(self, data: bytes) -> bool:
-        """Send one MIDI message; never blocks the loop and never raises."""
+        """Send one MIDI message; never blocks the loop and never splits frames."""
 
         if self._closed:
             return False
@@ -259,9 +306,14 @@ class RealMidiHandle:
                     self._path,
                 )
             return False
+        size = getattr(self, "_out_size", None)
+        if size is not None:
+            free = rawmidi_output_free(self._fd)
+            if free is not None and free < len(data):
+                return False
         try:
-            os.write(self._fd, data)
-            return True
+            written = os.write(self._fd, data)
+            return written == len(data)
         except BlockingIOError:
             return False
         except OSError as exc:
@@ -297,10 +349,7 @@ class RealMidiHandle:
         if self._closed:
             return
         self._closed = True
-        try:
-            self._loop.remove_reader(self._fd)
-        except Exception:  # pragma: no cover - defensive
-            pass
+        self._detach_reader()
         if self._writable:
             # Without this the kernel waits up to 10 s for a device that does
             # not take its output before it lets close() return.
@@ -330,15 +379,22 @@ def select_midi_devices(
     config: AppConfig, devices: Iterable[DeviceInfo]
 ) -> dict[str, DeviceInfo]:
     pool = list(devices)
+    claimed_paths: set[str] = set()
     selected: dict[str, DeviceInfo] = {}
     for name, device_config in config.devices.items():
         if device_config.backend != "midi":
             continue
-        candidates = [info for info in pool if device_matches(device_config, info)]
+        candidates = [
+            info
+            for info in pool
+            if info.path not in claimed_paths and device_matches(device_config, info)
+        ]
         if not candidates:
             continue
         candidates.sort(key=lambda info: info.path)
-        selected[name] = candidates[0]
+        chosen = candidates[0]
+        selected[name] = chosen
+        claimed_paths.add(chosen.path)
         for ignored in candidates[1:]:
             LOGGER.info(
                 "Ignoriere zusätzliches MIDI-Interface %s (%s) für %s",
@@ -370,10 +426,17 @@ def validate_midi_profile(
 
 
 class _OpenMidi:
-    def __init__(self, info: DeviceInfo, handle: MidiHandle, task: asyncio.Task[None]) -> None:
+    def __init__(
+        self,
+        info: DeviceInfo,
+        handle: MidiHandle,
+        task: asyncio.Task[None],
+        generation: int = 1,
+    ) -> None:
         self.info = info
         self.handle = handle
         self.task = task
+        self.generation = generation
 
 
 class MidiManager:
@@ -392,6 +455,7 @@ class MidiManager:
         self._poll_interval = poll_interval
         self._clock = clock
         self._open: dict[str, _OpenMidi] = {}
+        self._next_generation = 0
         self._missing_warned: set[str] = set()
         self._unknown_notes: set[tuple[str, int]] = set()
         self._unknown_channels: set[tuple[str, int]] = set()
@@ -406,6 +470,10 @@ class MidiManager:
     @property
     def open_devices(self) -> dict[str, str]:
         return {name: entry.info.path for name, entry in self._open.items()}
+
+    @property
+    def open_generations(self) -> dict[str, int]:
+        return {name: entry.generation for name, entry in self._open.items()}
 
     def set_config(self, config: AppConfig) -> None:
         """Adopt an applied configuration; readers look profiles up per event."""
@@ -504,11 +572,14 @@ class MidiManager:
 
                 device = self.config.devices[name]
                 profile = self.config.profiles[device.profile]
-                validate_midi_profile(name, device, profile, info)
-
                 now = self._clock()
                 retry = self._retry.get(name)
                 if retry is not None and now < retry[0]:
+                    continue
+                try:
+                    validate_midi_profile(name, device, profile, info)
+                except ProfileError as exc:
+                    self._schedule_retry(name, now, str(exc))
                     continue
                 try:
                     handle = await self._source.open(info)
@@ -519,11 +590,14 @@ class MidiManager:
                     self._schedule_retry(name, now, f"Öffnen fehlgeschlagen: {exc}")
                     continue
                 self._retry.pop(name, None)
+                self._next_generation += 1
                 task = asyncio.create_task(
                     self._read_device(name, info, handle, queue),
                     name=f"ma2pi-midi-{name}",
                 )
-                self._open[name] = _OpenMidi(info, handle, task)
+                self._open[name] = _OpenMidi(
+                    info, handle, task, self._next_generation
+                )
                 self._missing_warned.discard(name)
                 self._seen_any = True
                 LOGGER.info(

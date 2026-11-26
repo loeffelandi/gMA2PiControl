@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  import type {
-    ApiClient,
-    DeviceBank,
-    DeviceEntry,
-    DeviceLearnStatus,
+  import {
+    ApiError,
+    type ApiClient,
+    type DeviceBank,
+    type DeviceEntry,
+    type DeviceLearnStatus,
   } from './api';
   import AssignDialog from './AssignDialog.svelte';
   import DeviceSurface from './DeviceSurface.svelte';
@@ -32,6 +33,8 @@
   let bankSize = $state(1);
   let channel = $state(1);
   let maPage = $state<number | ''>('');
+  let savingBank = $state(false);
+  let lastSyncedDevice: string | null = null;
 
   const device = $derived(
     devices.find((entry) => entry.name === selectedDevice) ?? null,
@@ -47,7 +50,24 @@
       notes: {},
     },
   );
-  const bound = $derived(new Set(Object.values(activeBank.notes ?? {})));
+
+  function bankNotesRecord(notes: unknown): Record<string, string> {
+    if (!notes) return {};
+    if (Array.isArray(notes)) {
+      const out: Record<string, string> = {};
+      for (const entry of notes) {
+        if (entry && typeof entry === 'object' && 'note' in entry && 'control' in entry) {
+          out[String((entry as { note: unknown }).note)] = String(
+            (entry as { control: unknown }).control,
+          );
+        }
+      }
+      return out;
+    }
+    return notes as Record<string, string>;
+  }
+
+  const bound = $derived(new Set(Object.values(bankNotesRecord(activeBank.notes))));
   const inventory = $derived(device?.controls.inventory ?? []);
   const learningHere = $derived(
     learnStatus?.active === true &&
@@ -58,6 +78,12 @@
   const activeLearnKind = $derived(
     inventory.find((item) => item.id === activeLearn)?.kind ?? null,
   );
+
+  function errorMessage(cause: unknown, fallback: string): string {
+    if (cause instanceof ApiError) return cause.detail || fallback;
+    if (cause instanceof Error) return cause.message || fallback;
+    return fallback;
+  }
 
   function learnVerb(kind: string | null): string {
     if (kind === 'encoder' || kind === 'relative-encoder' || kind === 'poti') {
@@ -79,9 +105,22 @@
       if (!selectedDevice || !devices.some((entry) => entry.name === selectedDevice)) {
         selectedDevice = devices[0]?.name ?? null;
       }
+      const active = devices.find((entry) => entry.name === selectedDevice) ?? null;
+      if (active) {
+        if (active.name !== lastSyncedDevice) {
+          bankSize = active.bank_size;
+          lastSyncedDevice = active.name;
+        }
+        const nextBanks = active.controls.banks ?? [];
+        if (nextBanks.length && !nextBanks.some((entry) => entry.number === bank)) {
+          bank = nextBanks[0].number;
+        }
+      } else {
+        lastSyncedDevice = null;
+      }
       syncBankSettings();
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Laden fehlgeschlagen';
+      error = errorMessage(cause, 'Laden fehlgeschlagen');
     }
   }
 
@@ -89,21 +128,21 @@
     void reload();
   });
 
-  $effect(() => {
-    if (device) {
-      bankSize = device.bank_size;
-      selection = [];
-      if (banks.length && !banks.some((entry) => entry.number === bank)) {
-        bank = banks[0].number;
+  function selectDevice(name: string): void {
+    if (selectedDevice === name) return;
+    selectedDevice = name;
+    lastSyncedDevice = name;
+    selection = [];
+    const target = devices.find((entry) => entry.name === name) ?? null;
+    if (target) {
+      bankSize = target.bank_size;
+      const targetBanks = target.controls.banks ?? [];
+      if (targetBanks.length && !targetBanks.some((entry) => entry.number === bank)) {
+        bank = targetBanks[0].number;
       }
-      syncBankSettings();
     }
-  });
-
-  $effect(() => {
-    bank;
     syncBankSettings();
-  });
+  }
 
   function syncBankSettings(): void {
     channel = activeBank.channel;
@@ -113,7 +152,52 @@
 
   function layerFor(number: number): AnyConfig | null {
     if (!device || !config) return null;
-    return config.mapping?.device_banks?.[device.name]?.[String(number)] ?? null;
+    const devBanks = config.mapping?.device_banks?.[device.name];
+    if (!devBanks) return null;
+    return (
+      devBanks[String(number)] ??
+      devBanks[number] ??
+      devBanks.banks?.[String(number)] ??
+      devBanks.banks?.[number] ??
+      null
+    );
+  }
+
+  function normalizeEncoderEntry(entry: AnyConfig, fallbackId?: number): AnyConfig | null {
+    if (!entry || typeof entry !== 'object') return null;
+    const id = entry.id !== undefined ? Number(entry.id) : fallbackId;
+    if (id === undefined || !Number.isInteger(id)) return null;
+    if (entry.attribute !== undefined && entry.attribute !== null && entry.attribute !== '') {
+      return { id, attribute: String(entry.attribute) };
+    }
+    if (entry.slot !== undefined && entry.slot !== null) {
+      return { id, slot: Number(entry.slot) };
+    }
+    return null;
+  }
+
+  function layerEncoderList(number: number): AnyConfig[] {
+    const raw = layerFor(number)?.encoders;
+    if (!raw) return [];
+    if (Array.isArray(raw)) {
+      return raw
+        .map((entry) => normalizeEncoderEntry(entry))
+        .filter((entry): entry is AnyConfig => entry !== null);
+    }
+    if (typeof raw === 'object') {
+      return Object.entries(raw)
+        .map(([key, entry]) => normalizeEncoderEntry(entry as AnyConfig, Number(key)))
+        .filter((entry): entry is AnyConfig => entry !== null);
+    }
+    return [];
+  }
+
+  function globalEncoderList(): AnyConfig[] {
+    const raw = config?.mapping?.encoders;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((entry) => normalizeEncoderEntry(entry))
+      .filter((entry): entry is AnyConfig => entry !== null);
   }
 
   function keyFor(control: string): AnyConfig | null {
@@ -136,9 +220,10 @@
     const layer = layerFor(bank);
     const override = layer?.playbacks?.[control] ?? null;
     if (!base && !override) return null;
-    const offset = override?.executor !== undefined && override?.executor !== null
-      ? 0
-      : bankOffset();
+    const offset =
+      override?.executor !== undefined && override?.executor !== null
+        ? 0
+        : bankOffset();
     const executor = override?.executor ?? base?.executor;
     return {
       page: override?.page ?? base?.page ?? 'current',
@@ -152,10 +237,9 @@
   function encoderFor(control: string): AnyConfig | null {
     if (!config || !control.startsWith('encoder.')) return null;
     const id = Number(control.slice('encoder.'.length));
-    const layer = layerFor(bank)?.encoders;
-    const override = layer?.[String(id)] ?? layer?.[id];
+    const override = layerEncoderList(bank).find((entry) => entry.id === id);
     if (override) return override;
-    return (config.mapping?.encoders ?? []).find((entry: AnyConfig) => entry.id === id) ?? null;
+    return globalEncoderList().find((entry) => entry.id === id) ?? null;
   }
 
   function screenEncoderFor(slot: number): number | null {
@@ -163,6 +247,49 @@
     const value = screens[String(slot)] ?? screens[slot];
     return value === undefined || value === null ? null : Number(value);
   }
+
+  function hasLayerOverrideFor(number: number, control: string): boolean {
+    const layer = layerFor(number);
+    if (layer?.keys?.[control] !== undefined || layer?.playbacks?.[control] !== undefined) {
+      return true;
+    }
+    if (control.startsWith('encoder.')) {
+      const id = Number(control.slice('encoder.'.length));
+      return layerEncoderList(number).some((entry) => entry.id === id);
+    }
+    return false;
+  }
+
+  function hasRemovableAssignment(control: string): boolean {
+    if (hasLayerOverrideFor(bank, control)) return true;
+    if (bank >= 2) return false;
+    if (config?.mapping?.keys?.[control] !== undefined) return true;
+    if (config?.mapping?.playbacks?.[control] !== undefined) return true;
+    if (control.startsWith('encoder.')) {
+      const id = Number(control.slice('encoder.'.length));
+      return globalEncoderList().some((entry) => entry.id === id);
+    }
+    return false;
+  }
+
+  const dialogControls = $derived(
+    selection.length ? selection : dialog ? [dialog.control] : [],
+  );
+  const dialogHasAssignment = $derived(
+    dialogControls.some((ctrl) => hasRemovableAssignment(ctrl)),
+  );
+  const dialogInherited = $derived.by(() => {
+    if (!dialog || bank < 2) return false;
+    const ctrl = dialog.control;
+    const override = layerFor(bank)?.playbacks?.[ctrl];
+    const base = config?.mapping?.playbacks?.[ctrl];
+    return (
+      !hasLayerOverrideFor(bank, ctrl) &&
+      Boolean(base) &&
+      (override?.executor === undefined || override?.executor === null) &&
+      bankOffset() > 0
+    );
+  });
 
   function keyAssignment(key: AnyConfig): string | undefined {
     if (key.hardkey) return key.hardkey;
@@ -236,10 +363,11 @@
   }
 
   function openDialog(control: string): void {
-    const layerKey = layerFor(bank)?.keys?.[control] ?? null;
-    const playback = playbackFor(control);
-    const encoder = control.startsWith('encoder.') ? encoderFor(control) : null;
-    const key = keyFor(control);
+    const target = selection.length > 1 ? selection[0] : control;
+    const layerKey = layerFor(bank)?.keys?.[target] ?? null;
+    const playback = playbackFor(target);
+    const encoder = target.startsWith('encoder.') ? encoderFor(target) : null;
+    const key = keyFor(target);
     const initial = layerKey
       ? keyInitial(layerKey)
       : playback
@@ -262,23 +390,8 @@
             ? keyInitial(key)
             : null;
     dialog = {
-      control: selection.length > 1 ? selection[0] : control,
+      control: target,
       initial,
-    };
-  }
-
-  function clearFields(): AnyConfig {
-    return {
-      hardkey: null,
-      command: null,
-      screen_mode: null,
-      encoder_press: null,
-      screen: null,
-      page: null,
-      executor: null,
-      kind: null,
-      button: null,
-      accelerated: null,
     };
   }
 
@@ -298,9 +411,10 @@
       const slot = Number(values.slot);
       const target: AnyConfig = attribute ? { id, attribute } : { id, slot };
       const mappingPatch: AnyConfig = {};
-      const layerEntries = Object.values(layerFor(bank)?.encoders ?? {}) as AnyConfig[];
+      const layerEntries = layerEncoderList(bank);
       const layerHasEncoder = layerEntries.some((entry) => entry.id === id);
-      if (bank !== 1 || layerHasEncoder) {
+
+      if (bank !== 1) {
         const next = layerEntries
           .filter((entry) => entry.id !== id)
           .concat(target)
@@ -309,35 +423,110 @@
           [device.name]: { [String(bank)]: { encoders: next } },
         };
       } else {
-        const next = (config?.mapping?.encoders ?? [])
-          .filter((entry: AnyConfig) => entry.id !== id)
+        const currentGlobal = globalEncoderList();
+        const prevEncoder = currentGlobal.find((entry) => entry.id === id);
+        const prevSlot =
+          prevEncoder?.slot !== undefined && prevEncoder?.slot !== null
+            ? Number(prevEncoder.slot)
+            : null;
+        const next = currentGlobal
+          .filter((entry) => entry.id !== id)
           .concat(target)
-          .sort((a: AnyConfig, b: AnyConfig) => a.id - b.id);
+          .sort((a, b) => a.id - b.id);
         mappingPatch.encoders = next;
+
+        if (layerHasEncoder) {
+          mappingPatch.device_banks = {
+            [device.name]: {
+              '1': { encoders: layerEntries.filter((entry) => entry.id !== id) },
+            },
+          };
+        }
+
+        const screen = Number(values.screen);
+        const screenPatch: Record<string, number | null> = {};
+        if (!attribute && slot >= 1 && slot <= 4) {
+          if (screen >= 5) {
+            screenPatch[String(slot)] = screen;
+          } else if (screenEncoderFor(slot) !== null) {
+            screenPatch[String(slot)] = null;
+          }
+        }
+        if (
+          prevSlot !== null &&
+          prevSlot >= 1 &&
+          prevSlot <= 4 &&
+          (Boolean(attribute) || prevSlot !== slot) &&
+          screenEncoderFor(prevSlot) !== null &&
+          !next.some((entry) => entry.slot === prevSlot)
+        ) {
+          screenPatch[String(prevSlot)] = null;
+        }
+        if (Object.keys(screenPatch).length > 0) {
+          mappingPatch.screen_encoders = screenPatch;
+        }
       }
-      const screen = Number(values.screen);
-      if (!attribute && screen >= 5) {
-        mappingPatch.screen_encoders = { [String(slot)]: screen };
-      }
+
       await api.updateConfig({ mapping: mappingPatch });
       dialog = null;
       selection = [];
       await reload();
       return;
     }
+
+    const useGlobalScope =
+      bank === 1 || (values.action === 'executor' && values.scope === 'global');
+    const offset = useGlobalScope && bank > 1 ? bankOffset() : 0;
+    if (values.action === 'executor' && useGlobalScope && values.start - offset < 1) {
+      throw new Error(
+        `Für globale Speicherung muss Executor mindestens ${offset + 1} sein.`,
+      );
+    }
+
     const patch: AnyConfig = { mapping: {} };
     for (let index = 0; index < controls.length; index += 1) {
       const control = controls[index];
-      const area =
-        bank === 1
-          ? patch.mapping
-          : (patch.mapping.device_banks ??= {}) &&
-            ((patch.mapping.device_banks[device.name] ??= {}) &&
-              ((patch.mapping.device_banks[device.name][String(bank)] ??= {})));
+      const area = useGlobalScope
+        ? patch.mapping
+        : (((patch.mapping.device_banks ??= {})[device.name] ??= {})[String(bank)] ??= {});
       area.keys ??= {};
       area.playbacks ??= {};
       area.keys[control] = null;
       area.playbacks[control] = null;
+
+      if (useGlobalScope) {
+        const layer1 = layerFor(1);
+        if (
+          layer1?.keys?.[control] !== undefined ||
+          layer1?.playbacks?.[control] !== undefined
+        ) {
+          const bank1Patch =
+            (((patch.mapping.device_banks ??= {})[device.name] ??= {})['1'] ??= {});
+          if (layer1?.keys?.[control] !== undefined) {
+            (bank1Patch.keys ??= {})[control] = null;
+          }
+          if (layer1?.playbacks?.[control] !== undefined) {
+            (bank1Patch.playbacks ??= {})[control] = null;
+          }
+        }
+        if (bank > 1) {
+          const activeLayer = layerFor(bank);
+          if (
+            activeLayer?.keys?.[control] !== undefined ||
+            activeLayer?.playbacks?.[control] !== undefined
+          ) {
+            const activePatch =
+              (((patch.mapping.device_banks ??= {})[device.name] ??= {})[String(bank)] ??= {});
+            if (activeLayer?.keys?.[control] !== undefined) {
+              (activePatch.keys ??= {})[control] = null;
+            }
+            if (activeLayer?.playbacks?.[control] !== undefined) {
+              (activePatch.playbacks ??= {})[control] = null;
+            }
+          }
+        }
+      }
+
       if (values.action === 'hardkey') {
         area.keys[control] = {
           hardkey: values.hardkey,
@@ -379,18 +568,18 @@
           screen: null,
         };
       } else {
-        const executor = values.start + index * values.step;
+        const executor = values.start - offset + index * values.step;
+        const kind = inventory.find((item) => item.id === control)?.kind;
         const entry: AnyConfig = {
-          ...clearFields(),
           page: values.page === 'current' ? 'current' : Number(values.page),
           executor,
           kind: values.targetKind,
+          button: values.targetKind === 'button' ? Number(values.button) : null,
+          accelerated:
+            kind === 'encoder' && values.targetKind === 'fader'
+              ? Boolean(values.accelerated)
+              : null,
         };
-        if (values.targetKind === 'button') entry.button = values.button;
-        const kind = inventory.find((item) => item.id === control)?.kind;
-        if (kind === 'encoder' && values.targetKind === 'fader') {
-          entry.accelerated = Boolean(values.accelerated);
-        }
         area.playbacks[control] = entry;
       }
     }
@@ -400,8 +589,55 @@
     await reload();
   }
 
+  async function clearAssignment(): Promise<void> {
+    const controls = selection.length ? selection : dialog ? [dialog.control] : [];
+    if (!controls.length || !device) return;
+    const patch: AnyConfig = { mapping: {} };
+
+    for (const control of controls) {
+      const isEncoder = control.startsWith('encoder.');
+      const encoderId = isEncoder ? Number(control.slice('encoder.'.length)) : null;
+      const hasOverride = hasLayerOverrideFor(bank, control);
+
+      if (bank >= 2 || hasOverride) {
+        const bankPatch =
+          (((patch.mapping.device_banks ??= {})[device.name] ??= {})[String(bank)] ??= {});
+        if (isEncoder && encoderId !== null) {
+          const baseList: AnyConfig[] = bankPatch.encoders ?? layerEncoderList(bank);
+          bankPatch.encoders = baseList.filter((entry) => entry.id !== encoderId);
+        } else {
+          (bankPatch.keys ??= {})[control] = null;
+          (bankPatch.playbacks ??= {})[control] = null;
+        }
+      } else if (isEncoder && encoderId !== null) {
+        const baseGlobal: AnyConfig[] = patch.mapping.encoders ?? globalEncoderList();
+        const removed = baseGlobal.find((entry) => entry.id === encoderId);
+        const nextGlobal = baseGlobal.filter((entry) => entry.id !== encoderId);
+        patch.mapping.encoders = nextGlobal;
+        if (
+          removed?.slot !== undefined &&
+          removed?.slot !== null &&
+          removed.slot >= 1 &&
+          removed.slot <= 4 &&
+          screenEncoderFor(removed.slot) !== null &&
+          !nextGlobal.some((entry) => entry.slot === removed.slot)
+        ) {
+          (patch.mapping.screen_encoders ??= {})[String(removed.slot)] = null;
+        }
+      } else {
+        (patch.mapping.keys ??= {})[control] = null;
+        (patch.mapping.playbacks ??= {})[control] = null;
+      }
+    }
+
+    await api.updateConfig(patch);
+    dialog = null;
+    selection = [];
+    await reload();
+  }
+
   async function saveBankSettings(): Promise<void> {
-    if (!device || !config) return;
+    if (!device || !config || savingBank) return;
     const size = Number(bankSize);
     const channelValue = Number(channel);
     const pageNumber =
@@ -421,37 +657,44 @@
     const profileBanks = (profile?.banks ?? []).map((entry: AnyConfig) => ({
       number: entry.number,
       channel: entry.number === bank ? channelValue : entry.channel,
-      notes: entry.notes ?? {},
+      notes: bankNotesRecord(entry.notes),
     }));
-    let latest: AnyConfig;
+    savingBank = true;
+    error = null;
     try {
-      latest = await api.config();
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Laden fehlgeschlagen';
-      return;
-    }
-    const currentBanks = latest.profiles?.[device.profile]?.banks ?? profileBanks;
-    const mergedBanks = currentBanks.map((entry: AnyConfig) => ({
-      number: entry.number,
-      channel: entry.number === bank ? channelValue : entry.channel,
-      notes: entry.notes ?? {},
-    }));
-    const patch: AnyConfig = {
-      profiles: { [device.profile]: { banks: mergedBanks } },
-      mapping: {
-        device_banks: {
-          [device.name]: {
-            bank_size: size,
-            [String(bank)]: { ma_page: pageNumber },
+      let latest: AnyConfig;
+      try {
+        latest = await api.config();
+      } catch (cause) {
+        error = errorMessage(cause, 'Laden fehlgeschlagen');
+        return;
+      }
+      const currentBanks = latest.profiles?.[device.profile]?.banks ?? profileBanks;
+      const mergedBanks = currentBanks.map((entry: AnyConfig) => ({
+        number: entry.number,
+        channel: entry.number === bank ? channelValue : entry.channel,
+        notes: bankNotesRecord(entry.notes),
+      }));
+      const patch: AnyConfig = {
+        profiles: { [device.profile]: { banks: mergedBanks } },
+        mapping: {
+          device_banks: {
+            [device.name]: {
+              bank_size: size,
+              [String(bank)]: { ma_page: pageNumber },
+            },
           },
         },
-      },
-    };
-    try {
-      await api.updateConfig(patch);
-      await reload();
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Speichern fehlgeschlagen';
+      };
+      try {
+        await api.updateConfig(patch);
+        lastSyncedDevice = null;
+        await reload();
+      } catch (cause) {
+        error = errorMessage(cause, 'Speichern fehlgeschlagen');
+      }
+    } finally {
+      savingBank = false;
     }
   }
 </script>
@@ -471,12 +714,12 @@
           <li>
             <button
               type="button"
-              class:active={entry.name === selectedDevice}
-              onclick={() => (selectedDevice = entry.name)}
+              class={{ active: entry.name === selectedDevice }}
+              onclick={() => selectDevice(entry.name)}
             >
               <strong>{entry.name}</strong>
               <span>{entry.vendor_product}</span>
-              <span class:missing={entry.detected === null}>
+              <span class={{ missing: entry.detected === null }}>
                 {entry.detected ? 'verbunden' : 'verbindung verloren'}
               </span>
             </button>
@@ -495,7 +738,7 @@
           <label>
             Bank
             <select bind:value={bank} onchange={syncBankSettings}>
-              {#each banks.length ? banks : [{ number: 1, channel: 1, notes: {} }] as entry}
+              {#each banks.length ? banks : [{ number: 1, channel: 1, notes: {} }] as entry (entry.number)}
                 <option value={entry.number}>
                   Bank {entry.number} · Kanal {entry.channel}
                 </option>
@@ -557,7 +800,7 @@
             </thead>
             <tbody>
               {#each inventory as item (item.id)}
-                <tr class:active={item.id === activeLearn}>
+                <tr class={{ active: item.id === activeLearn }}>
                   <td><button type="button" onclick={() => toggle(item.id)}>{item.id}</button></td>
                   <td>{item.kind}</td>
                   <td>{bound.has(item.id) ? 'ja' : 'nein'}</td>
@@ -573,7 +816,9 @@
             <label>Bankgröße <input type="number" min="1" bind:value={bankSize} /></label>
             <label>Kanal <input type="number" min="1" max="16" bind:value={channel} /></label>
             <label>MA-Page <input type="number" min="1" placeholder="—" bind:value={maPage} /></label>
-            <button type="button" onclick={saveBankSettings}>Einstellungen speichern</button>
+            <button type="button" disabled={savingBank} onclick={saveBankSettings}>
+              Einstellungen speichern
+            </button>
           </div>
         {/if}
 
@@ -598,6 +843,7 @@
             {bank}
             control={learnControl}
             onFinished={() => void reload()}
+            onDone={() => (showLearn = false)}
             onStatus={(next) => (learnStatus = next)}
           />
         {/if}
@@ -608,17 +854,18 @@
   </div>
 
   {#if dialog && device}
-    <div class="dialog">
-      <AssignDialog
-        control={dialog.control}
-        {bank}
-        kind={inventory.find((item) => item.id === (dialog?.control ?? ''))?.kind ?? 'button'}
-        count={selection.length || 1}
-        initial={dialog.initial}
-        onSave={saveAssignment}
-        onClose={() => (dialog = null)}
-      />
-    </div>
+    <AssignDialog
+      control={dialog.control}
+      {bank}
+      kind={inventory.find((item) => item.id === (dialog?.control ?? ''))?.kind ?? 'button'}
+      count={selection.length || 1}
+      initial={dialog.initial}
+      inherited={dialogInherited}
+      hasAssignment={dialogHasAssignment}
+      onSave={saveAssignment}
+      onClear={clearAssignment}
+      onClose={() => (dialog = null)}
+    />
   {/if}
 </section>
 
@@ -717,15 +964,6 @@
 
   .actions {
     margin-top: 0.8rem;
-  }
-
-  .dialog {
-    position: fixed;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    background: rgb(10 10 10 / 0.65);
-    padding: 1rem;
   }
 
   input,

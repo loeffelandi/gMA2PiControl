@@ -3,9 +3,10 @@
 The store owns the ``AppConfig`` instance the daemon is currently running with
 and applies JSON merge patches atomically.  A patch is validated with the same
 rules as daemon start and written through :mod:`ma2pi.config_store`; changed
-credentials are tested before they are persisted.  Held keys are released in
-reverse press order and open encoder deltas are dropped while the engine is
-frozen, so no frame from the old configuration leaks into the new generation.
+credentials are tested before live inputs are frozen or anything is persisted.
+Held keys and playback buttons are released in reverse press order and open
+encoder deltas are dropped while frozen, so no frame from the old configuration
+leaks into the new generation.
 """
 
 from __future__ import annotations
@@ -13,13 +14,16 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import time
 import tomllib
 from typing import Any, Awaitable, Callable, Mapping
 
 from .config import AppConfig, Ma2Settings, parse_config
 from .config_store import (
+    PASSWORD_MODE,
     ConfigPaths,
     PreparedConfig,
+    _atomic_write,
     commit_prepared,
     create_backup,
     list_backups,
@@ -31,6 +35,8 @@ from .ma2_client import ConnectionCheck, Ma2Client, check_connection
 from .mapping import MappingEngine
 
 LOGGER = logging.getLogger("ma2pi.runtime")
+
+_RELEASE_DRAIN_SECONDS = 0.5
 
 
 class ApplyBusy(RuntimeError):
@@ -45,13 +51,7 @@ def _secret(ma2: Ma2Settings) -> str | None:
 
 
 def credentials_changed(current: AppConfig, candidate: AppConfig) -> bool:
-    """True when applying ``candidate`` needs a reconnect.
-
-    Host, port, path, user and the actual password count; a what-if password
-    written by the UI is compared by reading the candidate's source.  Invalid
-    or missing password sources do not raise here; the connection test reports
-    them instead.
-    """
+    """True when applying ``candidate`` needs a reconnect."""
 
     old = current.ma2
     new = candidate.ma2
@@ -75,6 +75,7 @@ class ConfigStore:
         paths: ConfigPaths,
         *,
         client: Ma2Client | None = None,
+        playback: Any = None,
         owner: str | None = "ma2pi",
         validate: Callable[[dict[str, Any]], Any] | None = None,
         tester: Callable[[AppConfig, str | None], Awaitable[Any]] | None = None,
@@ -83,6 +84,7 @@ class ConfigStore:
         self._engine = engine
         self._paths = paths
         self._client = client
+        self._playback = playback
         self._owner = owner
         self._tester = tester
         self._validate = validate or (
@@ -91,6 +93,11 @@ class ConfigStore:
         self._lock = asyncio.Lock()
         self._generation = 0
         self._activate_hooks: list[Callable[[AppConfig], None]] = []
+
+    def set_playback(self, playback: Any) -> None:
+        """Attach the playback router so held buttons release on apply."""
+
+        self._playback = playback
 
     def add_activate_hook(self, hook: Callable[[AppConfig], None]) -> None:
         """Register a callback that receives every successfully applied config."""
@@ -152,13 +159,17 @@ class ConfigStore:
         ma2 = cleaned.get("ma2")
         if ma2 is not None and not isinstance(ma2, dict):
             raise ValueError("ma2 muss eine Tabelle sein")
+        if isinstance(ma2, dict):
+            ma2.pop("password", None)
+            ma2.pop("password_set", None)
         if password is not None:
             ma2 = {} if ma2 is None else ma2
             ma2["password_file"] = str(self._paths.password)
             ma2["password_env"] = None
             cleaned["ma2"] = ma2
-        if isinstance(ma2, dict):
-            ma2.pop("password", None)
+        web = cleaned.get("web")
+        if isinstance(web, dict):
+            web.pop("pin_set", None)
         return cleaned
 
     def validate(
@@ -181,11 +192,23 @@ class ConfigStore:
         return create_backup(self._paths, owner=self._owner)
 
     def _prepare_restore(self, backup_id: str) -> PreparedConfig:
-        path, text = read_backup(self._paths, backup_id)
+        _, text = read_backup(self._paths, backup_id)
         candidate = parse_config(
             tomllib.loads(text), source_path=str(self._paths.config)
         )
         return PreparedConfig(candidate=candidate, text=text)
+
+    async def _drain_releases(self) -> None:
+        """Best-effort wait so queued release frames leave under the old config."""
+
+        client = self._client
+        if client is None or client.dry_run or not client.authenticated:
+            return
+        deadline = time.monotonic() + _RELEASE_DRAIN_SECONDS
+        while len(client.queue) and time.monotonic() < deadline:
+            if not client.authenticated:
+                break
+            await asyncio.sleep(0.005)
 
     async def _activate(
         self,
@@ -199,55 +222,68 @@ class ConfigStore:
         if password is not None:
             changed = changed or _secret(self._config.ma2) != password
         if test and changed:
-            # Test before anything is written; a failed test leaves the old
-            # configuration and session in place.
+            # Test before freezing or writing; a slow or failed check leaves
+            # live inputs and the current session completely uninterrupted.
             await self._test_credentials(candidate, password)
 
+        had_password = self._paths.password.is_file()
+        old_password_text = (
+            self._paths.password.read_text(encoding="utf-8")
+            if had_password
+            else None
+        )
         if password is not None:
             write_password(self._paths, password, owner=self._owner)
-        commit_prepared(self._paths, prepared, owner=self._owner)
+        try:
+            commit_prepared(self._paths, prepared, owner=self._owner)
+        except BaseException:
+            if password is not None:
+                try:
+                    if had_password and old_password_text is not None:
+                        _atomic_write(
+                            self._paths.password,
+                            old_password_text,
+                            PASSWORD_MODE,
+                            self._owner,
+                        )
+                    else:
+                        self._paths.password.unlink(missing_ok=True)
+                except OSError:
+                    LOGGER.warning("Passwort-Rollback fehlgeschlagen", exc_info=True)
+            raise
 
-        # Release against the old configuration, then switch.  The engine is
-        # frozen, so the encoder loop cannot flush an old delta between these
-        # steps.
-        self._engine.cleanup()
-        self._engine.swap_config(candidate)
-        self._config = candidate
-        self._generation += 1
-        for hook in self._activate_hooks:
-            hook(candidate)
-        if self._client is not None:
-            self._client.apply_config(candidate)
-        LOGGER.info("Konfiguration angewendet, Generation %d", self._generation)
+        self._engine.freeze()
+        try:
+            send_releases = self._client is None or self._client.authenticated or self._client.dry_run
+            if self._playback is not None and hasattr(self._playback, "cleanup"):
+                self._playback.cleanup(send=send_releases)
+            self._engine.cleanup(send=send_releases)
+            await self._drain_releases()
+            self._engine.swap_config(candidate)
+            self._config = candidate
+            self._generation += 1
+            for hook in self._activate_hooks:
+                hook(candidate)
+            if self._client is not None:
+                self._client.apply_config(candidate)
+            LOGGER.info("Konfiguration angewendet, Generation %d", self._generation)
+        finally:
+            self._engine.unfreeze()
 
         if changed and self._client is not None:
             await self._client.reconnect()
         return self._config
 
-    async def _run(self, action: Callable[[], Any]) -> Any:
+    async def _run(self, action: Callable[[], Awaitable[AppConfig]]) -> AppConfig:
         if self._lock.locked():
             raise ApplyBusy("Ein anderes Apply läuft bereits")
         async with self._lock:
-            self._engine.freeze()
-            try:
-                return await action()
-            finally:
-                self._engine.unfreeze()
+            return await action()
 
     async def apply(
         self, patch: Mapping[str, Any], *, password: str | None = None
     ) -> AppConfig:
-        """Validate, persist and activate ``patch`` as a new generation.
-
-        ``password`` is the write-only MA2 password from the UI; it is tested
-        with the candidate credentials and written to the state directory, but
-        never added to the TOML patch or returned.
-
-        Raises :class:`ApplyBusy` when another apply is still running,
-        :class:`ma2pi.config.ConfigError` for an invalid configuration and the
-        client's connection errors when new credentials do not work.  In all
-        failure cases the active configuration and session stay untouched.
-        """
+        """Validate, test, persist and activate ``patch`` as a new generation."""
 
         async def run() -> AppConfig:
             prepared = prepare_patch(
@@ -261,13 +297,7 @@ class ConfigStore:
         return await self._run(run)
 
     async def restore(self, backup_id: str) -> AppConfig:
-        """Validate and activate a backup, then reconnect if needed.
-
-        An invalid backup leaves the active configuration untouched.  A
-        restored credential set is applied even when the onPC is currently
-        unreachable; the regular reconnect then keeps retrying in the
-        background.
-        """
+        """Validate and activate a backup, then reconnect if needed."""
 
         async def run() -> AppConfig:
             prepared = self._prepare_restore(backup_id)

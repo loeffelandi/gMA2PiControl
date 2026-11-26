@@ -1,8 +1,9 @@
 """In-process event bus and WebSocket fan-out for the configuration UI.
 
 The daemon publishes status, learn and log events here; every connected UI
-client gets its own bounded queue.  A slow client never blocks the daemon: its
-queue is dropped when full and the client resynchronises from ``/api/status``.
+client gets its own bounded queue plus an overflow/disconnect signal.  A slow
+client never blocks the daemon: its queue is dropped when full, its WebSocket
+is actively closed, and the client resynchronises from ``/api/status``.
 """
 
 from __future__ import annotations
@@ -26,28 +27,44 @@ class EventBus:
 
     def __init__(self, queue_size: int = QUEUE_SIZE) -> None:
         self._queue_size = queue_size
-        self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
+        self._subscribers: dict[asyncio.Queue[dict[str, Any]], asyncio.Event] = {}
 
     @property
     def subscriber_count(self) -> int:
         return len(self._subscribers)
 
     def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=self._queue_size)
-        self._subscribers.add(queue)
+        queue, _ = self.subscribe_with_signal()
         return queue
 
+    def subscribe_with_signal(
+        self,
+    ) -> tuple[asyncio.Queue[dict[str, Any]], asyncio.Event]:
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=self._queue_size)
+        dropped = asyncio.Event()
+        self._subscribers[queue] = dropped
+        return queue, dropped
+
     def unsubscribe(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
-        self._subscribers.discard(queue)
+        dropped = self._subscribers.pop(queue, None)
+        if dropped is not None:
+            dropped.set()
+
+    def close_all(self) -> None:
+        """Disconnect every active WebSocket subscriber (logout / PIN change / shutdown)."""
+
+        for queue in list(self._subscribers):
+            self.unsubscribe(queue)
 
     def publish(self, event: dict[str, Any]) -> None:
         """Deliver an event to every subscriber without blocking."""
-        for queue in list(self._subscribers):
+        for queue, dropped in list(self._subscribers.items()):
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
                 LOGGER.warning("UI-Client zu langsam, trenne Verbindung")
-                self.unsubscribe(queue)
+                dropped.set()
+                self._subscribers.pop(queue, None)
 
 
 async def _drain(ws: web.WebSocketResponse) -> None:
@@ -63,21 +80,22 @@ async def events_handler(
     *,
     initial: dict[str, Any] | None = None,
 ) -> web.WebSocketResponse:
-    """Stream bus events to one client until it disconnects."""
+    """Stream bus events to one client until it disconnects or overflows."""
     ws = web.WebSocketResponse(heartbeat=30.0)
     await ws.prepare(request)
 
-    queue = bus.subscribe()
+    queue, dropped = bus.subscribe_with_signal()
     reader = asyncio.create_task(_drain(ws), name="ma2pi-events-reader")
+    drop_waiter = asyncio.create_task(dropped.wait(), name="ma2pi-events-dropped")
     try:
         if initial is not None:
             await ws.send_json(initial)
-        while not reader.done():
+        while not reader.done() and not drop_waiter.done():
             getter = asyncio.create_task(queue.get(), name="ma2pi-events-get")
             done, _ = await asyncio.wait(
-                {getter, reader}, return_when=asyncio.FIRST_COMPLETED
+                {getter, reader, drop_waiter}, return_when=asyncio.FIRST_COMPLETED
             )
-            if getter in done:
+            if getter in done and not drop_waiter.done():
                 await ws.send_json(getter.result())
             else:
                 getter.cancel()
@@ -85,10 +103,13 @@ async def events_handler(
                     await getter
                 break
     finally:
+        bus.unsubscribe(queue)
+        drop_waiter.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await drop_waiter
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(ws.close(), timeout=0.5)
         reader.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await reader
-        bus.unsubscribe(queue)
-        with contextlib.suppress(Exception):
-            await ws.close()
     return ws

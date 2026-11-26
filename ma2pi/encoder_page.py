@@ -34,6 +34,15 @@ def _selected(items: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def _merge_by(items: list[dict[str, Any]], new_items: list[dict[str, Any]], key: str) -> None:
+    newly_selected = {
+        new.get(key)
+        for new in new_items
+        if isinstance(new, dict) and new.get("s") is True
+    }
+    if newly_selected:
+        for existing_item in items:
+            if existing_item.get(key) not in newly_selected and "s" in existing_item:
+                existing_item["s"] = False
     index = {item.get(key): item for item in items}
     for new in new_items:
         existing = index.get(new.get(key))

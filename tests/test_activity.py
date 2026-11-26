@@ -181,6 +181,20 @@ def test_ma2_frames_are_logged_but_not_counted_as_device() -> None:
     assert log[0]["summary"] == "keyname · GO"
     assert tracker.devices() == {}
 
+    record_ma2_frame(
+        tracker,
+        "playbackButton",
+        {"pageIndex": -1, "execIndex": 2, "buttonId": 0, "pressed": True},
+    )
+    record_ma2_frame(
+        tracker,
+        "hardkeyPress",
+        {"type": "remoteCommand", "keyname": "GO"},
+    )
+    summaries = [entry["summary"] for entry in tracker.snapshot()["log"]]
+    assert "playbackButton · page current · executor 3 · button 1" in summaries
+    assert "hardkeyPress · GO" in summaries
+
 
 async def test_ma2_client_frame_hook(make_config) -> None:
     client = Ma2Client(make_config(), dry_run=True)
