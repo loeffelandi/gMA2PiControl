@@ -7,7 +7,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 Amends [0006. Konfigurationsschema in TOML](0006-konfigurationsschema-in-toml.md)
 

@@ -20,6 +20,8 @@ OSC, Telnet or Showcockpit path to onPC, and no parameter unlock.
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Configuration reference](#configuration-reference)
+- [Web-Oberfläche](#web-oberfläche)
+- [JSON-API](docs/api.md)
 - [Command line](#command-line)
 - [Dry-run: expected frame sequence](#dry-run-expected-frame-sequence)
 - [Identifying the devices](#identifying-the-devices)
@@ -64,13 +66,16 @@ presses are replayed.
 * grandMA2 onPC reachable over the network with Web Remote enabled.
 * A non-root system user `ma2pi` with read access to `/dev/input/event*` and
   `/dev/snd/midiC*` through the supplied udev rules.
+* NetworkManager with `nmcli` and Polkit for the **Netzwerk** page. The
+  installer grants `ma2pi` only the two NetworkManager actions needed to change
+  and activate a system connection.
 * The Cherry keyboard and the ASL panel connected by USB.
 
 Install the OS packages once:
 
 ```bash
 sudo apt update
-sudo apt install python3 python3-venv udev systemd
+sudo apt install python3 python3-venv udev systemd network-manager polkitd
 ```
 
 ## Installation
@@ -167,7 +172,28 @@ The password and its MD5 hash are never logged.
 | --- | --- | --- | --- |
 | `bind` | string | `"0.0.0.0"` | Listen address; changes need a service restart. |
 | `port` | int | `8080` | HTTP/WebSocket port, 1–65535. |
-| `pin_enabled` | bool | `false` | Reserved; `true` is rejected in this version. |
+| `pin_enabled` | bool | `false` | PIN gate for the UI and every non-public API path. |
+| `pin` | string | `""` | 4–12 digits; empty means no PIN. Set one to protect the UI. |
+
+### Web-Oberfläche und Offline-Betrieb
+
+Die Oberfläche wird als statisches Svelte-Bundle aus `web/dist` vom Daemon
+ausgeliefert. Gebaut wird sie auf dem Entwicklungsrechner oder in CI:
+
+```bash
+cd web
+npm ci
+npm run build
+npm run check:offline
+```
+
+`npm run check:offline` prüft den Build auf externe `src`-/`href`-Ziele,
+`url()`-Referenzen, absolute `fetch`-/WebSocket-Adressen sowie CDN-, Font- und
+Telemetrie-Hosts. Der Build enthält nur relative Asset-Pfade. Zusätzlich wurde
+die gebaute Oberfläche in einem Browser gegen einen reinen Dateiserver geladen:
+alle Anfragen gingen an denselben lokalen Host (HTML, JavaScript, CSS); es gab
+keine externen Netzwerkaufrufe. Die fehlenden API-Antworten in diesem Aufbau
+sind erwartet und betreffen nur die Live-Daten, nicht das Laden der Oberfläche.
 
 ### `[led]`
 
@@ -270,6 +296,13 @@ Either `hardkey = "<name-or-id>"` or `local = true`, never both. A local
 modifier is not sent to onPC; it only changes the encoder resolution. `fine` and
 `ultra` must be local.
 
+A hardkey modifier is held down in the onPC for as long as the physical control
+is held. While the **MA** modifier is held, the four slot encoders target the
+screen encoders from `[mapping.screen_encoders]`; releasing MA returns them to
+the attribute window. The shipped configuration maps the rightmost ASL button
+(`asl_button_3`, note 11) to the **`NIPPLE`** hardkey as a normal key, not as a
+second MA modifier.
+
 ### `[mapping.keys.<control>]`
 
 One of `hardkey = "<name>"`, `command = "<MA2 command>"`, `screen_mode = true`
@@ -291,11 +324,28 @@ or `encoder_fine = <slot>`, never more than one.
 A `slot` encoder follows the window the onPC shows: when you scroll the attribute
 bank in the UI, the physical encoders move with it.
 
+In the web UI the Encoder table has a **Screen-Encoder** column per physical
+encoder. Choose `Screen 5`…`Screen 8` there to define what that encoder turns in
+screen mode; `— keiner —` removes the target for its slot.
+
 ### `[mapping.screen_encoders]`
 
-Optional names for the screen-encoder mode (slots 1–4). While the section is
-missing, pressing the `screen_mode` key logs a warning and leaves the encoders in
-attribute mode.
+Names for the onPC screen encoders, mapped onto the physical slots 1–4. The
+onPC numbers its screen encoders 5–8; the shipped configuration maps them in
+reverse order so the physical order stays natural:
+
+| Slot | onPC encoder |
+| --- | --- |
+| 1 | `"8"` |
+| 2 | `"7"` |
+| 3 | `"6"` |
+| 4 | `"5"` |
+
+While the section is missing, pressing the `screen_mode` key logs a warning and
+leaves the encoders in attribute mode. The same targets are edited per physical
+encoder in the web UI (Encoder table → *Screen-Encoder*); `— keiner —` removes
+that slot from the section. If a specific onPC version names the encoders
+differently, adjust the values there.
 
 ### `[mapping.encoder_acceleration]`
 
@@ -311,6 +361,125 @@ attribute mode.
 by encoders with a fixed `attribute`, because slot encoders send the resolution
 to the onPC instead of scaling the delta. `[mapping.encoder_resolution.modifiers]`
 optionally names local `fine`/`ultra` modifier controls.
+
+## Web-Oberfläche
+
+### Zugriff im LAN
+
+Der Daemon liefert die Oberfläche und die JSON-API im selben Prozess aus.
+Standard ist `0.0.0.0:8080`; beides steht in der `[web]`-Sektion:
+
+```toml
+[web]
+bind = "0.0.0.0"
+port = 8080
+pin_enabled = false
+```
+
+Nach dem Start ist die Oberfläche unter `http://<pi-adresse>:8080/` erreichbar.
+Änderungen an `bind` oder `port` werden erst nach einem Dienstneustart wirksam;
+die Oberfläche weist darauf hin. Die Firewall des Pi wird vom Installer nicht
+verändert – der Port muss im LAN erreichbar sein, sollte aber nicht aus dem
+Internet weitergeleitet werden.
+
+### Netzwerk
+
+Die Seite **Netzwerk** verwaltet die kabelgebundene IPv4-Schnittstelle über
+NetworkManager. Sie zeigt Schnittstelle, Verbindungszustand, Modus, aktuelle
+Adresse, Subnetzmaske, Gateway und DNS. **DHCP** und **Statisch** lassen sich
+umschalten; im statischen Modus werden Adresse, Subnetzmaske, Gateway und DNS
+bearbeitet. Die Subnetzmaske wird in Punktnotation eingegeben (z. B.
+`255.255.255.0`). Gateway und DNS dürfen leer bleiben; die Oberfläche warnt
+dann, dass keine Standardroute bzw. kein DNS-Server gesetzt ist.
+
+Vor dem Anwenden prüft der Daemon Adresse, Maske, Gateway, DNS und die lokale
+Doppelbelegung. Danach wird die neue Konfiguration zunächst **nur temporär**
+aktiviert. Die Verbindung kann dabei abbrechen. Die Oberfläche nennt die
+Ziel-URL und verlangt, dass du sie öffnest und dich dort erneut mit der PIN
+anmeldest; erst diese neue Sitzung bestätigt die Änderung. Wird nicht innerhalb
+von 180 Sekunden bestätigt, stellt der Daemon automatisch die vorherige
+Konfiguration wieder her. Der Pending-Zustand liegt unter
+`/var/lib/ma2pi/network-pending.json` und überlebt einen Dienstneustart.
+
+Unterstützt wird genau eine kabelgebundene IPv4-Schnittstelle. WLAN, IPv6,
+VLAN, Bonding und mehrere gleichzeitig verwaltete Schnittstellen sind nicht
+enthalten. Die Netzwerkeinstellungen stehen ausschließlich bei NetworkManager
+und nicht in `config.toml`.
+
+Die Berechtigung regelt
+`/etc/polkit-1/rules.d/50-ma2pi-network.rules`: Der Benutzer `ma2pi` darf
+Systemprofile ändern und Verbindungen aktivieren, aber keine WLAN- oder
+sonstigen Systemaktionen ausführen. Der Dienst läuft weiterhin unprivilegiert;
+`ProtectSystem=strict` und `NoNewPrivileges` bleiben aktiv.
+
+### Sicherheitsmodell (v1)
+
+* Eine einfache PIN-Sperre kann Oberfläche und API schützen. Sie ist
+  standardmäßig **aus** und muss in der Konfiguration oder auf der Seite
+  **Erweitert** gesetzt werden. Solange keine PIN gesetzt ist, zeigt die
+  Oberfläche oben einen Warnbanner. Die PIN ist ein LAN-Schutz, kein Ersatz für
+  TLS oder eine Benutzerverwaltung.
+* Schreibende API-Aufrufe müssen `Content-Type: application/json` und den
+  Header `X-Ma2pi-Request: 1` tragen. Einfache Formular-POSTs werden abgelehnt;
+  das ist ein CSRF-Schutz, kein Ersatz für Authentifizierung.
+* Das MA2-Passwort ist ausschließlich schreibbar. Antworten, Logs und
+  Fehlermeldungen enthalten weder das Passwort noch dessen Hash; die Oberfläche
+  zeigt nur, ob ein Passwort gesetzt ist. Die PIN wird ebenfalls nie
+  zurückgegeben.
+* Keine CORS-Freigabe: Die Oberfläche wird same-origin ausgeliefert.
+* Keine externen Assets, Fonts, CDNs oder Telemetrie. Der Build wird mit
+  `npm run check:offline` geprüft (siehe oben).
+* Die PIN wird als HTTP-Cookie-Session gehalten. Nach einem Neustart des
+  Dienstes ist eine erneute Anmeldung nötig.
+
+### Änderungen anwenden
+
+Die Seiten **MA2**, **Geräte/Mapping**, **Backups** und **Erweitert** schreiben
+über die API. Die Seite **Netzwerk** schreibt über NetworkManager und nicht in
+`config.toml`; ihre Änderung wird erst nach der Bestätigung dauerhaft
+gespeichert. Jede Konfigurationsänderung wird serverseitig mit denselben Regeln
+wie der Daemon-Start validiert. Bei Erfolg schreibt der Daemon die Konfiguration atomar
+nach `/var/lib/ma2pi/config.toml`, gibt gehaltene Tasten in umgekehrter
+Reihenfolge frei, verwirft offene Encoder-Deltas und tauscht das Mapping ohne
+Dienstneustart. Werden Zugangsdaten geändert, testet der Daemon sie vorher; eine
+bestehende Session bleibt bei reinen Mapping-Änderungen verbunden.
+
+### Backups und Wiederherstellung
+
+Backups liegen unter `/var/lib/ma2pi/backups/`:
+
+* `config-<zeitstempel>.toml` – automatisch vor jedem Schreiben und auf Knopf
+  in der Oberfläche, Rotation auf die letzten 20 Dateien.
+* `last-good.toml` – die zuletzt aktive Konfiguration vor dem aktuellen Stand.
+
+Die Seite **Backups** listet die Dateien, legt neue an und stellt sie nach einem
+Bestätigungsschritt wieder her. Eine Wiederherstellung wird zuerst validiert;
+ein beschädigtes oder schemawidriges Backup lässt die aktive Konfiguration
+unverändert. Nach einer Wiederherstellung mit anderen Zugangsdaten versucht der
+Daemon den Reconnect mit den wiederhergestellten Daten.
+
+Die vollständige Endpunkt-, Payload- und Fehlerreferenz steht in
+[`docs/api.md`](docs/api.md).
+
+### Migration und Rollback
+
+Bei der Installation wird eine vorhandene `/etc/ma2pi/config.toml` einmalig nach
+`/var/lib/ma2pi/config.toml` übernommen und vorher gesichert. Die Datei unter
+`/etc/ma2pi` bleibt liegen, wird aber nicht mehr beschrieben. Die systemd-Unit
+nutzt `StateDirectory=ma2pi` und `ReadWritePaths=/var/lib/ma2pi`; nur dieser
+Pfad ist unter `ProtectSystem=strict` beschreibbar.
+
+Rollback auf die alte Version:
+
+```bash
+sudo systemctl stop ma2pi.service
+sudo install -m 0640 -o root -g ma2pi /etc/ma2pi/config.toml /var/lib/ma2pi/config.toml
+sudo systemctl start ma2pi.service
+```
+
+Die Backups unter `/var/lib/ma2pi/backups` bleiben dabei erhalten. Alternativ
+kann die vorherige Version der Unit und des Codes eingespielt werden; die
+Konfiguration unter `/etc/ma2pi` bleibt als Ausgangspunkt vorhanden.
 
 ## Command line
 
@@ -404,21 +573,24 @@ Die Encoder sprechen ausschließlich das native Web-Remote-Format:
   weiter, wandern sie mit – ein lokaler Bankzähler existiert nicht.
 * Ein Klick auf einen Encoder zyklisiert Normal → Fine → Ultra → Normal.
 * Die Taste `screen_mode` schaltet auf die Screen-Encoder aus
-  `[mapping.screen_encoders]`; ohne diese Sektion bleibt der Attribut-Modus
-  aktiv und es wird gewarnt.
+  `[mapping.screen_encoders]`. Die onPC nummeriert sie 5–8; die
+  Standardbelegung legt sie umgekehrt auf die Slots: Slot 1 → 8, Slot 2 → 7,
+  Slot 3 → 6, Slot 4 → 5.
+* MA halten (Cherry-Logo) und dabei einen Encoder drehen adressiert
+  vorübergehend dieselben Screen-Encoder. Beim Loslassen folgt der nächste
+  Detent wieder dem Attribut-Fenster.
 
-### Noch offen: Screen-Encoder-Namen und ASL-LEDs
+### Screen-Encoder-Namen
 
-Zwei Dinge sind noch nicht verifiziert und deshalb nicht fest verdrahtet:
+Die onPC führt ihre Screen-Encoder als 5–8. Die mitgelieferte Konfiguration legt
+sie umgekehrt auf die physischen Slots. Eine abweichende onPC-Version kann andere
+`name`-Werte erwarten; dann im Web-UI in der Encoder-Tabelle pro physischem
+Encoder die Spalte *Screen-Encoder* anpassen. Ein Mitschnitt (DevTools → Network
+→ `?ma=1` → Messages, dann am Pult Screen-Encoder drehen) zeigt die tatsächlich
+gesendeten Werte.
 
-1. **Screen-Encoder-Namen.** Die Web-Remote-JS enthält keine Screen-Encoder;
-   welche `name`-Werte die onPC dafür akzeptiert, muss per Mitschnitt geklärt
-   werden (DevTools → Network → `?ma=1` → Messages, dann am Pult Screen-
-   Encoder drehen).
-2. **LED-Ansteuerung des ASL.** Derzeit liest der Daemon nur MIDI. Für grün/rot
-   am Encoder-Modus muss das LED-Protokoll (Note/CC je Taste) aufgenommen und
-   die Ausgabe ergänzt werden. Bis dahin steht der Modus als `screen_mode` im
-   Status und kann im UI angezeigt werden.
+Die ASL-LEDs werden bereits über das verifizierte MIDI-Protokoll angesteuert
+(siehe `[led]`).
 
 Mitschnitt-Vorgehen wie oben: DevTools öffnen, `?ma=1` filtern, Messages
 leeren, die Aktion ausführen, die vollständigen JSON-Objekte kopieren und als
@@ -453,7 +625,9 @@ journalctl -u ma2pi -n 50 --no-pager
 ```
 
 `install.sh` replaces the code and venv contents but leaves
-`/etc/ma2pi/config.toml` and `/etc/ma2pi/ma2pi.password` untouched.
+`/etc/ma2pi/config.toml` and `/etc/ma2pi/ma2pi.password` untouched. It also
+installs `/etc/polkit-1/rules.d/50-ma2pi-network.rules` for the **Netzwerk**
+page; the rule can be removed independently if the page is not needed.
 
 Rollback:
 
@@ -461,6 +635,7 @@ Rollback:
 sudo systemctl disable --now ma2pi.service
 sudo rm -f /etc/systemd/system/ma2pi.service
 sudo rm -f /etc/udev/rules.d/99-ma2pi.rules
+sudo rm -f /etc/polkit-1/rules.d/50-ma2pi-network.rules
 sudo systemctl daemon-reload
 sudo udevadm control --reload-rules
 # optional, removes code and user but keeps /etc/ma2pi:
@@ -482,6 +657,10 @@ sudo groupdel ma2pi
 | Frames visible in dry-run but nothing happens | Check the exact `keyname` spelling (log at `DEBUG`) and that Web Remote accepts commands. |
 | Encoder direction reversed | Set `direction = -1` in the profile encoder entry. |
 | Encoder moves too far | Click the encoder to switch to Fine/Ultra, or lower `mapping.encoder_resolution.attribute`. |
+| **Netzwerk** zeigt „nicht verfügbar“ | `nmcli` installiert, `systemctl status NetworkManager`, Polkit-Regel unter `/etc/polkit-1/rules.d/` vorhanden; Log mit `journalctl -u ma2pi`. |
+| Keine kabelgebundene Schnittstelle | `nmcli device status`; nur `type ethernet` wird verwaltet, WLAN und virtuelle Geräte nicht. |
+| Bestätigung nach IP-Wechsel schlägt fehl | Neue Ziel-URL öffnen, dort PIN erneut eingeben; das alte Cookie gilt nur für die alte Adresse. Nach 180 s rollt der Pi automatisch zurück. |
+| Netzwerkänderung bleibt hängen | `/var/lib/ma2pi/network-pending.json` prüfen; ein abgelaufener oder unterbrochener Zustand wird beim Dienststart zurückgerollt. |
 
 ## Open hardware acceptance
 

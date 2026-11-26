@@ -81,6 +81,66 @@ describe('ApiClient', () => {
     expect(info.api).toBe(EXPECTED_API_VERSION);
   });
 
+  it('reads network status and sends network candidates', async () => {
+    const status = {
+      backend: 'networkmanager',
+      available: true,
+      can_manage: true,
+      interface: { name: 'eth0', type: 'ethernet', state: 'connected', connection: 'Wired' },
+      mode: 'static',
+      current: {
+        address: '192.168.10.50',
+        subnet_mask: '255.255.255.0',
+        gateway: '192.168.10.1',
+        dns: ['192.168.10.1'],
+      },
+      pending: null,
+      last_result: null,
+      self_connection: false,
+      error: null,
+      warnings: [],
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(response(status));
+    const client = new ApiClient({ fetchImpl });
+
+    expect((await client.network()).current.address).toBe('192.168.10.50');
+    expect(fetchImpl).toHaveBeenCalledWith(
+      '/api/network',
+      expect.objectContaining({ method: 'GET' }),
+    );
+
+    fetchImpl.mockResolvedValue(response({ valid: true, target_url: null, warnings: [] }));
+    const candidate = {
+      mode: 'static' as const,
+      address: '192.168.10.60',
+      subnet_mask: '255.255.255.0',
+    };
+    await client.validateNetwork(candidate);
+    const [path, init] = fetchImpl.mock.calls[1] as [string, RequestInit];
+    expect(path).toBe('/api/network/validate');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual(candidate);
+    expect((init.headers as Record<string, string>)[REQUEST_HEADER]).toBe('1');
+  });
+
+  it('exposes the field of a network validation error', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      response(
+        { error: 'validation_error', field: 'subnet_mask', detail: 'keine gültige Maske' },
+        422,
+      ),
+    );
+    const client = new ApiClient({ fetchImpl });
+    await expect(
+      client.validateNetwork({ mode: 'static', address: '192.168.10.60', subnet_mask: 'x' }),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: 'validation_error',
+      field: 'subnet_mask',
+      detail: 'keine gültige Maske',
+    });
+  });
+
   it('wraps network failures', async () => {
     const fetchImpl = vi.fn().mockRejectedValue(new Error('offline'));
     const client = new ApiClient({ fetchImpl });

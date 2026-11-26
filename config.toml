@@ -168,7 +168,8 @@ screen_color = "green"        # Screen-Modus
 [web]
 bind = "0.0.0.0"            # LAN-Zugriff; Änderung erst nach Dienstneustart
 port = 8080
-pin_enabled = false         # PIN-Sperre ist in v1 noch nicht implementiert
+pin_enabled = false          # PIN-Sperre; bei false ist die API im LAN offen
+pin = ""                     # 4-12 Ziffern, z. B. "123456"; leer = keine PIN
 
 [devices.cherry]
 vendor_id = 0x046a
@@ -343,7 +344,8 @@ note = 4
 direction = 1
 
 [mapping.modifiers]
-# Logo-Taste wirkt als MA-Modifier (MA + andere Taste).
+# Logo-Taste wirkt als MA-Modifier (MA + andere Taste, z. B. MA + Encoder
+# schaltet vorübergehend auf die Screen-Encoder).
 ma = { hardkey = "MA" }
 
 [mapping.keys]
@@ -474,17 +476,22 @@ asl_click_3 = { encoder_fine = 3 }
 asl_click_4 = { encoder_fine = 4 }
 # ASL-Taste 1 schaltet zwischen Attribut- und Screen-Encodern um. Im
 # Attribut-Modus folgen die Encoder dem Fenster, das die onPC anzeigt.
-# Für den Screen-Modus müssen die Encoder-Namen eingetragen sein; solange
-# [mapping.screen_encoders] fehlt, bleibt die Taste wirkungslos (Warnung im Log).
+# Zusätzlich schaltet MA halten (Cherry-Logo) die Encoder vorübergehend auf
+# die Screen-Encoder.
 asl_bank = { screen_mode = true }
+# Rechte ASL-Taste sendet den NIPPLE-Hardkey der onPC.
+asl_button_3 = { hardkey = "NIPPLE" }
 
 # Namen der Screen-Encoder, die im Screen-Modus auf Slot 1-4 gelegt werden.
-# Beispiel (Namen müssen von der onPC als encoder.name akzeptiert werden):
-# [mapping.screen_encoders]
-# 1 = "screen1"
-# 2 = "screen2"
-# 3 = "screen3"
-# 4 = "screen4"
+# Die onPC nummeriert ihre Screen-Encoder 5-8; sie liegen umgekehrt auf den
+# physischen Encodern: Slot 1 -> 8, Slot 2 -> 7, Slot 3 -> 6, Slot 4 -> 5.
+# Im Web-UI als Spalte "Screen-Encoder" pro physischem Encoder bearbeitbar;
+# "— keiner —" entfernt den Slot.
+[mapping.screen_encoders]
+1 = "8"
+2 = "7"
+3 = "6"
+4 = "5"
 
 [[mapping.encoders]]
 id = 1

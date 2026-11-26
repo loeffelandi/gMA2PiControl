@@ -5,8 +5,8 @@ __pycache__/
 *.pyd
 *.egg-info/
 .eggs/
-build/
-dist/
+/build/
+/dist/
 *.egg
 
 # Virtual environments
@@ -22,6 +22,7 @@ env/
 .coverage.*
 htmlcov/
 coverage.xml
+node_modules/
 
 # Editor / OS
 .DS_Store

@@ -77,6 +77,14 @@ describe('StatusPage', () => {
     const socket = FakeSocket.last!;
     socket.emitOpen();
     socket.emitMessage({ type: 'status', data: status });
+    socket.emitMessage({
+      type: 'network',
+      data: {
+        pending: null,
+        last_result: { status: 'rolled_back', at: '2026-01-01T00:00:00Z', detail: null },
+      },
+    });
+    expect(store.state.network?.last_result?.status).toBe('rolled_back');
 
     await waitFor(() => {
       expect(screen.getByTestId('connection').textContent).toContain('verbunden');
@@ -84,10 +92,19 @@ describe('StatusPage', () => {
     expect(screen.getByTestId('ma2-state').textContent).toContain('Session 7');
     expect(screen.getByText('keyname')).toBeTruthy();
     expect(screen.getByText('42')).toBeTruthy();
+    expect(screen.getByText('Attribut (rot)')).toBeTruthy();
     await waitFor(() => {
       expect(screen.getByText('cherry')).toBeTruthy();
     });
     expect(screen.getByText('erkannt')).toBeTruthy();
+
+    socket.emitMessage({
+      type: 'status',
+      data: { ...status, screen_mode: true, last_frame_types: ['encoder'] },
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Screen (grün)')).toBeTruthy();
+    });
 
     socket.drop();
 

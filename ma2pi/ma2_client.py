@@ -34,7 +34,7 @@ from .actions import (
     is_encoder,
     merge_encoder,
 )
-from .config import AppConfig
+from .config import AppConfig, Ma2Settings
 from .encoder_page import WINDOW, EncoderPage
 from .logging_setup import log_frame
 
@@ -145,6 +145,144 @@ class DryRunTransport:
 
     def write_buffer_size(self) -> int:
         return 0
+
+
+def ma2_uri(ma2: Ma2Settings) -> str:
+    """Return the WebSocket URI for a MA2 target."""
+
+    return f"ws://{ma2.host}:{ma2.port}{ma2.path}"
+
+
+async def _read_json(transport: Transport, timeout: float | None) -> dict[str, Any]:
+    try:
+        if timeout is None:
+            raw = await transport.recv()
+        else:
+            raw = await asyncio.wait_for(transport.recv(), timeout)
+    except asyncio.TimeoutError:
+        raise
+    if raw is None:
+        raise ConnectionClosed("Server hat die Verbindung geschlossen")
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "replace")
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HandshakeError(f"ungültiges JSON: {raw[:120]!r}") from exc
+    if not isinstance(value, dict):
+        raise HandshakeError("JSON-Frame ist kein Objekt")
+    return value
+
+
+def _server_ready(message: dict[str, Any]) -> bool:
+    return message.get("status") == "server ready" or message.get("appType") == "gma2"
+
+
+def _login_response(message: dict[str, Any]) -> bool:
+    return message.get("requestType") == "loginResponse" or "result" in message
+
+
+async def authenticate(
+    transport: Transport,
+    ma2: Ma2Settings,
+    *,
+    password: str | None = None,
+) -> int:
+    """Run the session/login handshake and return the session id.
+
+    A password passed explicitly is used instead of ``ma2.read_password()`` so
+    the configuration UI can test new credentials before they are stored.  The
+    password never appears in an error or log message.
+    """
+
+    await transport.connect(ma2_uri(ma2))
+
+    message = await _read_json(transport, ma2.login_timeout)
+    while not _server_ready(message):
+        message = await _read_json(transport, ma2.login_timeout)
+
+    await transport.send(frames.session_request_frame())
+
+    message = await _read_json(transport, ma2.login_timeout)
+    while "session" not in message:
+        message = await _read_json(transport, ma2.login_timeout)
+    session = message.get("session")
+    if not isinstance(session, int) or session <= 0:
+        raise HandshakeError(f"ungültige Session-ID in {message!r}")
+
+    secret = password if password is not None else ma2.read_password()
+    digest = hashlib.md5(secret.encode("utf-8")).hexdigest()
+    await transport.send(frames.login_frame(ma2.username, digest, session))
+
+    message = await _read_json(transport, ma2.login_timeout)
+    while not _login_response(message):
+        message = await _read_json(transport, ma2.login_timeout)
+    result = message.get("result")
+    if isinstance(result, dict):
+        result = result.get("result")
+    if result is not True:
+        raise LoginError(message.get("error") or "ungültige Zugangsdaten")
+
+    return session
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionCheck:
+    """Result of a connection test; never carries the password."""
+
+    session: int
+    username: str
+    target: str
+    reused: bool = False
+
+
+def _secret(ma2: Ma2Settings) -> str | None:
+    try:
+        return ma2.read_password()
+    except Exception:
+        return None
+
+
+async def check_connection(
+    config: AppConfig,
+    *,
+    password: str | None = None,
+    active: "Ma2Client | None" = None,
+    transport_factory: Callable[[], Transport] | None = None,
+) -> ConnectionCheck:
+    """Test credentials without disturbing a running session.
+
+    When ``active`` is already authenticated with the same target, user and
+    password, its session is reused and no second connection is opened.  For a
+    different target or changed credentials a short-lived session is opened,
+    logged in and closed again with ``closeConnection``.
+    """
+
+    ma2 = config.ma2
+    target = ma2_uri(ma2)
+    secret = password if password is not None else ma2.read_password()
+
+    if active is not None and active.authenticated and active.session is not None:
+        current = active.config.ma2
+        if ma2_uri(current) == target and current.username == ma2.username:
+            if _secret(current) == secret:
+                return ConnectionCheck(
+                    session=active.session,
+                    username=ma2.username,
+                    target=target,
+                    reused=True,
+                )
+
+    transport = (transport_factory or WebSocketTransport)()
+    try:
+        session = await authenticate(transport, ma2, password=secret)
+        with contextlib.suppress(Exception):
+            await transport.send(frames.close_frame(session))
+        return ConnectionCheck(session=session, username=ma2.username, target=target)
+    finally:
+        with contextlib.suppress(Exception):
+            await transport.close()
+
 
 
 class SendQueue:
@@ -371,8 +509,8 @@ class Ma2Client:
     def command(self, text: str) -> None:
         self._submit(Command(text))
 
-    def encoder_slot(self, slot: int, delta: float) -> None:
-        self._submit(EncoderSlot(slot, delta))
+    def encoder_slot(self, slot: int, delta: float, screen: bool = False) -> None:
+        self._submit(EncoderSlot(slot, delta, screen=screen))
 
     def encoder_attribute(self, name: str, value: float) -> None:
         self._submit(EncoderAttribute(name, value))
@@ -467,6 +605,30 @@ class Ma2Client:
 
     # -- session loop -----------------------------------------------------
 
+    def apply_config(self, config: AppConfig) -> None:
+        """Use ``config`` for subsequent dispatch and reconnects."""
+
+        self.config = config
+        self._limiter.rate = float(config.rate_limit.messages_per_second)
+        self._limiter.burst = float(config.rate_limit.burst)
+        self._screen_helper.close()
+        self._screen_helper = ScreenHelper(config.screen_helper)
+
+    async def reconnect(self) -> None:
+        """Close the current session so the loop reconnects with the new config.
+
+        The running session loop notices the closed transport and performs the
+        normal handshake again, now using :attr:`config`.
+        """
+
+        if self.dry_run:
+            return
+        if self._authenticated and self._session is not None:
+            with contextlib.suppress(Exception):
+                await self._send_raw(frames.close_frame(self._session), "closeConnection")
+        with contextlib.suppress(Exception):
+            await self._transport.close()
+
     async def _session_loop(self) -> None:
         attempt = 0
         while not self._shutting_down:
@@ -516,38 +678,7 @@ class Ma2Client:
     async def connect_once(self) -> None:
         """Perform one connect + handshake.  Exposed for tests and tooling."""
 
-        ma2 = self.config.ma2
-        uri = f"ws://{ma2.host}:{ma2.port}{ma2.path}"
-        await self._transport.connect(uri)
-
-        message = await self._recv_json(self.config.ma2.login_timeout)
-        while not self._is_server_ready(message):
-            message = await self._recv_json(self.config.ma2.login_timeout)
-
-        await self._send_raw(frames.session_request_frame(), "sessionRequest")
-
-        message = await self._recv_json(self.config.ma2.login_timeout)
-        while "session" not in message:
-            message = await self._recv_json(self.config.ma2.login_timeout)
-        session = message.get("session")
-        if not isinstance(session, int) or session <= 0:
-            raise HandshakeError(f"ungültige Session-ID in {message!r}")
-
-        password = hashlib.md5(ma2.read_password().encode("utf-8")).hexdigest()
-        await self._send_raw(
-            frames.login_frame(ma2.username, password, session),
-            "login",
-            extra={"username": ma2.username},
-        )
-
-        message = await self._recv_json(self.config.ma2.login_timeout)
-        while not self._is_login_response(message):
-            message = await self._recv_json(self.config.ma2.login_timeout)
-        result = message.get("result")
-        if isinstance(result, dict):
-            result = result.get("result")
-        if result is not True:
-            raise LoginError(message.get("error") or "ungültige Zugangsdaten")
+        session = await authenticate(self._transport, self.config.ma2)
 
         self._session = session
         self._authenticated = True
@@ -560,11 +691,11 @@ class Ma2Client:
 
     @staticmethod
     def _is_server_ready(message: dict[str, Any]) -> bool:
-        return message.get("status") == "server ready" or message.get("appType") == "gma2"
+        return _server_ready(message)
 
     @staticmethod
     def _is_login_response(message: dict[str, Any]) -> bool:
-        return message.get("requestType") == "loginResponse" or "result" in message
+        return _login_response(message)
 
     async def _read_loop(self) -> None:
         while not self._shutting_down:
@@ -604,24 +735,7 @@ class Ma2Client:
             LOGGER.warning("Encoder-Seiten-Polling fehlgeschlagen: %s", exc)
 
     async def _recv_json(self, timeout: float | None) -> dict[str, Any]:
-        try:
-            if timeout is None:
-                raw = await self._transport.recv()
-            else:
-                raw = await asyncio.wait_for(self._transport.recv(), timeout)
-        except asyncio.TimeoutError:
-            raise
-        if raw is None:
-            raise ConnectionClosed("Server hat die Verbindung geschlossen")
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8", "replace")
-        try:
-            value = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise HandshakeError(f"ungültiges JSON: {raw[:120]!r}") from exc
-        if not isinstance(value, dict):
-            raise HandshakeError("JSON-Frame ist kein Objekt")
-        return value
+        return await _read_json(self._transport, timeout)
 
     async def _keepalive_loop(self, session: int) -> None:
         interval = self.config.ma2.keepalive_interval
@@ -733,6 +847,29 @@ class Ma2Client:
             return None
         return frames.lua_hardkey_frame(entry.code, pressed, session, hold)
 
+    def _encoder_target(self, slot: int, *, screen: bool = False) -> str | None:
+        """Resolve the encoder name a slot addresses in the active mode.
+
+        Attribute mode follows the onPC page; screen mode uses the configured
+        screen-encoder names.  ``screen`` forces the screen target for one
+        action (MA held while turning) without changing the global mode.  Both
+        deltas and resolution frames must use the same target, otherwise a
+        click would change the wrong encoder.
+        """
+
+        if screen or self._screen_mode:
+            name = self.config.mapping.screen_encoders.get(slot)
+            if name is None:
+                LOGGER.warning(
+                    "Screen-Modus aktiv, aber kein screen_encoders.%d konfiguriert",
+                    slot,
+                )
+            return name
+        name = self._page.name_for(slot)
+        if name is None:
+            LOGGER.debug("Encoder-Slot %d noch unbekannt", slot)
+        return name
+
     async def _dispatch(self, action: Action) -> None:
         assert self._session is not None
         session = self._session
@@ -755,20 +892,8 @@ class Ma2Client:
             frame = frames.encoder_attribute_frame(action.name, action.value, session)
             kind = "encoderAttribute"
         elif isinstance(action, EncoderSlot):
-            if self._screen_mode:
-                name = self.config.mapping.screen_encoders.get(action.slot)
-                if name is None:
-                    LOGGER.warning(
-                        "Screen-Modus aktiv, aber kein screen_encoders.%d konfiguriert",
-                        action.slot,
-                    )
-                    return
-            else:
-                name = self._page.name_for(action.slot)
+            name = self._encoder_target(action.slot, screen=action.screen)
             if name is None:
-                LOGGER.debug(
-                    "Encoder-Slot %d noch unbekannt, Delta verworfen", action.slot
-                )
                 return
             frame = frames.encoder_attribute_frame(name, action.delta, session)
             kind = "encoderAttribute"
@@ -787,9 +912,8 @@ class Ma2Client:
                 self._led.apply_mode(self._screen_mode)
             return
         elif isinstance(action, ToggleFine):
-            name = self._page.name_for(action.slot)
+            name = self._encoder_target(action.slot)
             if name is None:
-                LOGGER.debug("Encoder-Slot %d noch unbekannt, Fine ignoriert", action.slot)
                 return
             resolution = (self._fine.get(action.slot, 0) + 1) % 3
             self._fine[action.slot] = resolution

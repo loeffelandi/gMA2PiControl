@@ -165,6 +165,17 @@ def test_screen_encoders_parsed(make_config):
     assert config.mapping.screen_encoders == {1: "screen1", 4: "screen4"}
 
 
+def test_screen_encoders_default_order(make_config):
+    config = make_config()
+    assert config.mapping.screen_encoders == {1: "8", 2: "7", 3: "6", 4: "5"}
+
+
+def test_rightmost_asl_button_is_nipple(make_config):
+    config = make_config()
+    assert config.mapping.keys["asl_button_3"].hardkey == "NIPPLE"
+    assert "asl_button_3" not in config.mapping.modifiers
+
+
 def test_screen_encoder_slot_out_of_range(make_config):
     with pytest.raises(ConfigError, match="zwischen 1 und 4"):
         make_config(

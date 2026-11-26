@@ -26,7 +26,8 @@ Die Core-Specs bleiben gültig; dieses Design ergänzt sie.
 **Non-Goals:**
 
 * Internet-Exposition, TLS-Terminierung, Mehrbenutzerbetrieb oder Rollen.
-* PIN-Login in v1 (nur als Erweiterungspunkt vorgesehen).
+* PIN-Login als vollständige Benutzerverwaltung; die einfache PIN-Sperre
+  schützt nur den LAN-Zugriff.
 * Bearbeitung beliebiger MA2-Objekte (Cues, Presets, Executor-Layouts).
 * Live-Fernsteuerung der onPC über das UI hinaus.
 * Ein zweiter Dienst, nginx oder eine Datenbank.
@@ -149,15 +150,20 @@ Bereiche und ihre Kommentare erhalten bleiben.
 
 * Bind-Adresse und Port sind konfigurierbar (`[web] bind`, `port`), Default
   `0.0.0.0:8080` für LAN-Zugriff.
-* v1 hat keinen Login. Schreibende Aufrufe müssen `Content-Type:
-  application/json` und den Header `X-Ma2pi-Request: 1` tragen; einfache
-  Formular-POSTs werden abgelehnt. Das ist kein Auth-Ersatz, verhindert aber
-  triviale CSRF-Versuche aus dem Browser.
-* Das Passwort wird nur geschrieben, nie gelesen. `GET /api/config` liefert
-  `password_set: true|false` statt des Werts. Fehler und Logs redigieren das
-  Feld.
-* Eine PIN-Sperre wird als Middleware-Hook vorbereitet (Konfiguration
-  `[web].pin_enabled = false`), aber in v1 nicht implementiert.
+* Eine einfache PIN-Sperre ist optional und standardmäßig aus
+  (`[web].pin_enabled = false`, `[web].pin = ""`). Ist eine PIN gesetzt, besteht
+  sie aus 4–12 Ziffern, wird nie zurückgegeben und ist in der Oberfläche unter
+  **Erweitert** änderbar. Ohne PIN zeigt die Oberfläche einen Warnbanner.
+* Nach korrekter PIN setzt der Daemon ein `HttpOnly`-Cookie mit einer
+  In-Memory-Session. Alle `/api/`-Pfade außer Health, Version und den
+  Auth-Endpunkten verlangen diese Session. Ein Dienstneustart beendet alle
+  Sessions.
+* Schreibende Aufrufe müssen `Content-Type: application/json` und den Header
+  `X-Ma2pi-Request: 1` tragen; einfache Formular-POSTs werden abgelehnt. Das ist
+  kein Auth-Ersatz, verhindert aber triviale CSRF-Versuche aus dem Browser.
+* Das MA2-Passwort wird nur geschrieben, nie gelesen. `GET /api/config` liefert
+  `password_set: true|false` und `pin_set: true|false` statt der Werte.
+  Fehler und Logs redigieren beide Felder.
 * Keine CORS-Freigabe; die SPA wird same-origin ausgeliefert.
 * Keine externen Assets, Fonts, Icons oder Telemetrie.
 
@@ -198,9 +204,9 @@ verändert nie die aktive Konfiguration.
 
 ## Risks / Trade-offs
 
-* **Offenes LAN-UI ohne Login** → bewusste v1-Entscheidung; nur LAN, keine
-  Internet-Exposition, JSON+Header-Pflicht, Passwort nie lesbar, PIN als
-  vorbereiteter Ausbau.
+* **Offenes LAN-UI ohne Internet** → PIN optional (standardmäßig aus, Banner
+  warnt); nur LAN, keine Internet-Exposition, JSON+Header-Pflicht, Passwort und
+  PIN nie lesbar. Die PIN ist ein einfacher Schutz, kein TLS- oder Rollenersatz.
 * **Passwort über HTTP im LAN** → Risiko akzeptiert; keine Cloud, keine
   Internet-Route; bei Bedarf später TLS oder Reverse Proxy.
 * **Hot Reload trifft gehaltene Tasten** → Apply-Lock, Freigabe in umgekehrter
@@ -242,4 +248,4 @@ Rollback: Dienst stoppen, alte Unit und `/etc/ma2pi/config.toml` wiederherstelle
 | 0010 | Hot-Reload-Semantik | Proposed |
 | 0011 | Frontend-Stack Svelte 5 + Vite | Proposed |
 | 0012 | Learn-Modus und Live-Event-Stream | Proposed |
-| 0013 | LAN-Zugriffsmodell ohne Login | Proposed |
+| 0013 | LAN-Zugriffsmodell mit einfacher PIN-Sperre | Proposed |

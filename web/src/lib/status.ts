@@ -1,14 +1,25 @@
 /** Live status via the `/api/events` WebSocket with automatic reconnect. */
 
-import type { LearnResult, StatusInfo } from './api';
+import type {
+  LearnResult,
+  NetworkLastResult,
+  NetworkPending,
+  StatusInfo,
+} from './api';
 
 export type ConnectionState = 'connecting' | 'open' | 'closed';
+
+export interface NetworkEventData {
+  pending: NetworkPending | null;
+  last_result: NetworkLastResult | null;
+}
 
 export interface StatusState {
   connection: ConnectionState;
   reconnecting: boolean;
   status: StatusInfo | null;
   learn: LearnResult | null;
+  network: NetworkEventData | null;
   lastError: string | null;
 }
 
@@ -54,6 +65,7 @@ export class StatusStore {
     reconnecting: false,
     status: null,
     learn: null,
+    network: null,
     lastError: null,
   };
 
@@ -138,6 +150,8 @@ export class StatusStore {
       this.patch({ status: message.data as StatusInfo, lastError: null });
     } else if (message.type === 'learn' && message.data) {
       this.patch({ learn: message.data as LearnResult });
+    } else if (message.type === 'network' && message.data) {
+      this.patch({ network: message.data as NetworkEventData });
     }
   }
 

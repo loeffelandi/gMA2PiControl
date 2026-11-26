@@ -32,6 +32,9 @@ LOGGER = logging.getLogger("ma2pi.mapping")
 
 ENCODER_PREFIX = "encoder."
 
+#: Holding this hardkey turns the slot encoders into screen encoders.
+SCREEN_ENCODER_MODIFIER = "MA"
+
 
 def encoder_control(encoder_id: int) -> str:
     return f"{ENCODER_PREFIX}{encoder_id}"
@@ -41,7 +44,7 @@ class ActionSink(Protocol):
     def press(self, keyname: str, hold: bool = False) -> None: ...
     def release(self, keyname: str) -> None: ...
     def command(self, text: str) -> None: ...
-    def encoder_slot(self, slot: int, delta: float) -> None: ...
+    def encoder_slot(self, slot: int, delta: float, screen: bool = False) -> None: ...
     def encoder_attribute(self, name: str, value: float) -> None: ...
     def toggle_screen_mode(self) -> None: ...
     def toggle_fine(self, slot: int) -> None: ...
@@ -68,6 +71,7 @@ class EncoderState:
     last_send: float = -1e9
     detent_times: deque[float] = field(default_factory=deque)
     dropped: int = 0
+    screen: bool = False
 
     @property
     def is_slot(self) -> bool:
@@ -90,6 +94,7 @@ class MappingEngine:
         self._pending_hold: dict[str, float] = {}
         self._encoders: dict[int, EncoderState] = {}
         self._stop = asyncio.Event()
+        self._frozen = False
         self._build_encoders()
 
     def _build_encoders(self) -> None:
@@ -108,6 +113,11 @@ class MappingEngine:
     # -- input ------------------------------------------------------------
 
     def handle(self, event: InputEvent, now: float | None = None) -> None:
+        if self._frozen:
+            # A configuration apply is in progress; dropping the event avoids
+            # half a chord crossing the switch-over.
+            LOGGER.debug("Apply läuft, Eingabe verworfen: %s %s", event.kind, event.control)
+            return
         moment = self._clock() if now is None else now
         if event.kind == "key":
             if event.value == 1:
@@ -267,6 +277,34 @@ class MappingEngine:
             state.first_feed = None
             state.last_feed = None
 
+    # -- hot reload -------------------------------------------------------
+
+    @property
+    def frozen(self) -> bool:
+        """True while an apply owns the engine and input is being discarded."""
+
+        return self._frozen
+
+    def freeze(self) -> None:
+        """Discard input and deferred encoder work until :meth:`unfreeze`."""
+
+        self._frozen = True
+
+    def unfreeze(self) -> None:
+        self._frozen = False
+
+    def swap_config(self, config: AppConfig) -> None:
+        """Activate ``config`` and rebuild the encoder state from it.
+
+        Held keys must already have been released and pending encoder deltas
+        dropped (see :meth:`cleanup`); this method only swaps the static
+        configuration so no frame is replayed from the old one.
+        """
+
+        self.config = config
+        self._encoders.clear()
+        self._build_encoders()
+
     # -- resolution -------------------------------------------------------
 
     def _resolution_modifier(self, state: EncoderState) -> tuple[str, float]:
@@ -281,6 +319,12 @@ class MappingEngine:
         return "normal", values.normal
 
     # -- encoders ---------------------------------------------------------
+
+    def _screen_encoder_requested(self) -> bool:
+        """True while the MA modifier is held (MA + turn = screen encoder)."""
+
+        ma = hardkeys.resolve(SCREEN_ENCODER_MODIFIER)
+        return any(held.keyname == ma for held in self._held.values())
 
     def _feed_encoder(self, control: str, delta: int, now: float) -> None:
         if not control.startswith(ENCODER_PREFIX):
@@ -297,6 +341,13 @@ class MappingEngine:
             return
         if delta == 0:
             return
+
+        screen = self._screen_encoder_requested()
+        if state.is_slot and state.pending != 0 and state.screen != screen:
+            # Never mix attribute and screen detents in one frame; the target
+            # changed between feeds (MA pressed or released).
+            self._flush_state(state, now)
+        state.screen = screen if state.is_slot else False
 
         state.detent_times.append(now)
         window = self.config.mapping.acceleration.window
@@ -349,6 +400,8 @@ class MappingEngine:
     def flush_due(self, now: float) -> int:
         """Flush every encoder whose interval or idle deadline is due."""
 
+        if self._frozen:
+            return 0
         sent = 0
         active = max(1, self.active_encoders)
         rate = self.config.rate_limit
@@ -378,6 +431,8 @@ class MappingEngine:
     def flush_all(self, now: float) -> int:
         """Flush all pending encoder units, e.g. before a resolution change."""
 
+        if self._frozen:
+            return 0
         sent = 0
         for encoder_id in sorted(self._encoders):
             state = self._encoders[encoder_id]
@@ -391,8 +446,16 @@ class MappingEngine:
         if state.is_slot:
             value = state.pending
             state.pending = 0.0
-            self.sink.encoder_slot(state.mapping.slot, value)  # type: ignore[arg-type]
-            LOGGER.debug("Encoder %d Slot %s %+.4f", state.mapping.id, state.mapping.slot, value)
+            self.sink.encoder_slot(
+                state.mapping.slot, value, screen=state.screen  # type: ignore[arg-type]
+            )
+            LOGGER.debug(
+                "Encoder %d Slot %s%s %+.4f",
+                state.mapping.id,
+                state.mapping.slot,
+                " (Screen)" if state.screen else "",
+                value,
+            )
         else:
             value = state.pending
             state.pending = 0.0
@@ -413,6 +476,8 @@ class MappingEngine:
         """
 
         if self.config.ma2.hardkey_transport != "lua":
+            return 0
+        if self._frozen:
             return 0
         threshold = self.config.ma2.hardkey_hold_threshold
         sent = 0

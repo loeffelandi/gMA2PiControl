@@ -11,10 +11,6 @@
   let message = $state<{ ok: boolean; text: string } | null>(null);
   let confirmId = $state<string | null>(null);
 
-  let rate = $state(25);
-  let burst = $state(10);
-  let level = $state('INFO');
-
   function errorText(error: unknown): string {
     if (error instanceof ApiError) return error.detail || error.message;
     if (error instanceof Error) return error.message;
@@ -27,12 +23,7 @@
 
   onMount(async () => {
     try {
-      const [, config] = await Promise.all([reload(), api.config()]);
-      const rateLimit = (config.rate_limit ?? {}) as Record<string, unknown>;
-      const logging = (config.logging ?? {}) as Record<string, unknown>;
-      rate = Number(rateLimit.messages_per_second ?? 25);
-      burst = Number(rateLimit.burst ?? 10);
-      level = String(logging.level ?? 'INFO');
+      await reload();
     } catch (error) {
       message = { ok: false, text: errorText(error) };
     } finally {
@@ -69,29 +60,10 @@
       busy = false;
     }
   }
-
-  async function saveSettings(): Promise<void> {
-    busy = true;
-    message = null;
-    try {
-      await api.updateConfig({
-        rate_limit: {
-          messages_per_second: Number(rate),
-          burst: Number(burst),
-        },
-        logging: { level },
-      });
-      message = { ok: true, text: 'Erweiterte Einstellungen gespeichert.' };
-    } catch (error) {
-      message = { ok: false, text: errorText(error) };
-    } finally {
-      busy = false;
-    }
-  }
 </script>
 
 <section class="page table-page">
-  <h1>Backups &amp; Erweitert</h1>
+  <h1>Backups</h1>
 
   {#if loading}
     <p class="muted">Lade Backups …</p>
@@ -140,27 +112,6 @@
         </div>
       </div>
     {/if}
-
-    <h2>Rate &amp; Logging</h2>
-    <form class="form" onsubmit={(event) => event.preventDefault()}>
-      <label for="rate">Frames pro Sekunde</label>
-      <input id="rate" type="number" min="1" bind:value={rate} />
-
-      <label for="burst">Burst</label>
-      <input id="burst" type="number" min="1" bind:value={burst} />
-
-      <label for="level">Log-Level</label>
-      <select id="level" bind:value={level}>
-        <option value="DEBUG">DEBUG</option>
-        <option value="INFO">INFO</option>
-        <option value="WARNING">WARNING</option>
-        <option value="ERROR">ERROR</option>
-      </select>
-
-      <div class="actions">
-        <button type="button" onclick={saveSettings} disabled={busy}>Einstellungen speichern</button>
-      </div>
-    </form>
 
     {#if message}
       <p class:error={!message.ok} class="message" role={message.ok ? 'status' : 'alert'}>

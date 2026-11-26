@@ -14,13 +14,17 @@ from typing import Sequence
 
 from . import __version__
 from .config import AppConfig, ConfigError, find_config
+from .config_store import DEFAULT_ETC_DIR, ConfigPaths
 from .events import DeviceLost, InputEvent
 from .hid_input import HidManager, device_matches, format_devices, list_devices
+from .learn import LearnManager
 from .led_output import LedOutput
 from .logging_setup import setup_logging
 from .ma2_client import Ma2Client
 from .mapping import MappingEngine
 from .midi_input import MidiManager, list_midi_devices
+from .network import NetworkManagerBackend, NetworkService, PendingStore
+from .runtime import ConfigStore
 
 LOGGER = logging.getLogger("ma2pi")
 
@@ -70,18 +74,43 @@ def _load(args: argparse.Namespace) -> AppConfig:
 async def _process_input(
     queue: "asyncio.Queue[InputEvent | DeviceLost]",
     engine: MappingEngine,
+    learn: LearnManager,
+    bus,
 ) -> None:
     while True:
         item = await queue.get()
         if isinstance(item, DeviceLost):
+            if learn.active:
+                _publish_learn(bus, learn.cancel())
             engine.release_device(item.device)
+        elif learn.active:
+            # Learn owns all input while a session is open; no mapping action
+            # may reach the onPC, including the captured key's release.
+            _publish_learn(bus, learn.feed(item))
         else:
             engine.handle(item)
 
 
-def _status_snapshot(client: Ma2Client) -> dict:
+def _publish_learn(bus, result) -> None:
+    if bus is None or result is None:
+        return
+    from .web import learn_event
+
+    bus.publish(learn_event(result))
+
+
+async def _learn_loop(learn: LearnManager, bus) -> None:
+    """Finish encoder windows and idle sessions even without new input."""
+
+    while True:
+        await asyncio.sleep(0.1)
+        if learn.active:
+            _publish_learn(bus, learn.poll())
+
+
+def _status_snapshot(client: Ma2Client, store: ConfigStore | None = None) -> dict:
     """Runtime status for the UI; never contains credentials."""
-    return {
+    snapshot = {
         "connected": client.connected,
         "authenticated": client.authenticated,
         "session": client.session,
@@ -92,7 +121,19 @@ def _status_snapshot(client: Ma2Client) -> dict:
         "last_frame_types": list(client.last_frame_types)[-10:],
         "reconnects": client.reconnects,
         "last_error": client.last_error,
+        "generation": store.generation if store is not None else 0,
+        "busy": store.busy if store is not None else False,
     }
+    return snapshot
+
+
+def _config_paths(config: AppConfig) -> ConfigPaths:
+    """Pick the writable state directory for the active configuration."""
+
+    source = Path(config.source_path) if config.source_path else None
+    if source is not None and source.parent != DEFAULT_ETC_DIR:
+        return ConfigPaths(state_dir=source.parent)
+    return ConfigPaths()
 
 
 def _find_led_device(config: AppConfig) -> str | None:
@@ -158,13 +199,27 @@ async def _led_loop(config: AppConfig, client: Ma2Client, holder: dict) -> None:
         LOGGER.info("LED-Ausgabe aktiv auf %s (Note %d)", path, config.led.note)
 
 
-async def _start_web(config: AppConfig, client: Ma2Client):
-    """Start the embedded UI; return ``(runner, broadcast_task)`` or ``None``."""
+async def _start_web(
+    config: AppConfig, client: Ma2Client, store: ConfigStore, learn: LearnManager
+):
+    """Start the embedded UI; return ``(runner, broadcast_task, bus)`` or ``None``."""
     from aiohttp import web as aiohttp_web
 
     from .web import BUS_KEY, create_app
 
-    app = create_app(config, status_provider=lambda: _status_snapshot(client))
+    paths = _config_paths(config)
+    network = NetworkService(
+        NetworkManagerBackend(),
+        PendingStore(paths.state_dir / "network-pending.json"),
+        port=config.web.port,
+    )
+    app = create_app(
+        config,
+        status_provider=lambda: _status_snapshot(client, store),
+        config_store=store,
+        learn_manager=learn,
+        network_service=network,
+    )
     runner = aiohttp_web.AppRunner(app, access_log=None)
     await runner.setup()
     site = aiohttp_web.TCPSite(runner, config.web.bind, config.web.port)
@@ -178,17 +233,24 @@ async def _start_web(config: AppConfig, client: Ma2Client):
         return None
 
     bus = app[BUS_KEY]
+    network.publish = bus.publish
+    try:
+        await network.resume()
+    except Exception as exc:  # a broken pending file must not stop the daemon
+        LOGGER.error("Netzwerk-Pending-Zustand konnte nicht geladen werden: %s", exc)
 
     async def broadcast() -> None:
         """Push the runtime status once per second while clients listen."""
         while True:
             await asyncio.sleep(1.0)
             if bus.subscriber_count:
-                bus.publish({"type": "status", "data": _status_snapshot(client)})
+                bus.publish(
+                    {"type": "status", "data": _status_snapshot(client, store)}
+                )
 
     task = asyncio.create_task(broadcast(), name="ma2pi-web-status")
     LOGGER.info("Web-UI erreichbar unter http://%s:%s/", config.web.bind, config.web.port)
-    return runner, task
+    return runner, task, bus, network
 
 
 async def run_daemon(config: AppConfig, dry_run: bool) -> int:
@@ -199,6 +261,8 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
     queue: asyncio.Queue[InputEvent | DeviceLost] = asyncio.Queue(maxsize=1000)
     client = Ma2Client(config, dry_run=dry_run)
     engine = MappingEngine(config, client)
+    store = ConfigStore(config, engine, _config_paths(config), client=client)
+    learn = LearnManager(config)
     client.add_connection_lost_callback(engine.on_connection_lost)
     hid = HidManager(config)
     midi = MidiManager(config)
@@ -219,11 +283,15 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
         if config.led.enabled
         else None
     )
-    web_service = await _start_web(config, client)
+    web_service = await _start_web(config, client, store, learn)
+    bus = web_service[2] if web_service is not None else None
     encoder_task = asyncio.create_task(engine.run_encoder_loop(), name="ma2pi-encoder")
     hid_task = asyncio.create_task(hid.run(queue), name="ma2pi-hid")
     midi_task = asyncio.create_task(midi.run(queue), name="ma2pi-midi")
-    input_task = asyncio.create_task(_process_input(queue, engine), name="ma2pi-input")
+    input_task = asyncio.create_task(
+        _process_input(queue, engine, learn, bus), name="ma2pi-input"
+    )
+    learn_task = asyncio.create_task(_learn_loop(learn, bus), name="ma2pi-learn")
 
     failure: list[BaseException] = []
 
@@ -236,7 +304,7 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
             LOGGER.error("Hintergrund-Task %s fehlgeschlagen: %s", task.get_name(), exc)
             stop.set()
 
-    for task in (encoder_task, hid_task, midi_task, input_task):
+    for task in (encoder_task, hid_task, midi_task, input_task, learn_task):
         task.add_done_callback(_watch)
 
     try:
@@ -246,6 +314,7 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
         input_task.cancel()
         hid_task.cancel()
         midi_task.cancel()
+        learn_task.cancel()
         engine.stop()
         encoder_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -254,6 +323,8 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
             await hid_task
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await midi_task
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await learn_task
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await encoder_task
         engine.cleanup(send=client.authenticated)
@@ -265,7 +336,8 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
         if led_holder["led"] is not None:
             led_holder["led"].close()
         if web_service is not None:
-            web_runner, web_task = web_service
+            web_runner, web_task, _, network = web_service
+            await network.close()
             web_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await web_task

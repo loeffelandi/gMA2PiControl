@@ -1,0 +1,261 @@
+"""Tests for the configuration read/write and connection-test API."""
+
+from __future__ import annotations
+
+import json
+import shutil
+from pathlib import Path
+
+from aiohttp.test_utils import TestClient, TestServer
+
+from ma2pi.config import load_config
+from ma2pi.config_store import ConfigPaths
+from ma2pi.ma2_client import ConnectionCheck
+from ma2pi.mapping import MappingEngine
+from ma2pi.runtime import ConfigStore
+from ma2pi.web import create_app
+from ma2pi.web.serialize import redacted_config
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class NullSink:
+    def press(self, keyname: str, hold: bool = False) -> None:
+        pass
+
+    def release(self, keyname: str) -> None:
+        pass
+
+    def command(self, text: str) -> None:
+        pass
+
+    def encoder_slot(self, slot: int, delta: float, screen: bool = False) -> None:
+        pass
+
+    def encoder_attribute(self, name: str, value: float) -> None:
+        pass
+
+    def toggle_screen_mode(self) -> None:
+        pass
+
+    def toggle_fine(self, slot: int) -> None:
+        pass
+
+    def screen_shortcut(self, screen: int) -> None:
+        pass
+
+
+def _setup(tmp_path: Path, *, tester=None) -> tuple[ConfigPaths, ConfigStore]:
+    paths = ConfigPaths(state_dir=tmp_path / "state", etc_dir=tmp_path / "etc")
+    paths.state_dir.mkdir(parents=True)
+    shutil.copy(ROOT / "config.toml", paths.config)
+    _disable_pin(paths.config)
+    config = load_config(paths.config)
+    engine = MappingEngine(config, NullSink())
+    return paths, ConfigStore(config, engine, paths, tester=tester)
+
+
+def _disable_pin(path: Path) -> None:
+    import tomlkit
+
+    document = tomlkit.parse(path.read_text(encoding="utf-8"))
+    document["web"]["pin_enabled"] = False
+    path.write_text(tomlkit.dumps(document), encoding="utf-8")
+
+
+async def _app(store: ConfigStore) -> TestClient:
+    client = TestClient(
+        TestServer(
+            create_app(
+                store.config,
+                dist_dir=Path("/nonexistent"),
+                config_store=store,
+            )
+        )
+    )
+    await client.start_server()
+    return client
+
+
+def test_redacted_config_contains_no_password_material(config):
+    payload = redacted_config(config)
+    ma2 = payload["ma2"]
+
+    assert "password_file" not in ma2
+    assert "password_env" not in ma2
+    assert "password" not in ma2
+    assert ma2["password_set"] is True
+    assert "source_path" not in payload
+
+
+async def test_get_config_never_returns_password(tmp_path):
+    _, store = _setup(tmp_path)
+    client = await _app(store)
+    try:
+        response = await client.get("/api/config")
+        assert response.status == 200
+        text = await response.text()
+        body = json.loads(text)
+        assert "password" not in body["ma2"]
+        assert body["ma2"]["password_set"] is True
+        assert "ma2.password" not in text
+    finally:
+        await client.close()
+
+
+async def test_put_password_is_write_only(tmp_path):
+    seen: dict[str, str | None] = {}
+
+    async def tester(candidate, password):
+        seen["password"] = password
+        return ConnectionCheck(
+            session=3,
+            username=candidate.ma2.username,
+            target="ws://test",
+            reused=False,
+        )
+
+    paths, store = _setup(tmp_path, tester=tester)
+    client = await _app(store)
+    headers = {"X-Ma2pi-Request": "1"}
+    try:
+        response = await client.put(
+            "/api/config",
+            json={"ma2": {"password": "s3cret"}},
+            headers=headers,
+        )
+        assert response.status == 200
+        text = await response.text()
+        assert "s3cret" not in text
+        assert paths.password.read_text(encoding="utf-8").strip() == "s3cret"
+        assert seen["password"] == "s3cret"
+
+        loaded = load_config(paths.config)
+        assert loaded.ma2.password_file == str(paths.password)
+
+        body = await (await client.get("/api/config")).json()
+        assert "s3cret" not in json.dumps(body)
+        assert body["ma2"]["password_set"] is True
+        assert "password_file" not in body["ma2"]
+    finally:
+        await client.close()
+
+
+async def test_put_rejects_invalid_config_without_writing(tmp_path):
+    paths, store = _setup(tmp_path)
+    before = paths.config.read_bytes()
+    client = await _app(store)
+    try:
+        response = await client.put(
+            "/api/config",
+            json={"ma2": {"port": 70000}},
+            headers={"X-Ma2pi-Request": "1"},
+        )
+        assert response.status == 422
+        body = await response.json()
+        assert body["error"] == "validation_error"
+        assert "ma2.port" in body["detail"]
+        assert paths.config.read_bytes() == before
+    finally:
+        await client.close()
+
+
+async def test_put_sets_and_removes_screen_encoders(tmp_path):
+    _, store = _setup(tmp_path)
+    client = await _app(store)
+    headers = {"X-Ma2pi-Request": "1"}
+    try:
+        response = await client.put(
+            "/api/config",
+            json={
+                "mapping": {
+                    "screen_encoders": {
+                        "1": "screen1",
+                        "2": "screen2",
+                        "3": None,
+                        "4": None,
+                    }
+                }
+            },
+            headers=headers,
+        )
+        assert response.status == 200
+        assert store.config.mapping.screen_encoders == {
+            1: "screen1",
+            2: "screen2",
+        }
+
+        response = await client.put(
+            "/api/config",
+            json={"mapping": {"screen_encoders": {"2": None}}},
+            headers=headers,
+        )
+        assert response.status == 200
+        assert store.config.mapping.screen_encoders == {1: "screen1"}
+        body = await (await client.get("/api/config")).json()
+        assert body["mapping"]["screen_encoders"] == {"1": "screen1"}
+    finally:
+        await client.close()
+
+
+async def test_validate_does_not_write(tmp_path):
+    paths, store = _setup(tmp_path)
+    before = paths.config.read_bytes()
+    client = await _app(store)
+    headers = {"X-Ma2pi-Request": "1"}
+    try:
+        valid = await client.post(
+            "/api/config/validate",
+            json={"logging": {"level": "DEBUG"}},
+            headers=headers,
+        )
+        assert valid.status == 200
+        assert await valid.json() == {"valid": True}
+        assert paths.config.read_bytes() == before
+
+        invalid = await client.post(
+            "/api/config/validate",
+            json={"ma2": {"port": 70000}},
+            headers=headers,
+        )
+        assert invalid.status == 422
+    finally:
+        await client.close()
+
+
+async def test_connection_test_returns_no_password(tmp_path):
+    seen: dict[str, str | None] = {}
+
+    async def tester(candidate, password):
+        seen["password"] = password
+        seen["host"] = candidate.ma2.host
+        return ConnectionCheck(
+            session=9,
+            username=candidate.ma2.username,
+            target="ws://test",
+            reused=False,
+        )
+
+    _, store = _setup(tmp_path, tester=tester)
+    client = await _app(store)
+    try:
+        response = await client.post(
+            "/api/test-connection",
+            json={
+                "host": "10.0.0.9",
+                "port": 80,
+                "username": "svt",
+                "password": "s3cret",
+            },
+            headers={"X-Ma2pi-Request": "1"},
+        )
+        assert response.status == 200
+        text = await response.text()
+        assert "s3cret" not in text
+        body = json.loads(text)
+        assert body["session"] == 9
+        assert body["username"] == "svt"
+        assert seen["password"] == "s3cret"
+        assert seen["host"] == "10.0.0.9"
+    finally:
+        await client.close()

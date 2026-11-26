@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from ma2pi.events import InputEvent
+from ma2pi import hardkeys
 from ma2pi.mapping import MappingEngine
 
 
@@ -19,8 +20,8 @@ class Sink:
     def command(self, text: str) -> None:
         self.actions.append(("command", text))
 
-    def encoder_slot(self, slot: int, delta: float) -> None:
-        self.actions.append(("slot", slot, delta))
+    def encoder_slot(self, slot: int, delta: float, screen: bool = False) -> None:
+        self.actions.append(("screen_slot" if screen else "slot", slot, delta))
 
     def encoder_attribute(self, name: str, value: float) -> None:
         self.actions.append(("attribute", name, value))
@@ -251,6 +252,46 @@ def test_screen_mode_key_toggles(engine, sink):
     assert sink.actions == [("screen_mode",)]
 
 
+def test_ma_plus_encoder_targets_screen(engine, sink):
+    engine.handle(key("ma", 1))
+    engine.handle(encoder(1, 1), now=0.0)
+    engine.flush_due(0.05)
+    assert ("screen_slot", 1, pytest.approx(1.0)) in sink.actions
+    assert not any(action[0] == "slot" for action in sink.actions)
+
+
+def test_rightmost_asl_button_sends_nipple(engine, sink):
+    engine.handle(key("asl_button_3", 1, "asl"))
+    engine.handle(key("asl_button_3", 0, "asl"))
+    assert ("press", hardkeys.resolve("NIPPLE")) in sink.actions
+    assert sink.actions[-1] == ("release", hardkeys.resolve("NIPPLE"))
+
+
+def test_mode_switch_between_detents_splits_batches(engine, sink):
+    engine.handle(encoder(1, 1), now=0.0)
+    engine.handle(key("ma", 1))
+    engine.handle(encoder(1, 2), now=0.0)
+    engine.flush_all(0.05)
+    slots = [action for action in sink.actions if action[0] in {"slot", "screen_slot"}]
+    assert slots == [
+        ("slot", 1, pytest.approx(1.0)),
+        ("screen_slot", 1, pytest.approx(2.0)),
+    ]
+
+
+def test_ma_release_returns_to_attribute(engine, sink):
+    engine.handle(key("ma", 1))
+    engine.handle(encoder(1, 1), now=0.0)
+    engine.handle(key("ma", 0))
+    engine.handle(encoder(1, 2), now=0.0)
+    engine.flush_all(0.05)
+    slots = [action for action in sink.actions if action[0] in {"slot", "screen_slot"}]
+    assert slots == [
+        ("screen_slot", 1, pytest.approx(1.0)),
+        ("slot", 1, pytest.approx(2.0)),
+    ]
+
+
 def test_acceleration_increases_delta_for_fast_rotation(config, sink):
     engine = MappingEngine(config, sink, clock=lambda: 0.0)
     engine.handle(encoder(2, 1), now=0.0)
@@ -330,8 +371,8 @@ class HoldSink:
     def command(self, text: str) -> None:
         self.actions.append(("command", text))
 
-    def encoder_slot(self, slot: int, delta: float) -> None:
-        self.actions.append(("slot", slot, delta))
+    def encoder_slot(self, slot: int, delta: float, screen: bool = False) -> None:
+        self.actions.append(("screen_slot" if screen else "slot", slot, delta))
 
     def encoder_attribute(self, name: str, value: float) -> None:
         self.actions.append(("attribute", name, value))

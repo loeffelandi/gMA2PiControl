@@ -37,10 +37,13 @@ class EncoderSlot:
 
     ``slot`` is 1..4 and addresses the encoder page the console reports
     (``presetTypes``); the client resolves the attribute name at dispatch time.
+    ``screen`` forces the configured screen-encoder target for this delta, even
+    when the global screen-mode toggle is off (MA held + turn).
     """
 
     slot: int
     delta: float
+    screen: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +89,7 @@ def is_encoder(action: Action) -> bool:
 
 def encoder_key(action: EncoderAction) -> tuple[str, str | int]:
     if isinstance(action, EncoderSlot):
-        return ("slot", action.slot)
+        return ("screen" if action.screen else "slot", action.slot)
     return ("attribute", action.name)
 
 
@@ -97,10 +100,12 @@ def merge_encoder(left: EncoderAction, right: EncoderAction) -> EncoderAction | 
     """
 
     if isinstance(left, EncoderSlot) and isinstance(right, EncoderSlot):
-        if left.slot != right.slot:
+        if left.slot != right.slot or left.screen != right.screen:
             raise ValueError("encoder actions have different targets")
         delta = left.delta + right.delta
-        return EncoderSlot(left.slot, delta) if delta else None
+        return (
+            EncoderSlot(left.slot, delta, screen=left.screen) if delta else None
+        )
     if isinstance(left, EncoderAttribute) and isinstance(right, EncoderAttribute):
         if left.name != right.name:
             raise ValueError("encoder actions have different targets")

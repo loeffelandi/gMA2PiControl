@@ -39,8 +39,13 @@ const devices = [
       keys: [],
       notes: [{ note: 5, control: 'asl_click_1' }],
       encoders: [],
-      midi_encoders: [{ id: 1, control: 'encoder.1', note: 1 }],
-      logical: ['asl_click_1', 'encoder.1'],
+      midi_encoders: [
+        { id: 1, control: 'encoder.1', note: 1 },
+        { id: 2, control: 'encoder.2', note: 2 },
+        { id: 3, control: 'encoder.3', note: 3 },
+        { id: 4, control: 'encoder.4', note: 4 },
+      ],
+      logical: ['asl_click_1', 'encoder.1', 'encoder.2', 'encoder.3', 'encoder.4'],
     },
   },
 ] as unknown as DeviceEntry[];
@@ -51,8 +56,14 @@ const config = {
       fix: { hardkey: 'Fix' },
       oops: { command: 'Clear' },
     },
-    encoders: [{ id: 1, slot: 1 }],
+    encoders: [
+      { id: 1, slot: 1 },
+      { id: 2, slot: 2 },
+      { id: 3, slot: 3 },
+      { id: 4, slot: 4 },
+    ],
     modifiers: { ma: { hardkey: 'MA' } },
+    screen_encoders: { '1': '8', '2': '7', '3': '6', '4': '5' },
   },
 };
 
@@ -105,7 +116,31 @@ describe('MappingPage', () => {
     await waitFor(() => {
       expect(api.updateConfig).toHaveBeenCalledWith({
         mapping: expect.objectContaining({
-          encoders: [expect.objectContaining({ id: 1, slot: 3 })],
+          encoders: expect.arrayContaining([
+            expect.objectContaining({ id: 1, slot: 3 }),
+          ]),
+        }),
+      });
+    });
+  });
+
+  it('edits the screen target per physical encoder', async () => {
+    const api = fakeApi();
+    await renderPage(api);
+
+    const targets = screen.getAllByTestId(
+      'screen-encoder-target',
+    ) as HTMLSelectElement[];
+    expect(targets[0].value).toBe('8');
+    expect(targets[3].value).toBe('5');
+    await fireEvent.change(targets[0], { target: { value: '5' } });
+    await fireEvent.change(targets[3], { target: { value: '' } });
+    await fireEvent.click(screen.getByText('Speichern'));
+
+    await waitFor(() => {
+      expect(api.updateConfig).toHaveBeenCalledWith({
+        mapping: expect.objectContaining({
+          screen_encoders: { '1': '5', '2': '7', '3': '6', '4': null },
         }),
       });
     });

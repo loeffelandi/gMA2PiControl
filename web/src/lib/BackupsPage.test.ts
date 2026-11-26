@@ -16,13 +16,8 @@ const backups = [
 function fakeApi() {
   return {
     backups: vi.fn(async () => backups),
-    config: vi.fn(async () => ({
-      rate_limit: { messages_per_second: 25, burst: 10 },
-      logging: { level: 'INFO' },
-    })),
     createBackup: vi.fn(async () => backups[0]),
     restoreBackup: vi.fn(async () => ({ ok: true })),
-    updateConfig: vi.fn(async () => ({ generation: 1 })),
   } as unknown as ApiClient;
 }
 
@@ -67,25 +62,14 @@ describe('BackupsPage', () => {
     expect(screen.getByTestId('restore-confirm')).toBeTruthy();
   });
 
-  it('saves rate and logging settings', async () => {
+  it('does not render the advanced settings', async () => {
     const api = fakeApi();
     render(BackupsPage, { props: { api } });
 
     await waitFor(() => {
-      expect((screen.getByLabelText('Frames pro Sekunde') as HTMLInputElement).value).toBe(
-        '25',
-      );
+      expect(screen.getByText(backups[0].id)).toBeTruthy();
     });
-    await fireEvent.input(screen.getByLabelText('Frames pro Sekunde'), {
-      target: { value: '40' },
-    });
-    await fireEvent.click(screen.getByText('Einstellungen speichern'));
-
-    await waitFor(() => {
-      expect(api.updateConfig).toHaveBeenCalledWith({
-        rate_limit: { messages_per_second: 40, burst: 10 },
-        logging: { level: 'INFO' },
-      });
-    });
+    expect(screen.queryByText('PIN-Sperre')).toBeNull();
+    expect(screen.queryByText('Rate & Logging')).toBeNull();
   });
 });

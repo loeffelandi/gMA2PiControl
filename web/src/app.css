@@ -75,6 +75,19 @@ h1 {
   color: #f4d98a;
 }
 
+.banner.warn {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: #4a2414;
+  border-color: #8a4a2a;
+  color: #ffd2b3;
+}
+
+.banner button {
+  padding: 0.2rem 0.55rem;
+}
+
 .error {
   color: #ff9c9c;
 }
@@ -172,6 +185,16 @@ h2 {
   color: #b8c4d0;
 }
 
+.form h2 {
+  grid-column: 1 / -1;
+  margin: 0.75rem 0 0.25rem;
+}
+
+.form input[type='checkbox'] {
+  width: auto;
+  justify-self: start;
+}
+
 .form input {
   font: inherit;
   color: inherit;
@@ -212,6 +235,72 @@ h2 {
   background: #341a1a;
   border-color: #8a3b3b;
   color: #ffb4b4;
+}
+
+.network-mode {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 1rem;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #2b333c;
+  border-radius: 0.4rem;
+}
+
+.network-mode legend {
+  padding: 0 0.25rem;
+  color: #93a1af;
+}
+
+.network-mode label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.network-mode input[type='radio'] {
+  width: auto;
+}
+
+.network-form input:disabled {
+  opacity: 0.55;
+}
+
+.field-error {
+  grid-column: 2;
+  margin: 0;
+  color: #ff9c9c;
+  font-size: 0.9rem;
+}
+
+.network-warnings {
+  margin: 0.75rem 0 0;
+  padding-left: 1.1rem;
+  color: #f4d98a;
+}
+
+.network-pending {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid #2f6f9f;
+  border-radius: 0.5rem;
+  background: #16232d;
+}
+
+.network-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  width: min(560px, calc(100vw - 2rem));
+  height: fit-content;
+  max-height: calc(100vh - 2rem);
+  margin: auto;
+  padding: 1rem 1.25rem;
+  overflow: auto;
+  border: 1px solid #4a8dc0;
+  border-radius: 0.6rem;
+  background: #161c22;
+  box-shadow: 0 1rem 3rem #000a;
 }
 
 .mapping-page table {
@@ -300,4 +389,44 @@ button.danger {
 
 .confirm p {
   margin: 0 0 0.5rem;
+}
+
+.gate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.gate-card {
+  width: min(360px, 100%);
+  display: grid;
+  gap: 0.5rem;
+  padding: 1.5rem;
+  border: 1px solid #2b333c;
+  border-radius: 0.75rem;
+  background: #161c22;
+}
+
+.gate-card h1 {
+  margin: 0;
+}
+
+.gate-card input {
+  font: inherit;
+  color: inherit;
+  background: #0c1116;
+  border: 1px solid #33404c;
+  border-radius: 0.35rem;
+  padding: 0.5rem 0.6rem;
+  letter-spacing: 0.3em;
+}
+
+.gate-card button[type='submit'] {
+  margin-top: 0.5rem;
+  padding: 0.55rem;
+}
+
+.logout {
+  margin-left: auto;
 }

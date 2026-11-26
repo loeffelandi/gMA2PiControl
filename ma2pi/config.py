@@ -97,13 +97,14 @@ class WebSettings:
     """Settings for the embedded configuration UI.
 
     ``bind``/``port`` changes only take effect after a service restart; the
-    running server keeps its listener.  ``pin_enabled`` is a prepared extension
-    point and stays disabled in v1.
+    running server keeps its listener.  ``pin`` protects the API and UI with a
+    simple numeric code; it is on by default.
     """
 
     bind: str = "0.0.0.0"
     port: int = 8080
     pin_enabled: bool = False
+    pin: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -539,18 +540,20 @@ def _parse_led(raw: Any) -> LedSettings:
 def _parse_web(raw: Any) -> WebSettings:
     path = "web"
     data = _table(raw, path)
-    _reject_unknown(data, {"bind", "port", "pin_enabled"}, path)
+    _reject_unknown(data, {"bind", "port", "pin_enabled", "pin"}, path)
     bind = _string(data.get("bind", "0.0.0.0"), f"{path}.bind")
     port = _int(data.get("port", 8080), f"{path}.port")
     if not 1 <= port <= 65535:
         raise ConfigError(f"{path}.port", "muss zwischen 1 und 65535 liegen")
     pin_enabled = _bool(data.get("pin_enabled", False), f"{path}.pin_enabled")
-    if pin_enabled:
+    pin = _string(data.get("pin", ""), f"{path}.pin", allow_empty=True)
+    if pin and (not pin.isdigit() or not 4 <= len(pin) <= 12):
+        raise ConfigError(f"{path}.pin", "muss aus 4 bis 12 Ziffern bestehen")
+    if pin_enabled and not pin:
         raise ConfigError(
-            f"{path}.pin_enabled",
-            "PIN-Sperre ist in dieser Version noch nicht implementiert",
+            f"{path}.pin", "muss gesetzt sein, wenn pin_enabled true ist"
         )
-    return WebSettings(bind=bind, port=port, pin_enabled=pin_enabled)
+    return WebSettings(bind=bind, port=port, pin_enabled=pin_enabled, pin=pin)
 
 
 def _parse_screen_helper(raw: Any) -> ScreenHelperSettings:

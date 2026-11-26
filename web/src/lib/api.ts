@@ -6,19 +6,22 @@ export const REQUEST_HEADER = 'X-Ma2pi-Request';
 export interface ApiErrorPayload {
   error: string;
   detail?: string;
+  field?: string;
 }
 
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly detail: string;
+  readonly field?: string;
 
-  constructor(status: number, code: string, detail = '') {
+  constructor(status: number, code: string, detail = '', field?: string) {
     super(detail ? `${code}: ${detail}` : code);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.detail = detail;
+    this.field = field;
   }
 }
 
@@ -55,6 +58,69 @@ export interface StatusInfo {
   busy: boolean;
 }
 
+export type NetworkMode = 'dhcp' | 'static';
+
+export interface NetworkCandidate {
+  mode: NetworkMode;
+  address?: string;
+  subnet_mask?: string;
+  gateway?: string;
+  dns?: string[];
+}
+
+export interface NetworkCurrent {
+  address: string | null;
+  subnet_mask: string | null;
+  gateway: string | null;
+  dns: string[];
+}
+
+export interface NetworkInterfaceInfo {
+  name: string;
+  type: string;
+  state: string;
+  connection: string | null;
+}
+
+export interface NetworkPending extends NetworkCandidate {
+  phase: string;
+  started_at: string | null;
+  deadline: string | null;
+  target_url: string | null;
+  error: string | null;
+}
+
+export interface NetworkLastResult {
+  status: 'confirmed' | 'rolled_back' | 'failed';
+  at: string | null;
+  detail: string | null;
+}
+
+export interface NetworkStatus {
+  backend: string;
+  available: boolean;
+  can_manage: boolean;
+  interface: NetworkInterfaceInfo | null;
+  mode: string;
+  current: NetworkCurrent;
+  pending: NetworkPending | null;
+  last_result: NetworkLastResult | null;
+  self_connection: boolean;
+  error: string | null;
+  warnings: string[];
+}
+
+export interface NetworkValidation {
+  valid: boolean;
+  target_url: string | null;
+  warnings: string[];
+}
+
+export interface NetworkApplyResult {
+  pending: NetworkPending;
+  target_url: string | null;
+}
+
 export interface Ma2Config {
   host: string;
   port: number;
@@ -80,6 +146,12 @@ export interface BackupEntry {
   size: number;
   modified: string;
   last_good: boolean;
+}
+
+export interface AuthStatus {
+  pin_enabled: boolean;
+  pin_set: boolean;
+  authenticated: boolean;
 }
 
 export interface LearnResult {
@@ -153,6 +225,7 @@ export class ApiClient {
         response.status,
         failure.error ?? 'http_error',
         failure.detail ?? response.statusText,
+        failure.field,
       );
     }
     return payload as T;
@@ -172,6 +245,38 @@ export class ApiClient {
 
   status(): Promise<StatusInfo> {
     return this.request<StatusInfo>('GET', '/api/status');
+  }
+
+  network(): Promise<NetworkStatus> {
+    return this.request<NetworkStatus>('GET', '/api/network');
+  }
+
+  validateNetwork(candidate: NetworkCandidate): Promise<NetworkValidation> {
+    return this.request<NetworkValidation>('POST', '/api/network/validate', candidate);
+  }
+
+  applyNetwork(candidate: NetworkCandidate): Promise<NetworkApplyResult> {
+    return this.request<NetworkApplyResult>('PUT', '/api/network', candidate);
+  }
+
+  confirmNetwork(): Promise<NetworkStatus> {
+    return this.request<NetworkStatus>('POST', '/api/network/confirm', {});
+  }
+
+  rollbackNetwork(): Promise<NetworkStatus> {
+    return this.request<NetworkStatus>('POST', '/api/network/rollback', {});
+  }
+
+  authStatus(): Promise<AuthStatus> {
+    return this.request<AuthStatus>('GET', '/api/auth/status');
+  }
+
+  login(pin: string): Promise<{ ok: boolean }> {
+    return this.request<{ ok: boolean }>('POST', '/api/auth/login', { pin });
+  }
+
+  logout(): Promise<{ ok: boolean }> {
+    return this.request<{ ok: boolean }>('POST', '/api/auth/logout', {});
   }
 
   config(): Promise<Record<string, unknown>> {

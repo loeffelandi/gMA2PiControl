@@ -14,6 +14,7 @@ from ma2pi.actions import (
     EncoderSlot,
     Press,
     Release,
+    ToggleFine,
     merge_encoder,
 )
 from ma2pi.events import InputEvent
@@ -178,6 +179,16 @@ async def test_queue_coalesces_encoder_targets():
     assert second == EncoderAttribute("Dimmer", pytest.approx(0.3))
 
 
+async def test_queue_keeps_screen_and_attribute_targets_separate():
+    queue = SendQueue()
+    queue.put(EncoderSlot(1, 2))
+    queue.put(EncoderSlot(1, 3, screen=True))
+    assert queue.total_depth == 2
+    actions = [await queue.get(), await queue.get()]
+    assert EncoderSlot(1, 2) in actions
+    assert EncoderSlot(1, 3, screen=True) in actions
+
+
 async def test_queue_never_drops_controls():
     queue = SendQueue()
     for _ in range(200):
@@ -190,6 +201,13 @@ async def test_queue_never_drops_controls():
 def test_merge_encoder_cancels_to_zero():
     assert merge_encoder(EncoderSlot(1, 2), EncoderSlot(1, -2)) is None
     assert merge_encoder(EncoderAttribute("A", 0.2), EncoderAttribute("A", -0.2)) is None
+
+
+def test_merge_encoder_keeps_screen_flag():
+    merged = merge_encoder(
+        EncoderSlot(1, 2, screen=True), EncoderSlot(1, 3, screen=True)
+    )
+    assert merged == EncoderSlot(1, 5, screen=True)
 
 
 # -- rate limiter ---------------------------------------------------------
@@ -495,6 +513,63 @@ async def test_fine_toggle_sends_resolution_frame(small_config):
     )
     assert [f for f in transport.sent if "resolution" in f][-1]["resolution"] == 0
     await client.shutdown()
+
+
+async def test_fine_toggle_uses_screen_encoder_name(make_config):
+    cfg = make_config(
+        lambda data: data["mapping"].__setitem__(
+            "screen_encoders", {"1": "screen1"}
+        )
+    )
+    transport = MockTransport()
+    client = Ma2Client(cfg, transport=transport)
+    client._session = 4
+    client._authenticated = True
+    client._screen_mode = True
+    await client._dispatch(ToggleFine(1))
+    assert transport.sent == [frames.encoder_resolution_frame("screen1", 1, 4)]
+
+
+async def test_fine_toggle_screen_mode_without_name_warns(make_config, caplog):
+    cfg = make_config(lambda data: data["mapping"].pop("screen_encoders"))
+    transport = MockTransport()
+    client = Ma2Client(cfg, transport=transport)
+    client._session = 4
+    client._authenticated = True
+    client._screen_mode = True
+    with caplog.at_level("WARNING"):
+        await client._dispatch(ToggleFine(1))
+    assert transport.sent == []
+    assert "screen_encoders.1" in caplog.text
+
+
+async def test_slot_delta_uses_screen_encoder_name(make_config):
+    cfg = make_config(
+        lambda data: data["mapping"].__setitem__(
+            "screen_encoders", {"2": "screen2"}
+        )
+    )
+    transport = MockTransport()
+    client = Ma2Client(cfg, transport=transport)
+    client._session = 4
+    client._authenticated = True
+    client._screen_mode = True
+    await client._dispatch(EncoderSlot(2, 1.5))
+    assert transport.sent == [frames.encoder_attribute_frame("screen2", 1.5, 4)]
+
+
+async def test_slot_delta_can_force_screen_encoder(make_config):
+    cfg = make_config(
+        lambda data: data["mapping"].__setitem__(
+            "screen_encoders", {"2": "screen2"}
+        )
+    )
+    transport = MockTransport()
+    client = Ma2Client(cfg, transport=transport)
+    client._session = 4
+    client._authenticated = True
+    await client._dispatch(EncoderSlot(2, 1.5, screen=True))
+    assert transport.sent == [frames.encoder_attribute_frame("screen2", 1.5, 4)]
 
 
 def test_backoff_login_failure_uses_long_delay(small_config):

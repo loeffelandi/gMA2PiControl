@@ -61,9 +61,11 @@ die laufende Session nicht unterbrechen.
 ### Requirement: Geräte- und Mapping-Editor
 
 Die Oberfläche SHALL erkannte Geräte und deren logische Controls anzeigen und
-das Bearbeiten von Tasten-, Modifier- und Encoder-Mappings ermöglichen. Vor dem
-Speichern MUST die Konfiguration mit denselben Regeln wie der Daemon validiert
-werden; ungültige Ziele werden mit Feldbezug abgelehnt.
+das Bearbeiten von Tasten-, Modifier- und Encoder-Mappings ermöglichen. Pro
+physischem Encoder MUST zusätzlich das Attribut-Ziel und der Screen-Encoder
+(5–8 oder „keiner“) wählbar sein. Vor dem Speichern MUST die Konfiguration mit
+denselben Regeln wie der Daemon validiert werden; ungültige Ziele werden mit
+Feldbezug abgelehnt.
 
 #### Scenario: Erkannte Geräte werden angezeigt
 
@@ -79,6 +81,16 @@ werden; ungültige Ziele werden mit Feldbezug abgelehnt.
 
 - **WHEN** ein Encoder auf Wheel 11 oder auf ein unbekanntes Attribut gesetzt wird
 - **THEN** lehnt die API das Speichern mit einer Feldmeldung ab und die aktive Konfiguration bleibt unverändert
+
+#### Scenario: Screen-Encoder-Namen bearbeiten
+
+- **WHEN** im Mapping-Editor pro physischem Encoder ein Screen-Encoder ausgewählt und gespeichert wird
+- **THEN** enthält `mapping.screen_encoders` für den zugeordneten Slot genau diesen Namen und der Screen-Modus verwendet ihn
+
+#### Scenario: Screen-Encoder-Slot leeren
+
+- **WHEN** für einen physischen Encoder `— keiner —` gewählt und gespeichert wird
+- **THEN** fehlt der zugeordnete Slot in `mapping.screen_encoders` und im Screen-Modus sendet dieser Slot keine Frames
 
 ### Requirement: Learn-Modus
 
@@ -154,24 +166,46 @@ Konfiguration unverändert.
 - **WHEN** ein beschädigtes oder schemawidriges Backup wiederhergestellt werden soll
 - **THEN** lehnt die API den Vorgang ab und die aktive Konfiguration bleibt unverändert
 
-### Requirement: Zugriffsmodell der Oberfläche
+### Requirement: PIN-Sperre der Oberfläche
 
-Die Oberfläche SHALL im LAN ohne Login erreichbar sein; eine PIN-Sperre ist als
-späterer Ausbau vorgesehen, in v1 aber deaktiviert. Schreibende API-Aufrufe MUST
-als JSON mit einem eigenen Anfrage-Header erfolgen. Antworten und Logs MUST NOT
-das MA2-Passwort oder dessen Hash enthalten.
+Die Oberfläche SHALL im LAN erreichbar sein. Eine einfache PIN-Sperre MUST
+optional konfigurierbar sein und ohne explizite Aktivierung aus bleiben. Ist
+keine PIN gesetzt, MUST die Oberfläche sichtbar warnen. Ist eine PIN aktiv,
+MUST die Oberfläche eine Sperrseite zeigen und die API außer den öffentlichen
+Auth-Endpunkten authentifizieren.
 
-#### Scenario: Zugriff ohne Login
+#### Scenario: Zugriff ohne PIN
 
-- **WHEN** ein Client im LAN die Oberfläche oder eine lesende API aufruft
-- **THEN** wird die Anfrage ohne Anmeldung beantwortet
+- **WHEN** keine PIN aktiviert ist
+- **THEN** ist die API offen und die Oberfläche zeigt oben einen Warnbanner
+
+#### Scenario: Zugriff mit PIN
+
+- **WHEN** ein Client im LAN die Oberfläche oder eine geschützte API aufruft
+- **THEN** wird ohne gültige PIN-Session die Sperrseite beziehungsweise `401 pin_required` geliefert
+
+#### Scenario: PIN-Anmeldung
+
+- **WHEN** der Benutzer die korrekte PIN eingibt
+- **THEN** wird eine Session gesetzt und die Oberfläche lädt die Live-Daten
+
+#### Scenario: Falsche PIN
+
+- **WHEN** eine falsche PIN eingegeben wird
+- **THEN** bleibt der Zugriff gesperrt und die Antwort enthält die PIN nicht
+
+#### Scenario: PIN-Sperre deaktiviert
+
+- **WHEN** `web.pin_enabled` auf `false` gesetzt ist
+- **THEN** verhält sich die Oberfläche wie im offenen LAN-Modus, zeigt keinen Login-Schritt und warnt oben, dass keine PIN gesetzt ist
+
+### Requirement: Schreibzugriffe und Geheimnisse
+
+Schreibende API-Aufrufe MUST als JSON mit einem eigenen Anfrage-Header
+erfolgen. Antworten und Logs MUST NOT das MA2-Passwort, dessen Hash oder die
+PIN enthalten.
 
 #### Scenario: Einfacher Formular-POST wird abgelehnt
 
 - **WHEN** ein schreibender Aufruf ohne JSON-Inhalt oder ohne den erwarteten Header eintrifft
 - **THEN** wird er mit einem Client-Fehler abgelehnt und die Konfiguration bleibt unverändert
-
-#### Scenario: PIN-Sperre ist vorbereitet, aber aus
-
-- **WHEN** die Konfiguration keine PIN aktiviert hat
-- **THEN** verhält sich die Oberfläche wie im offenen LAN-Modus und zeigt keinen Login-Schritt

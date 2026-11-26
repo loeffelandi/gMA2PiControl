@@ -142,7 +142,19 @@ def migrate(
     """
 
     if paths.config.exists():
-        return False
+        # The active config may already be in the state dir while the password
+        # still lives in the legacy location (for example after a partial
+        # upgrade).  Migrate that one file and fix the pointer.
+        if paths.password.exists() or not paths.legacy_password.is_file():
+            return False
+        paths.backups.mkdir(parents=True, exist_ok=True)
+        _apply(paths.backups, DIR_MODE, owner)
+        _backup(paths.legacy_password, paths.backups)
+        shutil.copy2(paths.legacy_password, paths.password)
+        _apply(paths.password, PASSWORD_MODE, owner)
+        _rewrite_password_path(paths.config, paths.password, owner)
+        LOGGER.info("Passwortdatei von %s nach %s migriert", paths.etc_dir, paths.state_dir)
+        return True
     if not paths.legacy_config.is_file():
         return False
 
@@ -174,6 +186,10 @@ LAST_GOOD = "last-good.toml"
 
 class ConfigWriteError(RuntimeError):
     """A configuration could not be written safely."""
+
+
+class BackupError(ValueError):
+    """A backup id is unknown or unsafe to restore."""
 
 
 def merge_patch(target: dict, patch: Mapping[str, Any]) -> dict:
@@ -252,6 +268,74 @@ def rotate_backups(backup_dir: Path, keep: int = MAX_BACKUPS) -> None:
         old.unlink(missing_ok=True)
 
 
+def _backup_files(backup_dir: Path) -> list[Path]:
+    if not backup_dir.is_dir():
+        return []
+    files = [
+        path
+        for path in backup_dir.glob("*.toml")
+        if path.is_file()
+        and (path.name == LAST_GOOD or path.name.startswith("config-"))
+    ]
+    return sorted(files, key=lambda path: path.stat().st_mtime, reverse=True)
+
+
+def _describe_backup(path: Path) -> dict[str, Any]:
+    stat = path.stat()
+    return {
+        "id": path.name,
+        "size": stat.st_size,
+        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+        "last_good": path.name == LAST_GOOD,
+    }
+
+
+def list_backups(paths: ConfigPaths) -> list[dict[str, Any]]:
+    """Return the available configuration backups, newest first."""
+
+    return [_describe_backup(path) for path in _backup_files(paths.backups)]
+
+
+def create_backup(paths: ConfigPaths, *, owner: str | None = "ma2pi") -> dict[str, Any]:
+    """Copy the active configuration into ``backups/`` and describe it."""
+
+    ensure_layout(paths, owner=owner)
+    if not paths.config.is_file():
+        raise ConfigWriteError(f"Konfiguration {paths.config} fehlt")
+    target = _backup(paths.config, paths.backups)
+    if target is None:  # pragma: no cover - checked above
+        raise ConfigWriteError(f"Konfiguration {paths.config} fehlt")
+    rotate_backups(paths.backups)
+    return _describe_backup(target)
+
+
+def read_backup(paths: ConfigPaths, backup_id: str) -> tuple[Path, str]:
+    """Resolve ``backup_id`` inside ``backups/`` and read its text.
+
+    Only plain file names ending in ``.toml`` are accepted, so an API caller
+    cannot escape the backup directory.
+    """
+
+    name = Path(backup_id).name
+    if name != backup_id or not name.endswith(".toml") or name.startswith("."):
+        raise BackupError(f"ungültige Backup-ID: {backup_id!r}")
+    path = paths.backups / name
+    if not path.is_file():
+        raise BackupError(f"Backup {name!r} nicht gefunden")
+    return path, path.read_text(encoding="utf-8")
+
+
+
+def write_password(
+    paths: ConfigPaths, password: str, *, owner: str | None = "ma2pi"
+) -> None:
+    """Write the MA2 password to the state directory with ``0600``."""
+
+    ensure_layout(paths, owner=owner)
+    _atomic_write(paths.password, f"{password}\n", PASSWORD_MODE, owner)
+    LOGGER.info("MA2-Passwort aktualisiert: %s", paths.password)
+
+
 def apply_patch(
     paths: ConfigPaths,
     patch: Mapping[str, Any],
@@ -264,6 +348,33 @@ def apply_patch(
     ``validate`` receives the merged plain dict and must raise on invalid
     content; it runs *before* anything is written.  On success the previous
     file is kept in ``backups/`` and as ``last-good.toml``.
+    """
+
+    prepared = prepare_patch(paths, patch, owner=owner, validate=validate)
+    commit_prepared(paths, prepared, owner=owner)
+    return prepared.candidate
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedConfig:
+    """A validated config document that has not been written yet."""
+
+    candidate: Any
+    text: str
+
+
+def prepare_patch(
+    paths: ConfigPaths,
+    patch: Mapping[str, Any],
+    *,
+    owner: str | None = "ma2pi",
+    validate: Callable[[dict[str, Any]], Any] | None = None,
+) -> PreparedConfig:
+    """Merge and validate ``patch`` without touching the active file.
+
+    Splitting preparation from :func:`commit_prepared` lets the runtime test
+    new credentials (an asynchronous step) after validation but before the
+    configuration is persisted.
     """
 
     import copy
@@ -279,13 +390,24 @@ def apply_patch(
     result = validate(candidate) if validate is not None else candidate
 
     _apply_patch_to_table(document, patch)
-    text = tomlkit.dumps(document)
+    return PreparedConfig(candidate=result, text=tomlkit.dumps(document))
+
+
+def commit_prepared(
+    paths: ConfigPaths,
+    prepared: PreparedConfig,
+    *,
+    owner: str | None = "ma2pi",
+) -> None:
+    """Back up the active file and write a prepared document atomically."""
+
+    if not paths.config.is_file():
+        raise ConfigWriteError(f"Konfiguration {paths.config} fehlt")
 
     _backup(paths.config, paths.backups)
     paths.backups.mkdir(parents=True, exist_ok=True)
     shutil.copy2(paths.config, paths.backups / LAST_GOOD)
     rotate_backups(paths.backups)
 
-    _atomic_write(paths.config, text, CONFIG_MODE, owner)
+    _atomic_write(paths.config, prepared.text, CONFIG_MODE, owner)
     LOGGER.info("Konfiguration atomar geschrieben: %s", paths.config)
-    return result

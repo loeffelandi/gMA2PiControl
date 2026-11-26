@@ -15,7 +15,11 @@ CONFIG_PATH = ROOT / "config.toml"
 
 @pytest.fixture
 def config() -> AppConfig:
-    return load_config(CONFIG_PATH)
+    loaded = load_config(CONFIG_PATH)
+    # Most tests exercise the API without the PIN gate; auth has its own tests.
+    return dataclasses.replace(
+        loaded, web=dataclasses.replace(loaded.web, pin_enabled=False)
+    )
 
 
 @pytest.fixture

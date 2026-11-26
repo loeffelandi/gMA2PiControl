@@ -122,6 +122,21 @@ def test_migrate_with_password_rewrites_path_and_keeps_comments(tmp_path):
     assert config.ma2.password_file == str(paths.password)
 
 
+def test_migrate_password_when_state_config_exists(tmp_path):
+    paths = _paths(tmp_path)
+    paths.state_dir.mkdir(parents=True)
+    paths.config.write_text(
+        LEGACY_CONFIG.format(password=str(paths.legacy_password)), encoding="utf-8"
+    )
+    paths.etc_dir.mkdir(parents=True)
+    paths.legacy_password.write_text("geheim", encoding="utf-8")
+
+    assert migrate(paths) is True
+    assert paths.password.read_text(encoding="utf-8") == "geheim"
+    assert str(paths.password) in paths.config.read_text(encoding="utf-8")
+    assert migrate(paths) is False
+
+
 def test_migrate_without_legacy_config_is_noop(tmp_path):
     paths = _paths(tmp_path)
     assert migrate(paths) is False

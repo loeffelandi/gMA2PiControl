@@ -15,6 +15,7 @@
     reconnecting: false,
     status: null,
     learn: null,
+    network: null,
     lastError: null,
   });
   let devices = $state<DeviceEntry[]>([]);

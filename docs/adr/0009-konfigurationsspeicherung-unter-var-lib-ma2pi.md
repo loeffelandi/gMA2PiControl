@@ -7,7 +7,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 Amends [0004. Deployment als venv-Dienst unter /opt/ma2pi](0004-deployment-als-venv-dienst-unter-opt-ma2pi.md)
 

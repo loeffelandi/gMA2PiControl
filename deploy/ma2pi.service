@@ -10,18 +10,23 @@ User=ma2pi
 Group=ma2pi
 SupplementaryGroups=audio
 WorkingDirectory=/opt/ma2pi/app
-ExecStart=/opt/ma2pi/.venv/bin/python -m ma2pi --config /etc/ma2pi/config.toml
+ExecStart=/opt/ma2pi/.venv/bin/python -m ma2pi --config /var/lib/ma2pi/config.toml
 Restart=always
 RestartSec=5
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
 UMask=0077
+StateDirectory=ma2pi
+StateDirectoryMode=0750
+ReadWritePaths=/var/lib/ma2pi
 
 # Hardening: no root, read-only filesystem, private tmp.  Device access is
 # granted by the udev rule (GROUP=ma2pi, MODE=0660) on the Cherry evdev node
 # and the ASL raw MIDI node; PrivateDevices=false keeps the real /dev visible.
 # A path-glob DeviceAllow= was tried, but its device-cgroup filter denied
 # access (EPERM) on cgroup v2, so access is controlled via the udev group.
+# StateDirectory creates /var/lib/ma2pi (0750) and ReadWritePaths keeps it the
+# only writable path under ProtectSystem=strict.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

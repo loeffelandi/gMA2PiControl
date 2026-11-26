@@ -17,6 +17,7 @@
     id: number;
     kind: EncoderKind;
     value: string;
+    screen: string;
   }
 
   interface ModifierRow {
@@ -32,6 +33,7 @@
   let modifierRows = $state<ModifierRow[]>([]);
   let originalKeys: string[] = [];
   let originalModifiers: string[] = [];
+  let originalScreenSlots: string[] = [];
   let loading = $state(true);
   let busy = $state(false);
   let dirty = $state(false);
@@ -121,12 +123,19 @@
       return { control, kind, value: valueOf(entry, kind) };
     });
 
+    const screen = (mapping.screen_encoders ?? {}) as Record<string, unknown>;
+    originalScreenSlots = Object.keys(screen);
     const encoders = (mapping.encoders ?? []) as Record<string, unknown>[];
-    encoderRows = encoders.map((entry) => ({
-      id: Number(entry.id),
-      kind: entry.slot != null ? 'slot' : 'attribute',
-      value: String(entry.slot ?? entry.attribute ?? ''),
-    }));
+    encoderRows = encoders.map((entry) => {
+      const slot = entry.slot != null ? Number(entry.slot) : null;
+      const screenName = slot == null ? null : screen[String(slot)];
+      return {
+        id: Number(entry.id),
+        kind: slot != null ? 'slot' : 'attribute',
+        value: String(slot ?? entry.attribute ?? ''),
+        screen: screenName == null ? '' : String(screenName),
+      };
+    });
 
     const modifiers = (mapping.modifiers ?? {}) as Record<string, Record<string, unknown>>;
     originalModifiers = Object.keys(modifiers).filter(
@@ -204,7 +213,7 @@
 
   function addEncoder(): void {
     const next = encoderIds.find((id) => !encoderRows.some((row) => row.id === id)) ?? encoderIds[0] ?? 1;
-    encoderRows = [...encoderRows, { id: next, kind: 'slot', value: '1' }];
+    encoderRows = [...encoderRows, { id: next, kind: 'slot', value: '1', screen: '' }];
     dirty = true;
   }
 
@@ -243,7 +252,22 @@
     for (const control of originalModifiers) {
       if (!(control in modifiers)) modifiers[control] = null;
     }
-    return { mapping: { keys, encoders, modifiers } };
+    const screenEncoders: Record<string, string | null> = {};
+    for (const row of encoderRows) {
+      if (row.kind !== 'slot') continue;
+      const slot = Number(row.value);
+      if (!Number.isInteger(slot) || slot < 1 || slot > 4) continue;
+      const name = row.screen.trim();
+      if (name) screenEncoders[String(slot)] = name;
+    }
+    for (const slot of originalScreenSlots) {
+      if (!(slot in screenEncoders)) screenEncoders[slot] = null;
+    }
+    const mapping: Record<string, unknown> = { keys, encoders, modifiers };
+    if (Object.keys(screenEncoders).length > 0) {
+      mapping.screen_encoders = screenEncoders;
+    }
+    return { mapping };
   }
 
   async function save(): Promise<void> {
@@ -351,12 +375,18 @@
     <button type="button" onclick={addKey}>Taste hinzufügen</button>
 
     <h2>Encoder</h2>
+    <p class="muted">
+      Ziel = was der Encoder im Attribut-Modus dreht. Screen-Encoder = was
+      derselbe Encoder im Screen-Modus dreht (Taste asl_bank oder MA halten).
+      Standard: Encoder 1 → 8, Encoder 2 → 7, Encoder 3 → 6, Encoder 4 → 5.
+    </p>
     <table>
       <thead>
         <tr>
           <th>Encoder</th>
           <th>Ziel</th>
           <th>Wert</th>
+          <th>Screen-Encoder</th>
           <th>Lernen</th>
           <th></th>
         </tr>
@@ -386,6 +416,26 @@
                 oninput={() => (dirty = true)}
                 data-testid="encoder-value"
               />
+            </td>
+            <td>
+              {#if row.kind === 'slot' && Number(row.value) >= 1 && Number(row.value) <= 4}
+                <select
+                  bind:value={row.screen}
+                  onchange={() => (dirty = true)}
+                  data-testid="screen-encoder-target"
+                >
+                  <option value="">— keiner —</option>
+                  <option value="5">Screen-Encoder 5</option>
+                  <option value="6">Screen-Encoder 6</option>
+                  <option value="7">Screen-Encoder 7</option>
+                  <option value="8">Screen-Encoder 8</option>
+                  {#if row.screen && !['5', '6', '7', '8'].includes(row.screen)}
+                    <option value={row.screen}>{row.screen}</option>
+                  {/if}
+                </select>
+              {:else}
+                <span class="muted">–</span>
+              {/if}
             </td>
             <td>
               <button

@@ -195,19 +195,38 @@ def test_web_config_parsed(make_config):
     assert cfg.web.bind == "127.0.0.1"
     assert cfg.web.port == 9000
     assert cfg.web.pin_enabled is False
+    assert cfg.web.pin == ""
 
 
 def test_web_config_defaults(make_config):
     cfg = make_config(lambda data: data.pop("web"))
     assert cfg.web.bind == "0.0.0.0"
     assert cfg.web.port == 8080
+    assert cfg.web.pin_enabled is False
+    assert cfg.web.pin == ""
 
 
-def test_web_config_rejects_pin(make_config):
+def test_web_config_accepts_changed_pin(make_config):
+    cfg = make_config(
+        lambda data: data["web"].update({"pin_enabled": True, "pin": "987654"})
+    )
+    assert cfg.web.pin_enabled is True
+    assert cfg.web.pin == "987654"
+
+
+@pytest.mark.parametrize("pin", ["123", "abcd", "1234567890123"])
+def test_web_config_rejects_bad_pin(make_config, pin):
     from ma2pi.config import ConfigError
 
     with pytest.raises(ConfigError):
-        make_config(lambda data: data["web"].update({"pin_enabled": True}))
+        make_config(lambda data: data["web"].update({"pin": pin}))
+
+
+def test_web_config_requires_pin_when_enabled(make_config):
+    from ma2pi.config import ConfigError
+
+    with pytest.raises(ConfigError):
+        make_config(lambda data: data["web"].update({"pin_enabled": True, "pin": ""}))
 
 
 def test_web_config_rejects_bad_port(make_config):
