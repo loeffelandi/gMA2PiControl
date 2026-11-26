@@ -74,13 +74,6 @@
   {#if loading}
     <p class="muted">Lade Einstellungen …</p>
   {:else}
-    <h2>LAN-Port</h2>
-    <p class="hint">
-      Bind-Adresse und Port stehen in <code>/var/lib/ma2pi/config.toml</code>
-      unter <code>[web]</code>. Änderungen daran werden erst nach einem
-      Dienstneustart wirksam.
-    </p>
-
     <h2>PIN-Sperre</h2>
     <form class="form" onsubmit={(event) => event.preventDefault()}>
       <label for="pin-enabled">PIN aktiv</label>

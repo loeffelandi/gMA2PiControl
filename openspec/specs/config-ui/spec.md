@@ -28,7 +28,7 @@ wirksam.
 #### Scenario: Bind-Adresse geändert
 
 - **WHEN** die Bind-Adresse in der Konfiguration geändert und angewendet wird
-- **THEN** meldet die Oberfläche, dass die Änderung erst nach einem Dienstneustart wirksam wird
+- **THEN** bleibt der laufende Listener unverändert; die Änderung wird erst nach einem Dienstneustart wirksam und ist in der README dokumentiert
 
 ### Requirement: MA2-Zugangsdaten verwalten
 

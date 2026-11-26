@@ -39,14 +39,13 @@ describe('AdvancedPage', () => {
     });
   });
 
-  it('shows the LAN port hint and PIN settings', async () => {
+  it('shows PIN and rate/logging settings', async () => {
     const api = fakeApi();
     render(AdvancedPage, { props: { api } });
 
     await waitFor(() => {
-      expect(screen.getByText(/Dienstneustart wirksam/)).toBeTruthy();
+      expect(screen.getByText('PIN-Sperre')).toBeTruthy();
     });
-    expect(screen.getByText('PIN-Sperre')).toBeTruthy();
     expect(screen.getByText('Rate & Logging')).toBeTruthy();
     expect(screen.queryByText('Konfigurations-Backups')).toBeNull();
   });

@@ -10,7 +10,7 @@ einschließlich Abschlussreview 7.4 sind abgeschlossen.
 | --- | --- | --- |
 | Eingebettete Web-Oberfläche, lokale Assets | `ma2pi/web/__init__.py`, `web/dist`, `npm run check:offline`; Browser-Lasttest gegen lokalen Dateiserver (nur lokale Anfragen) | automatisiert |
 | Zugriff aus dem LAN | Live-Aufruf `http://192.168.178.21:8080/` mit PIN-Sperre, Sperrseite, Entsperren und Warnbanner; `tests/test_web.py`, `tests/test_api_integration.py` | erledigt |
-| Bind-Adresse geändert → Hinweis auf Neustart | UI-Hinweis „LAN-Port“ in `BackupsPage.svelte`/`BackupsPage.test.ts`; `[web]`-Doku in README; Listener bleibt bis zum Neustart | automatisiert/dokumentiert |
+| Bind-Adresse geändert → Hinweis auf Neustart | `[web]`-Doku in README; Listener bleibt bis zum Neustart. Der frühere UI-Hinweis „LAN-Port“ wurde auf Wunsch entfernt. | dokumentiert |
 | Passwort nie in Antwort/Log/Fehler | `tests/test_config_api.py::test_get_config_never_returns_password`, `test_put_password_is_write_only`; `redacted_config()` | automatisiert |
 | Verbindungstest erfolgreich/fehlgeschlagen | `tests/test_runtime_connection.py::test_check_connection_success`, `test_check_connection_wrong_password`, `test_check_connection_unreachable_host` | automatisiert |
 | Laufende Session bleibt beim Test | `test_check_connection_reuses_active_session` | automatisiert |
