@@ -7,7 +7,9 @@
 
 ## Status
 
-Proposed
+Accepted
+
+Verifiziert 2026-11-26 (Tasks 6.1–6.3): `install.sh` zweimal auf Trixie fehlerfrei, venv unter `/opt/ma2pi/.venv`, systemd-Dienst `active`/`enabled`, udev-Regeln greifen, Geräte als `ma2pi` lesbar.
 
 Amended by [0009. Konfigurationsspeicherung unter /var/lib/ma2pi](0009-konfigurationsspeicherung-unter-var-lib-ma2pi.md)
 

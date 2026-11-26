@@ -7,8 +7,6 @@
 
 ## Status
 
-Proposed
-
 Superseded by [0016. Hardkey-Injection über gma.canbus.hardkey im Command-Line-Modus](0016-hardkey-injection-ueber-gma-canbus-hardkey-im-command-line-modus.md)
 
 ## Kontext und Problemstellung

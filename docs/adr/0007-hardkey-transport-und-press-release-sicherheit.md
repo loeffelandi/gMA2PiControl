@@ -7,7 +7,9 @@
 
 ## Status
 
-Proposed
+Accepted
+
+Verifiziert 2026-11-26: Press/Release-Register, Aufräumreihenfolge und Reconnect-ohne-Replay in Tests; live MA+Fix → Desk Lock, Store halten → Store Options und reconnect ohne hängenden Modifier bestätigt (ADR 0016). Der LUA-Pfad ist der Default; `native` bleibt Fallback. Vollständiger Hardware-Smoke (inkl. Clear halten) in Task 7.3.
 
 ## Kontext und Problemstellung
 

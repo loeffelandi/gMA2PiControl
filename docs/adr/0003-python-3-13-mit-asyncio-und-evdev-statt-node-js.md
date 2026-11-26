@@ -7,7 +7,9 @@
 
 ## Status
 
-Proposed
+Accepted
+
+Verifiziert 2026-11-26: Daemon läuft auf dem Pi mit Python 3.13.5, asyncio und evdev (Cherry) bzw. MIDI (ASL); Nachweise in `openspec/changes/add-ma2pi-core/review.md`.
 
 Ergänzt durch [14. ASL MK2 E4B3 als MIDI-Geraet hinter der Input-Schnittstelle](0014-asl-mk2-e4b3-als-midi-geraet-hinter-der-input-schnittstelle.md)
 

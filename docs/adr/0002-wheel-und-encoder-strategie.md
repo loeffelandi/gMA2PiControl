@@ -7,7 +7,9 @@
 
 ## Status
 
-Proposed
+Accepted
+
+Verifiziert 2026-11-26: native Attribut-Encoder-Frames (`requestType: "encoder"`) wirken live; die Encoder folgen dem onPC-Fenster (ADR 0015). Ein CMD-Wrapper/Fallback ist nicht nötig; `wheel_protocol.py` bleibt nur dokumentierter, ungenutzter Baustein.
 
 Ergänzt durch [14. ASL MK2 E4B3 als MIDI-Geraet hinter der Input-Schnittstelle](0014-asl-mk2-e4b3-als-midi-geraet-hinter-der-input-schnittstelle.md)
 

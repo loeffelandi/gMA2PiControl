@@ -7,7 +7,9 @@
 
 ## Status
 
-Proposed
+Accepted
+
+Verifiziert 2026-11-26: Token-Bucket, Priorität für Steuer-Frames und „Releases nie verwerfen" in Tests; Encoder-Stresstest (100 Detents/s) bleibt unter dem Limit; onPC bleibt live bedienbar.
 
 ## Kontext und Problemstellung
 

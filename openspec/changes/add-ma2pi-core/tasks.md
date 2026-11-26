@@ -75,7 +75,7 @@
 - [ ] 7.3 Hardware-Smoke-Test durchführen: MA+Fix → Desk Lock, Store halten → Store Options, Clear halten → ClearAll, Go+/Go−, Number-Block; Ergebnis protokollieren.
 - [ ] 7.4 Hardware-Stresstest durchführen: vier Encoder gleichzeitig schnell drehen plus Hardkey-Spam über zehn Minuten; onPC bleibt bedienbar, kein Release geht verloren.
 - [ ] 7.5 Reconnect-Abnahme: onPC neu starten und Keyboard/ASL im Betrieb trennen und wieder anstecken; keine hängenden Modifier, kein Daemon-Neustart nötig.
-- [ ] 7.6 ADR-Status anhand der Nachweise aktualisieren: 0001, 0003, 0004, 0005, 0007 auf Accepted bei bestandener Prüfung; 0002 auf Accepted oder dokumentierten CMD-Fallback; 0006 auf Accepted bei grüner Validierung.
+- [x] 7.6 ADR-Status anhand der Nachweise aktualisieren: 0001, 0003, 0004, 0005, 0007 auf Accepted bei bestandener Prüfung; 0002 auf Accepted oder dokumentierten CMD-Fallback; 0006 auf Accepted bei grüner Validierung. Erledigt 2026-11-26: 0002, 0003, 0004, 0005, 0006, 0007 auf Accepted (mit Verifikations-Nachweis); 0001 auf Superseded by 0016 korrigiert; 0014/0016 bereits Accepted.
 
 ## 8. Dokumentation und Abschluss
 

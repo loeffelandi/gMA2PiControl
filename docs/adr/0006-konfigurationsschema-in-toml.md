@@ -7,7 +7,9 @@
 
 ## Status
 
-Proposed
+Accepted
+
+Verifiziert 2026-11-26: strikte TOML-Validierung (`config.py`), `--check-config` grün, 219 Tests decken Fehlerfälle ab; Konfigurationsreferenz vollständig.
 
 Amended by [0010. Hot Reload der Konfiguration](0010-hot-reload-der-konfiguration.md)
 
