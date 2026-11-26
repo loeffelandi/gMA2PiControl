@@ -2208,7 +2208,7 @@ cells = [
   { label = "6", control = "num_6", color = "grey", row = 5, col = 14 },
   { label = "Thru", control = "thru", color = "grey", row = 5, col = 15 },
   { label = "Full", control = "full", color = "blue", row = 5, col = 16 },
-  { label = "Hight", control = "hight", color = "blue", row = 5, col = 17 },
+  { label = "Highlt", control = "hight", color = "blue", row = 5, col = 17 },
   { label = "Solo", control = "solo", color = "blue", row = 5, col = 18 },
 ]
 
