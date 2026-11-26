@@ -241,12 +241,12 @@
             class:ok={connected}
             class:lost={!connected}
           >
-            {connected ? 'erkannt' : 'verbindung verloren'}
+            {connected ? 'verbunden' : 'verbindung verloren'}
           </span>
         </div>
       {/each}
     {:else}
-      <p class="monitor-empty muted">Keine Geräte erkannt.</p>
+      <p class="monitor-empty muted">Keine Geräte verbunden.</p>
     {/if}
   </div>
 

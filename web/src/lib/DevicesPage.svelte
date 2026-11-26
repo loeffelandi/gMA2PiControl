@@ -477,7 +477,7 @@
               <strong>{entry.name}</strong>
               <span>{entry.vendor_product}</span>
               <span class:missing={entry.detected === null}>
-                {entry.detected ? 'erkannt' : 'nicht erkannt'}
+                {entry.detected ? 'verbunden' : 'verbindung verloren'}
               </span>
             </button>
           </li>

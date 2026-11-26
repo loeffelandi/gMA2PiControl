@@ -104,7 +104,8 @@ body {
 }
 
 .topbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr minmax(0, auto) 1fr;
   align-items: center;
   gap: 1.5rem;
   padding: 0.75rem 1.25rem;
@@ -116,6 +117,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0.55rem;
+  justify-self: start;
   text-decoration: none;
   color: var(--text);
 }
@@ -140,6 +142,7 @@ body {
 .topbar nav {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 0.35rem;
 }
 
@@ -208,6 +211,7 @@ main {
 
 .page {
   max-width: 1100px;
+  margin-inline: auto;
 }
 
 h1 {
@@ -251,6 +255,7 @@ h1 {
 
 .status-page {
   max-width: 1100px;
+  margin-inline: auto;
 }
 
 .grid {
@@ -819,12 +824,12 @@ button.danger:hover:not(:disabled) {
 }
 
 .logout {
-  margin-left: auto;
+  justify-self: end;
 }
 
 @media (max-width: 720px) {
   .topbar {
-    flex-wrap: wrap;
+    grid-template-columns: 1fr;
     gap: 0.5rem 0.75rem;
   }
 
@@ -853,7 +858,7 @@ button.danger:hover:not(:disabled) {
   }
 
   .logout {
-    margin-left: 0;
+    justify-self: start;
   }
 }
 

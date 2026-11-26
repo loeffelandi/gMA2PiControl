@@ -127,7 +127,9 @@ describe('StatusPage', () => {
     await waitFor(() => {
       expect(container.querySelector('.device-id')?.textContent).toBe('cherry');
     });
-    expect(screen.getByText('erkannt')).toBeTruthy();
+    expect(container.querySelector('.device-state')?.textContent?.trim()).toBe(
+      'verbunden',
+    );
 
     // A delta grows the RX counter and appends exactly one log line.
     socket.emitMessage({

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  import { ApiError, type ApiClient, type DeviceEntry, type DeviceValueControl, type LearnResult } from './api';
+  import { ApiError, type ApiClient, type DeviceEntry, type DevicePresence, type DeviceValueControl, type LearnResult } from './api';
   import type { StatusStore } from './status';
 
   type KeyKind = 'hardkey' | 'command' | 'screen_mode' | 'screen' | 'encoder_press';
@@ -40,8 +40,12 @@
   let { api, learnStore }: { api: ApiClient; learnStore?: StatusStore } = $props();
 
   let devices = $state<DeviceEntry[]>([]);
-  let detectedDevices = $derived(
-    devices.filter((device) => device.detected !== null),
+  let presence = $state<Record<string, DevicePresence>>({});
+  let visibleDevices = $derived(
+    devices.filter((device) => {
+      const state = presence[device.name];
+      return state ? state.seen : device.detected !== null;
+    }),
   );
   let keyRows = $state<KeyRow[]>([]);
   let encoderRows = $state<EncoderRow[]>([]);
@@ -234,8 +238,10 @@
   $effect(() => {
     if (!learnStore) return;
     learnState = learnStore.state.learn;
+    presence = learnStore.state.status?.presence ?? {};
     return learnStore.subscribe(() => {
       learnState = learnStore.state.learn;
+      presence = learnStore.state.status?.presence ?? {};
       applyLearn(learnState);
     });
   });
@@ -457,14 +463,16 @@
   {#if loading}
     <p class="muted">Lade Geräte und Mapping …</p>
   {:else}
-    <h2>Erkannte Geräte</h2>
+    <h2>Geräte</h2>
     <ul class="devices">
-      {#each detectedDevices as device (device.name)}
+      {#each visibleDevices as device (device.name)}
+        {@const state = presence[device.name]}
+        {@const connected = state ? state.connected : device.detected !== null}
         <li>
           <strong>{device.name}</strong>
           <span class="muted">
             {device.vendor_product} · {device.profile} ·
-            {device.detected ? 'erkannt' : 'nicht erkannt'}
+            {connected ? 'verbunden' : 'verbindung verloren'}
           </span>
           {#if valueControlsOf(device).length > 0}
             <span class="muted">
