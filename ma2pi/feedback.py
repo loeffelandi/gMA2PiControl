@@ -51,8 +51,8 @@ PALETTE: tuple[str, ...] = (
     "ctb",
 )
 
-#: Appearance colours are matched against these only; the colour
-#: temperatures CTO and CTB are chosen by name, never by distance.
+#: Reference colours for matching an appearance colour; CTO stands for warm
+#: white and CTB for cool white, so pure white stays white.
 PALETTE_RGB: dict[str, tuple[int, int, int]] = {
     "white": (255, 255, 255),
     "red": (255, 0, 0),
@@ -67,6 +67,8 @@ PALETTE_RGB: dict[str, tuple[int, int, int]] = {
     "violet": (128, 0, 255),
     "magenta": (255, 0, 255),
     "pink": (255, 128, 255),
+    "cto": (255, 200, 130),
+    "ctb": (200, 225, 255),
 }
 
 #: Velocity base per LED mode (``midicraft-v2``).
@@ -132,8 +134,6 @@ def nearest_color(value: Any) -> int | None:
     best_index = 0
     best_distance = float("inf")
     for index, name in enumerate(PALETTE):
-        if name not in PALETTE_RGB:
-            continue
         distance = sum(
             (channel - target) ** 2
             for channel, target in zip(rgb, PALETTE_RGB[name])
@@ -287,6 +287,22 @@ def _iter_items(items: Any) -> list[dict[str, Any]]:
     return result
 
 
+def _is_empty_item(item: dict[str, Any]) -> bool:
+    """True for an executor slot without content.
+
+    The onPC never sends ``isEmpty``; an unused slot arrives grey, with an
+    empty title and without ``bottomButtons``.  Wide fader executors lack
+    ``bottomButtons`` too, so the title decides.
+    """
+
+    if item.get("isEmpty") is True:
+        return True
+    title = item.get("tt")
+    if isinstance(title, dict):
+        title = title.get("t")
+    return title == "" and "bottomButtons" not in item
+
+
 def parse_playbacks(payload: dict[str, Any]) -> PlaybackSnapshot | None:
     """Turn one Web Remote ``playbacks`` response into executor states."""
 
@@ -314,7 +330,7 @@ def parse_playbacks(payload: dict[str, Any]) -> PlaybackSnapshot | None:
             width = item.get("combinedItems")
             if isinstance(width, int) and not isinstance(width, bool) and width > 1:
                 combined[exec_num] = width
-            if item.get("isEmpty") is True:
+            if _is_empty_item(item):
                 empty_executors.add(exec_num)
                 continue
             running = item.get("isRun")
@@ -546,6 +562,67 @@ def build_feedback_targets(
     return targets, blocks_from_ranges(ranges)
 
 
+@dataclass(frozen=True, slots=True)
+class DarkLed:
+    """An LED-capable note without a playback target; it is kept off."""
+
+    device: str
+    note: int
+    channel: int = 1
+
+
+def led_owned_notes(config: "AppConfig") -> set[tuple[str, int]]:
+    """``(device, note)`` pairs whose LED a fixed ``[led]`` function drives."""
+
+    led = config.led
+    if not led.enabled:
+        return set()
+    device = led.device
+    if device is None:
+        midi_devices = [
+            name for name, item in config.devices.items() if item.backend == "midi"
+        ]
+        if len(midi_devices) != 1:
+            return set()
+        device = midi_devices[0]
+    return {(device, led.note), (device, led.fine_note), (device, led.nipple_note)}
+
+
+def build_dark_leds(config: "AppConfig", targets: list[LedTarget]) -> list[DarkLed]:
+    """LED notes (from ``led_notes``) of a bank that resolve to no button target.
+
+    Without ``led_notes`` only notes with a target count as LED-capable, so
+    such profiles have no dark LEDs.
+    """
+
+    lit = {(target.device, target.channel, target.note) for target in targets}
+    owned = led_owned_notes(config)
+    result: list[DarkLed] = []
+    for name, device in config.devices.items():
+        if device.backend != "midi":
+            continue
+        profile = config.profiles[device.profile]
+        feedback = profile.led_feedback
+        if feedback is None or not feedback.enabled or feedback.notes is None:
+            continue
+        banks = [(bank.channel, bank.notes) for bank in profile.banks] or [
+            (1, profile.notes)
+        ]
+        seen: set[tuple[int, int]] = set()
+        for channel, notes in banks:
+            for note in feedback.notes:
+                if (
+                    note not in notes
+                    or (channel, note) in seen
+                    or (name, channel, note) in lit
+                    or (name, note) in owned
+                ):
+                    continue
+                seen.add((channel, note))
+                result.append(DarkLed(name, note, channel))
+    return result
+
+
 def blocks_from_ranges(
     ranges: Mapping[tuple[int | str, int], list[int]],
 ) -> dict[tuple[int | str, int], RequestBlock]:
@@ -607,6 +684,7 @@ class ExecutorFeedback:
             timeout=timeout,
         )
         self._targets: list[LedTarget] = []
+        self._dark: list[DarkLed] = []
         self._blocks: dict[tuple[int | str, int], RequestBlock] = {}
         self._last: dict[tuple[str, int] | tuple[str, int, int], LedState] = {}
         self._devices: dict[str, tuple[str, int]] = {}
@@ -626,6 +704,7 @@ class ExecutorFeedback:
 
         self.config = config
         self._targets, self._blocks = build_feedback_targets(config)
+        self._dark = build_dark_leds(config, self._targets)
         self._intervals = _frame_intervals(config)
         self._encoders = _encoders(config)
         self._last.clear()
@@ -802,12 +881,38 @@ class ExecutorFeedback:
 
         if not getattr(self._client, "authenticated", False):
             return
-        led_active = self.config.feedback.enabled and bool(self._targets)
+        led_active = self.config.feedback.enabled and bool(self._targets or self._dark)
         if led_active:
             self._sync_devices()
+            self._queue_dark()
         await self._poller.step()
         if led_active:
             self.pump()
+
+    def _queue_dark(self) -> None:
+        """Queue the off state for LEDs without a target that is not shown yet."""
+
+        for led in self._dark:
+            if led.device not in self._devices:
+                continue
+            encoder = self._encoders.get(led.device, _MIDICRAFT)
+            state = encoder.off()
+            key = self._led_cache_key(led.device, led.channel, led.note)
+            if self._last.get(key) == state:
+                continue
+            if self._dry_run:
+                LOGGER.info(
+                    "dry-run: LED ohne Ziel %s Note %d Frame %s",
+                    led.device,
+                    led.note,
+                    encoder.frame(led.channel, led.note, state).hex(" "),
+                )
+                self._last[key] = state
+                continue
+            self._outbox.setdefault(led.device, {})[
+                _outbox_key(led.channel, led.note)
+            ] = state
+            self._wake.set()
 
     def _sync_devices(self) -> None:
         paths = getattr(self._midi, "open_devices", {}) or {}

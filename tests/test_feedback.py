@@ -8,6 +8,7 @@ from ma2pi.feedback import (
     ExecutorFeedback,
     LedTarget,
     PALETTE,
+    PALETTE_RGB,
     RequestBlock,
     _belongs_to_block,
     _block_key,
@@ -873,9 +874,16 @@ def test_bank_channel_and_empty_page_turn_leds_off(make_config):
     assert any(frame == bytes((0x91, 65, 0)) for _, frame in midi.sent)
 
 
-def test_nearest_color_never_picks_colour_temperatures():
-    assert nearest_color("#ffb070") not in (palette_index("cto"), palette_index("ctb"))
-    assert nearest_color("#c8dcff") not in (palette_index("cto"), palette_index("ctb"))
+def test_nearest_color_maps_warm_and_cool_white_to_colour_temperatures():
+    assert nearest_color("#ffe0b0") == palette_index("cto")
+    assert nearest_color("#c0e0ff") == palette_index("ctb")
+    assert nearest_color("#ffffff") == palette_index("white")
+    for name in PALETTE[:13]:
+        assert nearest_color(_hex(PALETTE_RGB[name])) == palette_index(name), name
+
+
+def _hex(rgb: tuple[int, int, int]) -> str:
+    return "#" + "".join(f"{channel:02x}" for channel in rgb)
 
 
 def test_fallback_ctb_is_sent_as_dark_ctb(make_config):
@@ -1078,3 +1086,120 @@ async def test_current_page_stays_active_when_switching_to_watched_fixed_page(ma
     drain(feedback, clock)
     sent_notes = {frame[1]: frame[2] for _, frame in midi.sent}
     assert sent_notes.get(65) is not None and sent_notes[65] > 2
+
+
+def _without_row2_5(data):
+    del data["mapping"]["playbacks"]["mc_row2_5"]
+
+
+def test_unassigned_led_note_is_switched_off(make_config):
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(make_config(_without_row2_5), FakeClient([]), midi, clock=clock)
+    feedback._sync_devices()
+    feedback._queue_dark()
+    drain(feedback, clock)
+    assert _frames_for(midi, 79) == [bytes((79, 0))]
+
+    # Already off: the next cycle sends nothing again.
+    feedback._queue_dark()
+    drain(feedback, clock)
+    assert _frames_for(midi, 79) == [bytes((79, 0))]
+
+
+def test_unassigned_led_is_switched_off_again_after_reopen(make_config):
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(make_config(_without_row2_5), FakeClient([]), midi, clock=clock)
+    feedback._sync_devices()
+    feedback._queue_dark()
+    drain(feedback, clock)
+    midi.open_devices = {"midicraft-enc": "/dev/snd/midiC5D0"}
+    feedback._sync_devices()
+    feedback._queue_dark()
+    drain(feedback, clock)
+    assert _frames_for(midi, 79) == [bytes((79, 0)), bytes((79, 0))]
+
+
+def test_removed_target_goes_dark_after_config_change(make_config):
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(make_config(), FakeClient([]), midi, clock=clock)
+    assert not any(led.note == 79 for led in feedback._dark)
+
+    feedback.set_config(make_config(_without_row2_5))
+    feedback._sync_devices()
+    feedback._queue_dark()
+    drain(feedback, clock)
+    assert _frames_for(midi, 79) == [bytes((79, 0))]
+
+
+def test_mapped_led_notes_are_not_dark(make_config):
+    feedback = ExecutorFeedback(make_config(), FakeClient([]), FakeMidi())
+    targets = {(t.device, t.channel, t.note) for t in feedback.targets}
+    assert all((led.device, led.channel, led.note) not in targets for led in feedback._dark)
+
+
+def test_fixed_led_notes_are_never_dark(make_config):
+    def mutate(data):
+        data["profiles"]["asl-mk2-e4b3"]["led_feedback"] = {
+            "protocol": "asl-mk2",
+            "led_notes": [9, 10, 11],
+        }
+
+    feedback = ExecutorFeedback(make_config(mutate), FakeClient([]), FakeMidi())
+    assert [led for led in feedback._dark if led.device == "asl-mk2-e4b3"] == []
+
+
+def test_asl_notes_go_dark_when_led_is_disabled(make_config):
+    def mutate(data):
+        data["profiles"]["asl-mk2-e4b3"]["led_feedback"] = {
+            "protocol": "asl-mk2",
+            "led_notes": [9, 10, 11],
+        }
+        data["led"]["enabled"] = False
+
+    feedback = ExecutorFeedback(make_config(mutate), FakeClient([]), FakeMidi())
+    asl = sorted(led.note for led in feedback._dark if led.device == "asl-mk2-e4b3")
+    assert asl == [9, 10, 11]
+
+
+def _fixture(name: str) -> dict:
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).parent / "fixtures" / "playbacks" / name
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_onpc_reports_unused_executors_without_is_empty():
+    snapshot = parse_playbacks(_fixture("page1_button.json"))
+    assert snapshot is not None
+    assert {101, 102} <= set(snapshot.executors)
+    assert set(range(103, 116)) <= snapshot.empty_executors
+    assert not set(range(103, 116)) & set(snapshot.executors)
+
+
+def test_wide_fader_without_bottom_buttons_is_not_empty():
+    snapshot = parse_playbacks(_fixture("page3_fader_wide_exec6.json"))
+    assert snapshot is not None
+    assert 6 in snapshot.executors
+    assert 8 in snapshot.empty_executors
+
+
+def test_target_on_unused_executor_is_switched_off(make_config):
+    def mutate(data):
+        # page1_button.json answers a request for page 1 (iPage = 1).
+        data["mapping"]["playbacks"]["mc_row3_3"]["page"] = 1
+        data["mapping"]["playbacks"]["mc_row3_3"]["executor"] = 104
+
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(make_config(mutate), FakeClient([]), midi, clock=clock)
+    snapshot = parse_playbacks(_fixture("page1_button.json"))
+    assert snapshot is not None
+    target = next(t for t in feedback.targets if t.control == "mc_row3_3")
+    assert (target.page, target.executor) == (1, 104)
+    feedback._apply(snapshot, RequestBlock(1, 100, 15, 3, 3))
+    drain(feedback, clock)
+    assert _frames_for(midi, 82) == [bytes((82, 0))]

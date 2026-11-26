@@ -258,11 +258,17 @@ followed yet; feedback uses the first (bank 1) note binding. A `page =
 "current"` target is requested with `pageIndex = -1`, so the LEDs follow page
 changes on the console (the console answers with the placeholder `iPage = 0`;
 a fixed page `N` is answered with `iPage = N`). The colour is taken from the `bC`/`bdC` fields of the
-response and mapped to the closest of the 13 base palette colours (white to
-pink); the colour temperatures `cto` and `ctb` are never picked by distance,
-only by name in `fallback_color` or an `asl-mk2` colour table. Pure black
+response and mapped to the closest of the 15 palette colours. `cto` stands for
+warm white (`#ffc882`) and `ctb` for cool white (`#c8e1ff`), so pure white
+stays white while warm whites light the LED in CTO. Pure black
 counts as "no colour" for that field; if `bdC` is unusable too, the fallback
 applies.
+
+An LED note listed in `led_notes` whose control has no button target in its
+bank is switched off (velocity 0, or brightness 0 for `asl-mk2`) when feedback
+starts, after the device is reopened, after a reconnect and after a
+configuration change, so an unassigned button never keeps a stale colour.
+Notes owned by `[led]` are left alone.
 
 Polling stops while the Web Remote session is down. After a reconnect and after
 a MIDI device is replugged, all LED states are re-sent. `--dry-run` logs the
