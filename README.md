@@ -272,12 +272,23 @@ protocol it implements:
 | --- | --- | --- | --- |
 | `protocol` | string | `"midicraft-v2"` | Currently the only accepted value. |
 | `led_notes` | array of ints | all profile notes with a button target | Notes that actually have an LED. Controls on other notes are never lit. |
+| `enabled` | bool | `true` | Per-device switch. `false` leaves this device's LEDs untouched while other devices keep their feedback. |
+| `frame_interval_ms` | int (1–500) | `20` | Minimum gap between two LED frames sent to this device. |
 
 ```toml
 [profiles.midicraft-enc.led_feedback]
 protocol = "midicraft-v2"
 led_notes = [65, 66, 67, 68, 69, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84]
+enabled = true
+frame_interval_ms = 20
 ```
+
+LED frames are not written in a burst. Each device has its own queue that sends
+at most one frame per `frame_interval_ms`; a frame that is still waiting is
+replaced when the LED changes again. If the device stops taking bytes from its
+output buffer for more than 2 s, output to that device is paused with one
+warning and resumes in full once the device has been reopened. Input from the
+device is unaffected.
 
 `midicraft-v2` sends note-on on channel 1 with the note of the button and a
 velocity that encodes mode and colour:

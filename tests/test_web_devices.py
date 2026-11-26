@@ -40,16 +40,16 @@ def test_device_summary_contains_controls_and_detection(config):
     devices = device_summary(config, [CHERRY, ASL, MIDICRAFT])
     by_name = {entry["name"]: entry for entry in devices}
 
-    assert {"cherry", "asl", "midicraft"} <= set(by_name)
+    assert {"cherry-g86", "asl-mk2-e4b3", "midicraft-enc"} <= set(by_name)
 
-    cherry = by_name["cherry"]
+    cherry = by_name["cherry-g86"]
     assert cherry["vendor_id"] == 0x046A
     assert cherry["vendor_product"] == "046a:0000"
     assert cherry["detected"]["path"] == CHERRY.path
     assert "ch_pg_plus" in cherry["controls"]["logical"]
     assert cherry["controls"]["keys"]
 
-    asl = by_name["asl"]
+    asl = by_name["asl-mk2-e4b3"]
     assert asl["backend"] == "midi"
     assert asl["vendor_product"] == "04d8:e817"
     assert asl["detected"]["path"] == ASL.path
@@ -61,7 +61,7 @@ def test_device_summary_contains_controls_and_detection(config):
         4,
     ]
 
-    midicraft = by_name["midicraft"]
+    midicraft = by_name["midicraft-enc"]
     assert midicraft["backend"] == "midi"
     assert midicraft["vendor_product"] == "04d8:e78c"
     assert midicraft["detected"]["path"] == MIDICRAFT.path
@@ -97,9 +97,9 @@ async def test_devices_endpoint(config):
         assert response.status == 200
         body = await response.json()
         by_name = {entry["name"]: entry for entry in body["devices"]}
-        assert by_name["cherry"]["detected"]["vendor_product"] == "046a:0001"
-        assert by_name["asl"]["controls"]["midi_encoders"]
-        assert by_name["midicraft"]["controls"]["banks"][0]["notes"]
+        assert by_name["cherry-g86"]["detected"]["vendor_product"] == "046a:0001"
+        assert by_name["asl-mk2-e4b3"]["controls"]["midi_encoders"]
+        assert by_name["midicraft-enc"]["controls"]["banks"][0]["notes"]
     finally:
         await client.close()
 
@@ -161,12 +161,12 @@ def test_device_summary_includes_layout_banks_and_inventory(make_config):
 
 def test_device_summary_without_layout_reports_null(make_config):
     config = make_config(lambda data: data["layouts"].pop("cherry"))
-    entry = {item["name"]: item for item in device_summary(config, [])}["cherry"]
+    entry = {item["name"]: item for item in device_summary(config, [])}["cherry-g86"]
     assert entry["layout"] is None
 
 
 def test_legacy_profile_inventory_is_derived(config):
-    entry = {item["name"]: item for item in device_summary(config, [])}["asl"]
+    entry = {item["name"]: item for item in device_summary(config, [])}["asl-mk2-e4b3"]
     inventory = {item["id"]: item for item in entry["controls"]["inventory"]}
     assert inventory["encoder.1"]["kind"] == "relative-encoder"
     assert inventory["asl_click_1"]["kind"] == "button"

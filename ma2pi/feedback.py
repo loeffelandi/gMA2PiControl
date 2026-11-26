@@ -65,6 +65,16 @@ MODE_BASE: dict[str, int] = {"off": 0, "dark": 1, "bright": 15}
 #: MIDI status byte for note-on on channel 1.
 NOTE_ON = 0x90
 
+#: Seconds a device may keep written bytes unconsumed before its LED output
+#: is paused.  The kernel reports them through the rawmidi status.
+OUTPUT_STALL_SECONDS = 2.0
+
+#: Retry gap after a refused write, so a closed device cannot spin the pump.
+_RETRY_SECONDS = 0.1
+
+#: Frame gap used when a device has no ``led_feedback`` profile.
+_DEFAULT_FRAME_INTERVAL = 0.02
+
 
 def palette_index(name: str) -> int:
     """Return the palette index for a configured colour name."""
@@ -233,6 +243,19 @@ def _belongs_to_block(snapshot: PlaybackSnapshot, block: RequestBlock) -> bool:
     return any(executor in snapshot.executors for executor in expected)
 
 
+def _frame_intervals(config: "AppConfig") -> dict[str, float]:
+    """Minimum gap between two LED frames, per configured MIDI device."""
+
+    result: dict[str, float] = {}
+    for name, device in config.devices.items():
+        if device.backend != "midi":
+            continue
+        feedback = config.profiles[device.profile].led_feedback
+        if feedback is not None:
+            result[name] = feedback.frame_interval_ms / 1000.0
+    return result
+
+
 def build_feedback_targets(
     config: "AppConfig",
 ) -> tuple[list[LedTarget], dict[tuple[int | str, int], RequestBlock]]:
@@ -244,7 +267,7 @@ def build_feedback_targets(
             continue
         profile = config.profiles[device.profile]
         feedback = profile.led_feedback
-        if feedback is None:
+        if feedback is None or not feedback.enabled:
             continue
         allowed = set(feedback.notes) if feedback.notes is not None else None
         note_pairs = list(profile.notes.items())
@@ -306,6 +329,15 @@ class ExecutorFeedback:
         self._last: dict[tuple[str, int], int] = {}
         self._pending: dict[tuple[int | str, int], float] = {}
         self._devices: dict[str, str] = {}
+        # LED frames waiting for their turn: device -> {note: velocity}.  A new
+        # state for the same LED replaces the waiting one and keeps its place.
+        self._outbox: dict[str, dict[int, int]] = {}
+        self._next_send: dict[str, float] = {}
+        self._intervals: dict[str, float] = {}
+        # Device -> time since which written bytes have not been consumed.
+        self._unconsumed_since: dict[str, float] = {}
+        self._stalled: set[str] = set()
+        self._wake = asyncio.Event()
         self.set_config(config)
 
     def set_config(self, config: "AppConfig") -> None:
@@ -313,8 +345,10 @@ class ExecutorFeedback:
 
         self.config = config
         self._targets, self._blocks = build_feedback_targets(config)
+        self._intervals = _frame_intervals(config)
         self._last.clear()
         self._pending.clear()
+        self._clear_output(clear_stalled=True)
         self._drain_responses()
 
     def reset(self) -> None:
@@ -322,7 +356,15 @@ class ExecutorFeedback:
 
         self._last.clear()
         self._pending.clear()
+        self._clear_output()
         self._drain_responses()
+
+    def _clear_output(self, *, clear_stalled: bool = False) -> None:
+        self._outbox.clear()
+        self._next_send.clear()
+        self._unconsumed_since.clear()
+        if clear_stalled:
+            self._stalled.clear()
 
     def _drain_responses(self) -> None:
         """Discard answers that belong to a previous connection or config."""
@@ -355,32 +397,108 @@ class ExecutorFeedback:
         targets at runtime takes effect without a restart.
         """
 
+        pump = asyncio.create_task(self._pump_loop(), name="ma2pi-feedback-pump")
         active = False
-        while True:
-            enabled = self.config.feedback.enabled and bool(self._targets)
-            if enabled != active:
-                active = enabled
+        try:
+            while True:
+                enabled = self.config.feedback.enabled and bool(self._targets)
+                if enabled != active:
+                    active = enabled
+                    if active:
+                        LOGGER.info(
+                            "Executor-Feedback aktiv: %d LEDs, %d Abfrageblöcke, %.0f ms",
+                            len(self._targets),
+                            len(self._blocks),
+                            self.config.feedback.interval_ms,
+                        )
+                    elif not self.config.feedback.enabled:
+                        LOGGER.info("Executor-Feedback ist deaktiviert")
+                    else:
+                        LOGGER.info(
+                            "Executor-Feedback aktiv, aber kein LED-fähiges Button-Ziel"
+                        )
                 if active:
-                    LOGGER.info(
-                        "Executor-Feedback aktiv: %d LEDs, %d Abfrageblöcke, %.0f ms",
-                        len(self._targets),
-                        len(self._blocks),
-                        self.config.feedback.interval_ms,
-                    )
-                elif not self.config.feedback.enabled:
-                    LOGGER.info("Executor-Feedback ist deaktiviert")
-                else:
-                    LOGGER.info(
-                        "Executor-Feedback aktiv, aber kein LED-fähiges Button-Ziel"
-                    )
-            if active:
-                try:
-                    await self.step()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:  # pragma: no cover - defensive
-                    LOGGER.exception("Executor-Feedback-Zyklus fehlgeschlagen")
-            await self._sleep(self._interval())
+                    try:
+                        await self.step()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:  # pragma: no cover - defensive
+                        LOGGER.exception("Executor-Feedback-Zyklus fehlgeschlagen")
+                await self._sleep(self._interval())
+        finally:
+            pump.cancel()
+            try:
+                await pump
+            except asyncio.CancelledError:
+                pass
+
+    async def _pump_loop(self) -> None:
+        """Send queued LED frames at each device's own pace."""
+
+        while True:
+            try:
+                delay = self.pump()
+            except Exception:  # pragma: no cover - defensive
+                LOGGER.exception("LED-Ausgabe fehlgeschlagen")
+                delay = _RETRY_SECONDS
+            if delay is None:
+                self._wake.clear()
+                await self._wake.wait()
+            else:
+                await self._sleep(delay)
+
+    def pump(self) -> float | None:
+        """Send every frame that is due and return the wait for the next one.
+
+        At most one frame per device leaves per call, and never sooner than the
+        device's ``frame_interval_ms`` after the previous one.  ``None`` means
+        nothing is waiting.
+        """
+
+        now = self._clock()
+        wait: float | None = None
+        for device, outbox in self._outbox.items():
+            if not outbox or device in self._stalled:
+                continue
+            due = self._next_send.get(device, 0.0)
+            if now < due:
+                wait = due - now if wait is None else min(wait, due - now)
+                continue
+            if self._output_stalled(device, now):
+                continue
+            note, velocity = next(iter(outbox.items()))
+            interval = self._intervals.get(device, _DEFAULT_FRAME_INTERVAL)
+            if self._midi.send(device, bytes((NOTE_ON, note, velocity))):
+                del outbox[note]
+                self._last[(device, note)] = velocity
+            else:
+                LOGGER.debug("LED-Frame für %s Note %d nicht gesendet", device, note)
+                interval = max(interval, _RETRY_SECONDS)
+            self._next_send[device] = now + interval
+            if outbox:
+                wait = interval if wait is None else min(wait, interval)
+        return wait
+
+    def _output_stalled(self, device: str, now: float) -> bool:
+        """Pause a device whose written bytes stay unconsumed for too long."""
+
+        probe = getattr(self._midi, "output_pending", None)
+        pending = probe(device) if probe is not None else None
+        if not pending:
+            self._unconsumed_since.pop(device, None)
+            return False
+        since = self._unconsumed_since.setdefault(device, now)
+        if now - since < OUTPUT_STALL_SECONDS:
+            return False
+        self._stalled.add(device)
+        LOGGER.warning(
+            "MIDI-Ausgabe an %s gestaut (%d Bytes seit %.0f s nicht abgenommen); "
+            "LED-Ausgabe für dieses Gerät pausiert bis zum erneuten Öffnen",
+            device,
+            pending,
+            now - since,
+        )
+        return True
 
     async def step(self) -> None:
         """Run one poll cycle: request open blocks and apply answers."""
@@ -392,12 +510,15 @@ class ExecutorFeedback:
         self._sync_devices()
         for key, block in list(self._blocks.items()):
             await self._request_block(key, block)
+        self.pump()
 
     def _sync_devices(self) -> None:
         devices = getattr(self._midi, "open_devices", {}) or {}
         if devices != self._devices:
             self._devices = dict(devices)
             self._last.clear()
+            # A reopened device starts empty and gets the whole state again.
+            self._clear_output(clear_stalled=True)
 
     async def _request_block(
         self, key: tuple[int | str, int], block: RequestBlock
@@ -463,7 +584,11 @@ class ExecutorFeedback:
                 state.running, state.color, feedback.off_state, fallback
             )
             led = (target.device, target.note)
+            waiting = self._outbox.get(target.device)
             if self._last.get(led) == velocity:
+                # The LED already shows this state; drop a stale newer request.
+                if waiting is not None:
+                    waiting.pop(target.note, None)
                 continue
             if self._dry_run:
                 LOGGER.info(
@@ -474,10 +599,5 @@ class ExecutorFeedback:
                 )
                 self._last[led] = velocity
                 continue
-            frame = bytes((NOTE_ON, target.note, velocity))
-            if self._midi.send(target.device, frame):
-                self._last[led] = velocity
-            else:
-                LOGGER.debug(
-                    "LED-Frame für %s konnte nicht gesendet werden", target.control
-                )
+            self._outbox.setdefault(target.device, {})[target.note] = velocity
+            self._wake.set()

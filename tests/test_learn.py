@@ -38,11 +38,11 @@ class Sink:
         self.actions.append(("screen", screen))
 
 
-def key(control: str, value: int, device: str = "cherry") -> InputEvent:
+def key(control: str, value: int, device: str = "cherry-g86") -> InputEvent:
     return InputEvent("key", control, value, device)
 
 
-def encoder(encoder_id: int, delta: int, device: str = "asl") -> InputEvent:
+def encoder(encoder_id: int, delta: int, device: str = "asl-mk2-e4b3") -> InputEvent:
     return InputEvent("encoder", f"encoder.{encoder_id}", delta, device)
 
 
@@ -64,7 +64,7 @@ def test_key_capture_includes_logical_name_and_raw_code(config):
     assert result is not None
     assert result.status == "captured"
     assert result.control == "fix"
-    assert result.device == "cherry"
+    assert result.device == "cherry-g86"
     assert result.raw == "KEY_HOME"
     assert learner.active is True  # still swallowing the matching key-up
 
@@ -160,12 +160,12 @@ def test_cancel_restores_normal_operation_without_result(config):
 
 def test_device_filter_ignores_other_devices(config):
     learner = LearnManager(config)
-    learner.start("key", device="cherry", now=0.0)
+    learner.start("key", device="cherry-g86", now=0.0)
 
-    assert learner.feed(key("asl_bank", 1, "asl"), now=0.1) is None
+    assert learner.feed(key("asl_bank", 1, "asl-mk2-e4b3"), now=0.1) is None
     assert learner.active is True
 
-    result = learner.feed(key("fix", 1, "cherry"), now=0.2)
+    result = learner.feed(key("fix", 1, "cherry-g86"), now=0.2)
     assert result is not None
     assert result.control == "fix"
 

@@ -26,9 +26,12 @@ collide.
 from __future__ import annotations
 
 import asyncio
+import ctypes
+import fcntl
 import logging
 import os
 import re
+import struct
 import time
 from pathlib import Path
 from typing import AsyncIterator, Callable, Iterable, Protocol
@@ -99,6 +102,50 @@ class MidiStreamParser:
 class MidiHandle(Protocol):
     async def events(self) -> AsyncIterator[RawEvent]: ...
     async def close(self) -> None: ...
+
+
+class _RawmidiStatus(ctypes.Structure):
+    """``struct snd_rawmidi_status`` from ``<sound/asound.h>``."""
+
+    _fields_ = [
+        ("stream", ctypes.c_int),
+        ("tv_sec", ctypes.c_long),
+        ("tv_nsec", ctypes.c_long),
+        ("avail", ctypes.c_size_t),
+        ("xruns", ctypes.c_size_t),
+        ("reserved", ctypes.c_ubyte * 16),
+    ]
+
+
+def _rawmidi_ioc(direction: int, number: int, size: int) -> int:
+    # Generic Linux ioctl encoding (x86, ARM, AArch64): dir | size | type | nr.
+    return (direction << 30) | (size << 16) | (ord("W") << 8) | number
+
+
+_RAWMIDI_STREAM_OUTPUT = 0
+_RAWMIDI_IOCTL_STATUS = _rawmidi_ioc(3, 0x20, ctypes.sizeof(_RawmidiStatus))
+_RAWMIDI_IOCTL_DROP = _rawmidi_ioc(1, 0x30, ctypes.sizeof(ctypes.c_int))
+
+
+def rawmidi_output_free(fd: int) -> int | None:
+    """Free bytes in the output buffer of a rawmidi fd, or ``None`` on failure."""
+
+    status = _RawmidiStatus()
+    status.stream = _RAWMIDI_STREAM_OUTPUT
+    buffer = bytearray(bytes(status))
+    try:
+        fcntl.ioctl(fd, _RAWMIDI_IOCTL_STATUS, buffer, True)
+    except OSError:
+        return None
+    return int(_RawmidiStatus.from_buffer_copy(buffer).avail)
+
+
+def rawmidi_drop_output(fd: int) -> None:
+    """Discard output that the device has not consumed yet (may raise OSError)."""
+
+    fcntl.ioctl(
+        fd, _RAWMIDI_IOCTL_DROP, struct.pack("i", _RAWMIDI_STREAM_OUTPUT)
+    )
 
 
 class MidiSource(Protocol):
@@ -180,6 +227,10 @@ class RealMidiHandle:
         self._loop.add_reader(self._fd, self._on_readable)
         self._closed = False
         self._write_warned = False
+        # A fresh output buffer is empty, so its free space is the buffer size.
+        self._out_size: int | None = (
+            rawmidi_output_free(self._fd) if self._writable else None
+        )
 
     def _on_readable(self) -> None:
         try:
@@ -219,6 +270,17 @@ class RealMidiHandle:
                 LOGGER.warning("MIDI-Ausgabe an %s fehlgeschlagen: %s", self._path, exc)
             return False
 
+    def output_pending(self) -> int | None:
+        """Bytes written but not yet taken by the device, ``None`` if unknown."""
+
+        size = getattr(self, "_out_size", None)
+        if self._closed or not self._writable or size is None:
+            return None
+        free = rawmidi_output_free(self._fd)
+        if free is None:
+            return None
+        return max(0, size - free)
+
     async def events(self) -> AsyncIterator[RawEvent]:
         try:
             while True:
@@ -239,6 +301,17 @@ class RealMidiHandle:
             self._loop.remove_reader(self._fd)
         except Exception:  # pragma: no cover - defensive
             pass
+        if self._writable:
+            # Without this the kernel waits up to 10 s for a device that does
+            # not take its output before it lets close() return.
+            try:
+                rawmidi_drop_output(self._fd)
+            except OSError as exc:
+                LOGGER.debug(
+                    "MIDI-Ausgabe an %s lässt sich nicht verwerfen: %s",
+                    self._path,
+                    exc,
+                )
         try:
             os.close(self._fd)
         except OSError:  # pragma: no cover - defensive
@@ -372,6 +445,24 @@ class MidiManager:
             except Exception:  # pragma: no cover - a hook must not break output
                 LOGGER.debug("MIDI-Send-Hook fehlgeschlagen", exc_info=True)
         return ok
+
+    def output_pending(self, device: str) -> int | None:
+        """Bytes a device has not taken from its output buffer yet.
+
+        ``None`` means unknown: device not open, read-only, or the handle
+        cannot report it.
+        """
+
+        entry = self._open.get(device)
+        if entry is None:
+            return None
+        probe = getattr(entry.handle, "output_pending", None)
+        if probe is None:
+            return None
+        try:
+            return probe()
+        except Exception:  # pragma: no cover - a probe must not break output
+            return None
 
     async def run(self, queue: "asyncio.Queue[InputEvent | DeviceLost]") -> None:
         try:

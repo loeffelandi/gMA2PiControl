@@ -45,17 +45,70 @@ class FakeClient:
             self.playback_responses.put_nowait(self._responses.pop(0))
 
 
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def drain(feedback: ExecutorFeedback, clock: FakeClock) -> None:
+    """Pump until every queued frame has left, advancing the fake clock."""
+
+    for _ in range(200):
+        delay = feedback.pump()
+        if delay is None:
+            return
+        clock.now += delay
+    raise AssertionError("LED output did not drain")
+
+
 class FakeMidi:
-    def __init__(self, accept: bool = True) -> None:
-        self.open_devices = {"midicraft": "/dev/snd/midiC4D0"}
+    def __init__(self, accept: bool = True, clock: FakeClock | None = None) -> None:
+        self.open_devices = {"midicraft-enc": "/dev/snd/midiC4D0"}
         self.accept = accept
         self.sent: list[tuple[str, bytes]] = []
+        self.times: list[float] = []
+        self.pending: dict[str, int | None] = {}
+        self._clock = clock
 
     def send(self, device: str, data: bytes) -> bool:
         if not self.accept:
             return False
         self.sent.append((device, data))
+        if self._clock is not None:
+            self.times.append(self._clock.now)
         return True
+
+    def output_pending(self, device: str) -> int | None:
+        return self.pending.get(device, 0)
+
+
+def _enable_enc_leds(data: dict) -> None:
+    # The shipped example keeps the ENC LEDs off until they are measured.
+    data["profiles"]["midicraft-enc"]["led_feedback"]["enabled"] = True
+
+
+@pytest.fixture
+def make_config(raw_config):
+    import copy
+
+    from ma2pi.config import parse_config
+
+    def _make(mutator=None):
+        data = copy.deepcopy(raw_config)
+        _enable_enc_leds(data)
+        if mutator is not None:
+            mutator(data)
+        return parse_config(data, source_path="<test>")
+
+    return _make
+
+
+@pytest.fixture
+def config(make_config):
+    return make_config()
 
 
 def test_palette_order_matches_firmware():
@@ -132,7 +185,7 @@ def test_build_targets_from_example_config(config):
     targets, blocks = build_feedback_targets(config)
     assert len(targets) == 15
     by_control = {target.control: target for target in targets}
-    assert by_control["mc_row1_1"] == LedTarget("mc_row1_1", "midicraft", 65, "current", 1)
+    assert by_control["mc_row1_1"] == LedTarget("mc_row1_1", "midicraft-enc", 65, "current", 1)
     assert by_control["mc_row2_3"].note == 77
     assert by_control["mc_row3_5"].executor == 105
     # Encoder clicks have no LED and are excluded by led_notes.
@@ -179,10 +232,12 @@ async def test_step_sends_only_changes(config):
         ],
     )
     client = FakeClient([page1, page1_buttons])
-    midi = FakeMidi()
-    feedback = ExecutorFeedback(config, client, midi, sleep=_noop_sleep)
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(config, client, midi, sleep=_noop_sleep, clock=clock)
 
     await feedback.step()
+    drain(feedback, clock)
 
     assert client.requests == [
         ("current", 0, 5, 2, 2),
@@ -205,6 +260,7 @@ async def test_step_sends_only_changes(config):
     # A second identical cycle must not resend anything.
     client._responses = [page1, page1_buttons]
     await feedback.step()
+    drain(feedback, clock)
     assert len(midi.sent) == 15
 
 
@@ -216,13 +272,16 @@ async def test_step_resets_after_connection_loss(config):
     payload = playbacks_payload(1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
     other = playbacks_payload(1, 3, [{"iExec": 100, "isRun": False, "bC": "#ff0000"}])
     client = FakeClient([payload, other])
-    midi = FakeMidi()
-    feedback = ExecutorFeedback(config, client, midi, sleep=_noop_sleep)
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(config, client, midi, sleep=_noop_sleep, clock=clock)
     await feedback.step()
+    drain(feedback, clock)
     assert len(midi.sent) == 3
     feedback.reset()
     client._responses = [payload, other]
     await feedback.step()
+    drain(feedback, clock)
     assert len(midi.sent) == 6
 
 
@@ -230,13 +289,15 @@ async def test_step_without_device_keeps_state_for_retry(config):
     payload = playbacks_payload(1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
     other = playbacks_payload(1, 3, [{"iExec": 100, "isRun": True, "bC": "#ff0000"}])
     client = FakeClient([payload, other])
-    midi = FakeMidi(accept=False)
-    feedback = ExecutorFeedback(config, client, midi, sleep=_noop_sleep)
+    clock = FakeClock()
+    midi = FakeMidi(accept=False, clock=clock)
+    feedback = ExecutorFeedback(config, client, midi, sleep=_noop_sleep, clock=clock)
     await feedback.step()
     assert midi.sent == []
     midi.accept = True
     client._responses = [payload, other]
     await feedback.step()
+    drain(feedback, clock)
     assert len(midi.sent) == 3
 
 
@@ -302,6 +363,7 @@ def test_apply_skips_other_pages(config):
     snapshot = parse_playbacks(payload)
     assert snapshot is not None
     feedback._apply(snapshot, RequestBlock(2, 0, 5, 2, 2))
+    feedback.pump()
     assert [frame[1] for _, frame in midi.sent] == [65]
 
 
@@ -338,9 +400,11 @@ def test_apply_ignores_fixed_page_snapshot_for_current_targets(config):
     assert snapshot is not None
 
     feedback._apply(snapshot, RequestBlock(2, 0, 5, 2, 2))
+    feedback.pump()
     assert feedback._midi.sent == []
 
     feedback._apply(snapshot, RequestBlock("current", 0, 5, 2, 2))
+    feedback.pump()
     assert len(feedback._midi.sent) == 1
 
 
@@ -366,9 +430,10 @@ async def _wait_for(predicate, timeout: float = 2.0) -> None:
 
 async def test_step_drops_answer_for_a_different_block(config):
     client = ManualClient()
-    midi = FakeMidi()
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
     feedback = ExecutorFeedback(
-        config, client, midi, sleep=_noop_sleep, timeout=0.05
+        config, client, midi, sleep=_noop_sleep, timeout=0.05, clock=clock
     )
     task = asyncio.create_task(feedback.step())
     await _wait_for(lambda: len(client.requests) == 1)
@@ -384,6 +449,7 @@ async def test_step_drops_answer_for_a_different_block(config):
         playbacks_payload(1, 3, [{"iExec": 100, "isRun": True, "bC": "#0000ff"}])
     )
     await asyncio.wait_for(task, timeout=2.0)
+    drain(feedback, clock)
 
     sent = {frame[1]: frame[2] for _, frame in midi.sent}
     assert sent == {65: 16, 75: 16, 80: 24}
@@ -391,9 +457,10 @@ async def test_step_drops_answer_for_a_different_block(config):
 
 async def test_late_answer_does_not_stall_later_cycles(config):
     client = ManualClient()
-    midi = FakeMidi()
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
     feedback = ExecutorFeedback(
-        config, client, midi, sleep=_noop_sleep, timeout=0.02
+        config, client, midi, sleep=_noop_sleep, timeout=0.02, clock=clock
     )
     await feedback.step()
     assert len(client.requests) == 2
@@ -414,6 +481,7 @@ async def test_late_answer_does_not_stall_later_cycles(config):
         playbacks_payload(1, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}])
     )
     await asyncio.wait_for(task, timeout=2.0)
+    drain(feedback, clock)
 
     sent = {frame[1]: frame[2] for _, frame in midi.sent}
     assert sent == {65: 16, 75: 16, 80: 10}
@@ -473,18 +541,166 @@ async def test_current_targets_follow_page_change(config):
         2, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}]
     )
     client = FakeClient([page_one, buttons_one, page_two, buttons_two])
-    midi = FakeMidi()
-    feedback = ExecutorFeedback(config, client, midi, sleep=_noop_sleep)
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(config, client, midi, sleep=_noop_sleep, clock=clock)
 
     await feedback.step()
+    drain(feedback, clock)
     sent = {frame[1]: frame[2] for _, frame in midi.sent}
     assert sent[65] == 16
     assert sent[75] == 16
 
     midi.sent.clear()
     await feedback.step()
+    drain(feedback, clock)
     sent = {frame[1]: frame[2] for _, frame in midi.sent}
     assert sent == {65: 2, 75: 2}
+
+
+def _frames_for(midi: FakeMidi, note: int) -> list[bytes]:
+    return [frame[1:] for _, frame in midi.sent if frame[1] == note]
+
+
+def _running_snapshot(running: bool):
+    snapshot = parse_playbacks(
+        playbacks_payload(1, 2, [{"iExec": 0, "isRun": running, "bC": "#ff0000"}])
+    )
+    assert snapshot is not None
+    return snapshot
+
+
+def test_frames_are_paced_per_device(config):
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(config, FakeClient([]), midi, clock=clock)
+    block = RequestBlock("current", 0, 5, 2, 2)
+    snapshot = parse_playbacks(
+        playbacks_payload(
+            1,
+            2,
+            [{"iExec": n, "isRun": True, "bC": "#ff0000"} for n in range(5)],
+        )
+    )
+    assert snapshot is not None
+    feedback._apply(snapshot, block)
+    drain(feedback, clock)
+
+    assert len(midi.sent) == 10
+    gaps = [b - a for a, b in zip(midi.times, midi.times[1:])]
+    assert all(gap >= 0.02 - 1e-9 for gap in gaps)
+
+
+def test_pending_frame_is_replaced_by_newer_state(config):
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(config, FakeClient([]), midi, clock=clock)
+    block = RequestBlock("current", 0, 5, 2, 2)
+    feedback._apply(_running_snapshot(True), block)
+    feedback._apply(_running_snapshot(False), block)
+    drain(feedback, clock)
+
+    assert _frames_for(midi, 65) == [bytes((65, 2))]
+
+
+def test_state_returning_to_shown_drops_waiting_frame(config):
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(config, FakeClient([]), midi, clock=clock)
+    block = RequestBlock("current", 0, 5, 2, 2)
+    feedback._apply(_running_snapshot(True), block)
+    drain(feedback, clock)
+    sent = len(midi.sent)
+
+    feedback._apply(_running_snapshot(False), block)
+    feedback._apply(_running_snapshot(True), block)
+    assert feedback.pump() is None
+    assert len(midi.sent) == sent
+
+
+def test_stalled_output_pauses_device_until_reopened(config, caplog):
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    midi.pending["midicraft-enc"] = 3
+    feedback = ExecutorFeedback(config, FakeClient([]), midi, clock=clock)
+    block = RequestBlock("current", 0, 5, 2, 2)
+    feedback._apply(_running_snapshot(True), block)
+    feedback.pump()
+    first = len(midi.sent)
+
+    with caplog.at_level("WARNING", logger="ma2pi.feedback"):
+        clock.now += 2.5
+        feedback._apply(_running_snapshot(False), block)
+        feedback.pump()
+        clock.now += 1.0
+        feedback.pump()
+    assert len(midi.sent) == first
+    assert sum("gestaut" in record.message for record in caplog.records) == 1
+
+    # Reopening the device starts over with the whole state.
+    midi.pending["midicraft-enc"] = 0
+    midi.open_devices = {"midicraft-enc": "/dev/snd/midiC5D0"}
+    feedback._sync_devices()
+    feedback._apply(_running_snapshot(False), block)
+    drain(feedback, clock)
+    assert len(midi.sent) == first + 2
+
+
+def test_slow_but_draining_output_is_not_a_stall(config):
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(config, FakeClient([]), midi, clock=clock)
+    block = RequestBlock("current", 0, 5, 2, 2)
+    midi.pending["midicraft-enc"] = 3
+    feedback._apply(_running_snapshot(True), block)
+    feedback.pump()
+    clock.now += 1.0
+    midi.pending["midicraft"] = 0
+    feedback._apply(_running_snapshot(False), block)
+    drain(feedback, clock)
+    assert len(midi.sent) == 3
+
+
+def test_unknown_pending_state_never_stalls(config):
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    midi.pending["midicraft"] = None
+    feedback = ExecutorFeedback(config, FakeClient([]), midi, clock=clock)
+    block = RequestBlock("current", 0, 5, 2, 2)
+    feedback._apply(_running_snapshot(True), block)
+    drain(feedback, clock)
+    clock.now += 60
+    feedback._apply(_running_snapshot(False), block)
+    drain(feedback, clock)
+    assert len(midi.sent) == 4
+
+
+def test_profile_without_led_enabled_has_no_targets(make_config):
+    def mutate(data):
+        data["profiles"]["midicraft-enc"]["led_feedback"]["enabled"] = False
+
+    assert build_feedback_targets(make_config(mutate)) == ([], {})
+
+
+def test_frame_interval_comes_from_profile(make_config):
+    def mutate(data):
+        data["profiles"]["midicraft-enc"]["led_feedback"]["frame_interval_ms"] = 50
+
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(make_config(mutate), FakeClient([]), midi, clock=clock)
+    block = RequestBlock("current", 0, 5, 2, 2)
+    snapshot = parse_playbacks(
+        playbacks_payload(
+            1, 2, [{"iExec": n, "isRun": True, "bC": "#ff0000"} for n in range(3)]
+        )
+    )
+    assert snapshot is not None
+    feedback._apply(snapshot, block)
+    drain(feedback, clock)
+    gaps = [b - a for a, b in zip(midi.times, midi.times[1:])]
+    assert len(gaps) == len(midi.sent) - 1 >= 2
+    assert all(gap >= 0.05 - 1e-9 for gap in gaps)
 
 
 def test_parse_playbacks_skips_unknown_running_state():
@@ -509,3 +725,45 @@ def test_belongs_to_block_checks_page_type_and_range():
     assert _belongs_to_block(snapshot, RequestBlock(2, 0, 5, 2, 2)) is False
     assert _belongs_to_block(snapshot, RequestBlock(3, 5, 5, 2, 2)) is False
     assert _belongs_to_block(snapshot, RequestBlock(3, 0, 5, 3, 3)) is False
+
+
+async def test_run_pumps_queued_frames_at_device_pace(config):
+    async def tiny_sleep(_delay: float) -> None:
+        await asyncio.sleep(0.002)
+
+    midi = FakeMidi()
+    feedback = ExecutorFeedback(config, FakeClient([]), midi, sleep=tiny_sleep)
+    task = asyncio.create_task(feedback.run())
+    try:
+        feedback._sync_devices()
+        feedback._apply(
+            _running_snapshot(True), RequestBlock("current", 0, 5, 2, 2)
+        )
+        await _wait_for(lambda: len(midi.sent) == 2)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+def test_stalled_device_does_not_hold_back_another_device(config):
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    midi.pending["slow"] = 4
+    feedback = ExecutorFeedback(config, FakeClient([]), midi, clock=clock)
+    feedback._intervals = {"slow": 0.5, "fast": 0.02}
+    feedback._outbox = {
+        "slow": {note: 10 for note in range(8)},
+        "fast": {1: 10, 2: 10, 3: 10},
+    }
+    for _ in range(300):
+        feedback.pump()
+        clock.now += 0.02
+
+    by_device: dict[str, int] = {}
+    for device, _ in midi.sent:
+        by_device[device] = by_device.get(device, 0) + 1
+    assert by_device["fast"] == 3
+    # The slow device stalled after 2 s of unconsumed bytes and stopped there.
+    assert "slow" in feedback._stalled
+    assert by_device.get("slow", 0) < 8

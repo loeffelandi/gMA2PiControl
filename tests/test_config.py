@@ -11,9 +11,9 @@ def test_example_config_is_valid(config):
     assert config.schema_version == 1
     assert config.ma2.host == "192.168.0.10"
     assert set(config.devices) == {
-        "cherry",
-        "asl",
-        "midicraft",
+        "cherry-g86",
+        "asl-mk2-e4b3",
+        "midicraft-enc",
         "midicraft-push",
         "midicraft-fade",
         "midicraft-turn",
@@ -108,7 +108,7 @@ def test_duplicate_encoder_id(make_config):
 
 def test_unknown_profile_reference(make_config):
     with pytest.raises(ConfigError, match="unbekanntes Profil"):
-        make_config(lambda data: data["devices"]["cherry"].__setitem__("profile", "missing"))
+        make_config(lambda data: data["devices"]["cherry-g86"].__setitem__("profile", "missing"))
 
 
 def test_unknown_control_reference(make_config):
@@ -138,8 +138,8 @@ def test_hardkey_resolves_to_keyname(make_config):
 
 def test_vendor_zero_requires_name(make_config):
     def mutate(data):
-        data["devices"]["asl"]["vendor_id"] = 0
-        data["devices"]["asl"].pop("name_contains")
+        data["devices"]["asl-mk2-e4b3"]["vendor_id"] = 0
+        data["devices"]["asl-mk2-e4b3"].pop("name_contains")
 
     with pytest.raises(ConfigError, match="name_contains"):
         make_config(mutate)
@@ -312,7 +312,7 @@ def test_password_read_env(make_config, monkeypatch):
 
 def test_midi_backend_and_notes(make_config):
     config = make_config()
-    assert config.devices["asl"].backend == "midi"
+    assert config.devices["asl-mk2-e4b3"].backend == "midi"
     profile = config.profiles["asl-mk2-e4b3"]
     assert profile.notes[9] == "asl_bank"
     assert profile.notes[5] == "asl_click_1"
@@ -369,7 +369,7 @@ def test_midi_encoder_id_is_global(make_config):
 
 def test_midicraft_profile_layout(make_config):
     config = make_config()
-    device = config.devices["midicraft"]
+    device = config.devices["midicraft-enc"]
     assert device.backend == "midi"
     assert device.product_id == 0xE78C
     profile = config.profiles["midicraft-enc"]
@@ -575,7 +575,7 @@ def test_led_device_must_exist(make_config):
 
 def test_unknown_backend(make_config):
     with pytest.raises(ConfigError, match="backend"):
-        make_config(lambda data: data["devices"]["asl"].__setitem__("backend", "serial"))
+        make_config(lambda data: data["devices"]["asl-mk2-e4b3"].__setitem__("backend", "serial"))
 
 
 def test_default_hardkey_transport_is_lua(make_config):
@@ -944,3 +944,50 @@ def test_profile_led_feedback_rejects_note_not_in_profile(make_config):
 
     with pytest.raises(ConfigError, match="gehört nicht zum Profil"):
         make_config(mutate)
+
+
+def test_profile_led_feedback_defaults(config):
+    feedback = config.profiles["midicraft-enc"].led_feedback
+    assert feedback is not None
+    assert feedback.frame_interval_ms == 20
+
+
+def test_profile_led_feedback_enabled_defaults_to_true(make_config):
+    def mutate(data):
+        data["profiles"]["midicraft-enc"]["led_feedback"].pop("enabled", None)
+
+    cfg = make_config(mutate)
+    assert cfg.profiles["midicraft-enc"].led_feedback.enabled is True
+
+
+def test_profile_led_feedback_can_be_disabled(make_config):
+    def mutate(data):
+        data["profiles"]["midicraft-enc"]["led_feedback"]["enabled"] = False
+
+    cfg = make_config(mutate)
+    assert cfg.profiles["midicraft-enc"].led_feedback.enabled is False
+
+
+def test_profile_led_feedback_enabled_must_be_boolean(make_config):
+    def mutate(data):
+        data["profiles"]["midicraft-enc"]["led_feedback"]["enabled"] = "yes"
+
+    with pytest.raises(ConfigError, match="enabled"):
+        make_config(mutate)
+
+
+@pytest.mark.parametrize("value", [0, 501])
+def test_profile_led_feedback_frame_interval_range(make_config, value):
+    def mutate(data):
+        data["profiles"]["midicraft-enc"]["led_feedback"]["frame_interval_ms"] = value
+
+    with pytest.raises(ConfigError, match="frame_interval_ms"):
+        make_config(mutate)
+
+
+def test_profile_led_feedback_frame_interval_is_read(make_config):
+    def mutate(data):
+        data["profiles"]["midicraft-enc"]["led_feedback"]["frame_interval_ms"] = 50
+
+    cfg = make_config(mutate)
+    assert cfg.profiles["midicraft-enc"].led_feedback.frame_interval_ms == 50

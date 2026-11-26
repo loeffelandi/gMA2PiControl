@@ -44,7 +44,7 @@ class Sink:
         self.actions.append(("screen", screen))
 
 
-def key(control: str, value: int, device: str = "cherry") -> InputEvent:
+def key(control: str, value: int, device: str = "cherry-g86") -> InputEvent:
     return InputEvent("key", control, value, device)
 
 

@@ -43,53 +43,56 @@ weiter (ja/nein), Kernel-Log (`urb status -32`, `drain error`, Disconnect).
 
 ## 2. Konfiguration
 
-- [ ] 2.1 `led_feedback.enabled` (Default `true`) und `frame_interval_ms`
+- [x] 2.1 `led_feedback.enabled` (Default `true`) und `frame_interval_ms`
   (1–500, Default 20) in `ma2pi/config.py` parsen und validieren; Fehler
   nennen das Feld. Verifikation: `tests/test_config.py` — gültige Werte,
   Grenzwerte 0, 1, 500, 501, falscher Typ.
-- [ ] 2.2 `build_feedback_targets` überspringt Profile mit `enabled = false`.
-  Verifikation: `tests/test_feedback.py` — ENC aus/ASL an, alle aus, kein
-  Polling ohne Ziele.
-- [ ] 2.3 `config.toml` und `README.md`: neue Schlüssel dokumentieren,
+- [x] 2.2 `build_feedback_targets` überspringt Profile mit `enabled = false`.
+  Verifikation: `tests/test_feedback.py` — ENC aus ergibt weder Ziele noch
+  Blöcke, kein Polling ohne Ziele. (Die ASL hat in `config.toml` kein
+  `led_feedback`; das Szenario „ENC aus, ASL an“ ist daher nur über die
+  gerätegetrennte Ausgabe in 3.1 belegt.)
+- [x] 2.3 `config.toml` und `README.md`: neue Schlüssel dokumentieren,
   `midicraft-enc` mit `enabled = false` und Kommentar zur offenen Messung;
   Verifikation: `--check-config` läuft grün mit der Datei.
-- [ ] 2.4 Web-Editor für Profile: neue Felder lesen und schreiben, ohne
-  unbekannte Schlüssel zu verlieren. Verifikation: `tests/test_web.py` —
-  Roundtrip eines Profils mit beiden Feldern.
+- [x] 2.4 Neue Felder über den Config-Store lesen und schreiben, ohne
+  andere Schlüssel zu verlieren. Die Web-UI hat keinen Editor für
+  `led_feedback` (kein Bezug in `web/`), der Weg läuft über den Store.
+  Verifikation: `tests/test_config_api.py` — Roundtrip beider Felder.
 
 ## 3. Getaktete Ausgabe und Stau
 
-- [ ] 3.1 Ausgabe-Queue je Gerät in `ma2pi/feedback.py`: `_apply` reiht ein,
+- [x] 3.1 Ausgabe-Queue je Gerät in `ma2pi/feedback.py`: `_apply` reiht ein,
   ein Zeitgeber je Gerät sendet höchstens einen Frame pro `frame_interval_ms`,
   neuer Zustand ersetzt offenen für dieselbe LED. `_last` wird nur nach
   erfolgreichem Senden gesetzt. Verifikation: `tests/test_feedback.py` mit
   Fake-Clock — Abstand, Ersetzen, zwei Geräte unabhängig.
-- [ ] 3.2 Statusabfrage der Ausgabe in `RealMidiHandle` kapseln
+- [x] 3.2 Statusabfrage der Ausgabe in `RealMidiHandle` kapseln
   (`SNDRV_RAWMIDI_IOCTL_STATUS`, Rückgabe `pending: int | None`, `None` bei
   Fehler). Verifikation: `tests/test_midi_input.py` mit Fake-ioctl.
-- [ ] 3.3 Stau-Erkennung (2 s ausstehend → Pause je Gerät, eine Warnung,
+- [x] 3.3 Stau-Erkennung (2 s ausstehend → Pause je Gerät, eine Warnung,
   Eingabe läuft weiter, Wiederaufnahme nach Neuöffnen mit Vollzustand).
   Verifikation: Tests mit Fake-Handle, der nichts abnimmt — Warnung genau
   einmal, Eingaben weiter zugestellt, nach Neuöffnen alle LEDs neu gesendet.
-- [ ] 3.4 Dry-Run unverändert: Frames nur im Log, Takt wirkt nicht auf die
+- [x] 3.4 Dry-Run unverändert: Frames nur im Log, Takt wirkt nicht auf die
   Log-Ausgabe. Verifikation: bestehende Dry-Run-Tests bleiben grün.
 
 ## 4. Schließen
 
-- [ ] 4.1 `RealMidiHandle.close` ruft vor `os.close` `SNDRV_RAWMIDI_IOCTL_DROP`
+- [x] 4.1 `RealMidiHandle.close` ruft vor `os.close` `SNDRV_RAWMIDI_IOCTL_DROP`
   auf (nur schreibbar geöffnet), Fehler nur auf DEBUG. Verifikation:
   `tests/test_midi_input.py` — Drop vor close, Fehlerfall schließt trotzdem,
   read-only Handle ruft kein Drop auf.
-- [ ] 4.2 Dienststopp mit gestautem Gerät: Test mit Fake-Handle, dessen
+- [x] 4.2 Dienststopp mit gestautem Gerät: Test mit Fake-Handle, dessen
   Drain blockiert, prüft, dass `stop()` ohne Wartezeit zurückkehrt.
   Verifikation: Test im selben File.
 
 ## 5. Abschluss
 
-- [ ] 5.1 Alle Tests grün: `pytest` komplett. Verifikation: Testlauf.
+- [x] 5.1 Alle Tests grün: `pytest` komplett. Verifikation: Testlauf.
 - [ ] 5.2 Auf dem Pi nach dem Deploy: ENC mit gemessenem Intervall aktivieren,
   Kernel-Log 10 Minuten beobachten, Dienststopp dauert unter 5 s.
   Verifikation: Journal- und Kernel-Auszug im Design.
-- [ ] 5.3 `openspec validate fix-midicraft-led-output --strict` bleibt grün;
+- [x] 5.3 `openspec validate fix-midicraft-led-output --strict` bleibt grün;
   Abhängigkeit zu `add-midicraft-led-feedback` im Proposal geprüft.
   Verifikation: CLI-Ausgabe.

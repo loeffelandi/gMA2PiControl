@@ -292,3 +292,31 @@ def test_redacted_config_contains_layouts_profiles_and_bank_layers(make_config):
     assert data["mapping"]["device_banks"]["banktest"]["bank_size"] == 5
     assert "password_file" not in data["ma2"]
     assert "pin" not in data["web"]
+
+
+async def test_store_roundtrips_led_feedback_fields_and_keeps_others(tmp_path):
+    paths, store = _setup(tmp_path)
+
+    updated = await store.apply(
+        {
+            "profiles": {
+                "midicraft-enc": {
+                    "led_feedback": {"enabled": False, "frame_interval_ms": 50}
+                }
+            }
+        }
+    )
+
+    feedback = updated.profiles["midicraft-enc"].led_feedback
+    assert feedback.enabled is False
+    assert feedback.frame_interval_ms == 50
+    # Keys that the patch does not mention survive the merge.
+    assert feedback.protocol == "midicraft-v2"
+    assert feedback.notes is not None and 65 in feedback.notes
+
+    # An unrelated edit keeps the new fields in the file on disk.
+    await store.apply({"logging": {"level": "DEBUG"}})
+    reloaded = load_config(paths.config)
+    again = reloaded.profiles["midicraft-enc"].led_feedback
+    assert again.enabled is False
+    assert again.frame_interval_ms == 50

@@ -117,38 +117,38 @@ def test_parser_running_status_and_realtime():
 
 def test_midi_device_selection(config):
     selected = select_midi_devices(config, [midi_info()])
-    assert selected["asl"].path == "/dev/snd/midiC3D0"
+    assert selected["asl-mk2-e4b3"].path == "/dev/snd/midiC3D0"
     assert select_midi_devices(config, []) == {}
 
 
 def test_normalise_button(config):
     manager = MidiManager(config)
     profile = config.profiles["asl-mk2-e4b3"]
-    assert manager._normalise("asl", profile, RawEvent("note_on", "9", 0x7F)) == InputEvent(
-        "key", "asl_bank", 1, "asl"
+    assert manager._normalise("asl-mk2-e4b3", profile, RawEvent("note_on", "9", 0x7F)) == InputEvent(
+        "key", "asl_bank", 1, "asl-mk2-e4b3"
     )
-    assert manager._normalise("asl", profile, RawEvent("note_on", "9", 0x01)) == InputEvent(
-        "key", "asl_bank", 0, "asl"
+    assert manager._normalise("asl-mk2-e4b3", profile, RawEvent("note_on", "9", 0x01)) == InputEvent(
+        "key", "asl_bank", 0, "asl-mk2-e4b3"
     )
-    assert manager._normalise("asl", profile, RawEvent("note_off", "9", 0x01)) == InputEvent(
-        "key", "asl_bank", 0, "asl"
+    assert manager._normalise("asl-mk2-e4b3", profile, RawEvent("note_off", "9", 0x01)) == InputEvent(
+        "key", "asl_bank", 0, "asl-mk2-e4b3"
     )
 
 
 def test_normalise_encoder(config):
     manager = MidiManager(config)
     profile = config.profiles["asl-mk2-e4b3"]
-    assert manager._normalise("asl", profile, RawEvent("note_on", "1", 0x7F)) == InputEvent(
-        "encoder", "encoder.1", 1, "asl"
+    assert manager._normalise("asl-mk2-e4b3", profile, RawEvent("note_on", "1", 0x7F)) == InputEvent(
+        "encoder", "encoder.1", 1, "asl-mk2-e4b3"
     )
-    assert manager._normalise("asl", profile, RawEvent("note_on", "1", 0x01)) == InputEvent(
-        "encoder", "encoder.1", -1, "asl"
+    assert manager._normalise("asl-mk2-e4b3", profile, RawEvent("note_on", "1", 0x01)) == InputEvent(
+        "encoder", "encoder.1", -1, "asl-mk2-e4b3"
     )
-    assert manager._normalise("asl", profile, RawEvent("note_on", "4", 0x7F)) == InputEvent(
-        "encoder", "encoder.4", 1, "asl"
+    assert manager._normalise("asl-mk2-e4b3", profile, RawEvent("note_on", "4", 0x7F)) == InputEvent(
+        "encoder", "encoder.4", 1, "asl-mk2-e4b3"
     )
-    assert manager._normalise("asl", profile, RawEvent("note_off", "1", 0x00)) is None
-    assert manager._normalise("asl", profile, RawEvent("note_on", "1", 0x40)) is None
+    assert manager._normalise("asl-mk2-e4b3", profile, RawEvent("note_off", "1", 0x00)) is None
+    assert manager._normalise("asl-mk2-e4b3", profile, RawEvent("note_on", "1", 0x40)) is None
 
 
 def test_normalise_encoder_direction_inverts(config):
@@ -160,19 +160,19 @@ def test_normalise_encoder_direction_inverts(config):
         midi_encoders=(dataclasses.replace(encoder, direction=-1),),
     )
     assert manager._normalise(
-        "asl", inverted, RawEvent("note_on", "1", 0x7F)
-    ) == InputEvent("encoder", "encoder.1", -1, "asl")
+        "asl-mk2-e4b3", inverted, RawEvent("note_on", "1", 0x7F)
+    ) == InputEvent("encoder", "encoder.1", -1, "asl-mk2-e4b3")
     assert manager._normalise(
-        "asl", inverted, RawEvent("note_on", "1", 0x01)
-    ) == InputEvent("encoder", "encoder.1", 1, "asl")
+        "asl-mk2-e4b3", inverted, RawEvent("note_on", "1", 0x01)
+    ) == InputEvent("encoder", "encoder.1", 1, "asl-mk2-e4b3")
 
 
 def test_normalise_unknown_note_logged_once(config, caplog):
     manager = MidiManager(config)
     profile = config.profiles["asl-mk2-e4b3"]
     with caplog.at_level(logging.DEBUG):
-        assert manager._normalise("asl", profile, RawEvent("note_on", "99", 0x7F)) is None
-        assert manager._normalise("asl", profile, RawEvent("note_on", "99", 0x7F)) is None
+        assert manager._normalise("asl-mk2-e4b3", profile, RawEvent("note_on", "99", 0x7F)) is None
+        assert manager._normalise("asl-mk2-e4b3", profile, RawEvent("note_on", "99", 0x7F)) is None
     assert caplog.text.count("Unbekannte MIDI-Note 99") == 1
 
 
@@ -226,21 +226,21 @@ async def test_midi_manager_hotplug(config):
     task = asyncio.create_task(manager.run(queue))
     try:
         await asyncio.sleep(0.03)
-        assert "asl" in manager.open_devices
+        assert "asl-mk2-e4b3" in manager.open_devices
         handle = source.handles["/dev/snd/midiC3D0"]
         await handle.queue.put(RawEvent("note_on", "9", 0x7F))
         event = await asyncio.wait_for(queue.get(), 1.0)
-        assert event == InputEvent("key", "asl_bank", 1, "asl")
+        assert event == InputEvent("key", "asl_bank", 1, "asl-mk2-e4b3")
 
         source.devices = []
         lost = await asyncio.wait_for(queue.get(), 2.0)
         assert isinstance(lost, DeviceLost)
-        assert lost.device == "asl"
+        assert lost.device == "asl-mk2-e4b3"
         assert handle.closed
 
         source.devices = [midi_info()]
         await asyncio.sleep(0.05)
-        assert "asl" in manager.open_devices
+        assert "asl-mk2-e4b3" in manager.open_devices
         assert len(source.opened) == 2
     finally:
         task.cancel()
@@ -258,7 +258,7 @@ async def test_two_midi_devices_are_independent(config):
     task = asyncio.create_task(manager.run(queue))
     try:
         await asyncio.sleep(0.05)
-        assert set(manager.open_devices) == {"asl", "midicraft"}
+        assert set(manager.open_devices) == {"asl-mk2-e4b3", "midicraft-enc"}
         asl = source.handles["/dev/snd/midiC3D0"]
         midicraft = source.handles["/dev/snd/midiC4D0"]
         await asl.queue.put(RawEvent("note_on", "9", 0x7F))
@@ -266,28 +266,28 @@ async def test_two_midi_devices_are_independent(config):
         first = await asyncio.wait_for(queue.get(), 1.0)
         second = await asyncio.wait_for(queue.get(), 1.0)
         by_device = {first.device: first, second.device: second}
-        assert by_device["asl"] == InputEvent("key", "asl_bank", 1, "asl")
-        assert by_device["midicraft"] == InputEvent(
-            "value", "mc_fader_1", 1.0, "midicraft"
+        assert by_device["asl-mk2-e4b3"] == InputEvent("key", "asl_bank", 1, "asl-mk2-e4b3")
+        assert by_device["midicraft-enc"] == InputEvent(
+            "value", "mc_fader_1", 1.0, "midicraft-enc"
         )
 
         source.devices = [midi_info()]
         lost = await asyncio.wait_for(queue.get(), 2.0)
         while not isinstance(lost, DeviceLost):
             lost = await asyncio.wait_for(queue.get(), 2.0)
-        assert lost.device == "midicraft"
+        assert lost.device == "midicraft-enc"
         assert midicraft.closed
-        assert "asl" in manager.open_devices
+        assert "asl-mk2-e4b3" in manager.open_devices
         assert not asl.closed
 
         await asl.queue.put(RawEvent("note_on", "9", 0x01))
         assert await asyncio.wait_for(queue.get(), 1.0) == InputEvent(
-            "key", "asl_bank", 0, "asl"
+            "key", "asl_bank", 0, "asl-mk2-e4b3"
         )
 
         source.devices = [midi_info(), midicraft_info()]
         await asyncio.sleep(0.05)
-        assert "midicraft" in manager.open_devices
+        assert "midicraft-enc" in manager.open_devices
         assert source.opened.count("/dev/snd/midiC4D0") == 2
     finally:
         task.cancel()
@@ -317,16 +317,16 @@ async def test_missing_midi_device_warns_once(config, caplog):
     with caplog.at_level(logging.WARNING):
         await manager.reconcile(queue)
         await manager.reconcile(queue)
-    assert caplog.text.count("asl nicht gefunden") == 1
-    assert caplog.text.count("midicraft nicht gefunden") == 1
+    assert caplog.text.count("asl-mk2-e4b3 nicht gefunden") == 1
+    assert caplog.text.count("midicraft-enc nicht gefunden") == 1
     assert queue.empty()
 
 
 def test_midi_profile_without_notes_aborts(config):
-    device = config.devices["asl"]
+    device = config.devices["asl-mk2-e4b3"]
     with pytest.raises(ProfileError, match="keine"):
         validate_midi_profile(
-            "asl",
+            "asl-mk2-e4b3",
             device,
             ProfileConfig(keys={"KEY_F1": "fix"}),
             midi_info(),
@@ -471,7 +471,7 @@ async def test_midi_reader_uses_new_config_without_restart(config, make_config):
         manager.set_config(updated)
         await handle.queue.put(RawEvent("note_on", "12", 0x7F))
         event = await asyncio.wait_for(queue.get(), 1.0)
-        assert event == InputEvent("key", "asl_click_1", 1, "asl", note=12)
+        assert event == InputEvent("key", "asl_click_1", 1, "asl-mk2-e4b3", note=12)
     finally:
         task.cancel()
         try:
@@ -541,9 +541,9 @@ async def test_manager_send_uses_open_device(config):
     try:
         await manager.reconcile(queue)
         handle = source.handles[midicraft_info().path]
-        assert manager.send("midicraft", b"\x90\x41\x7f") is True
+        assert manager.send("midicraft-enc", b"\x90\x41\x7f") is True
         assert handle.written == [b"\x90\x41\x7f"]
-        assert manager.send("asl", b"\x90\x41\x7f") is False
+        assert manager.send("asl-mk2-e4b3", b"\x90\x41\x7f") is False
     finally:
         await manager.close()
 
@@ -566,3 +566,153 @@ def test_real_handle_write_is_ignored_when_read_only(monkeypatch, caplog):
         assert handle.write(b"\x90\x41\x7f") is False
         assert handle.write(b"\x90\x41\x7f") is False
     assert caplog.text.count("nur lesbar") == 1
+
+
+def _real_handle(midi_input, *, writable=True, out_size=4096):
+    handle = object.__new__(midi_input.RealMidiHandle)
+    handle._fd = 9
+    handle._closed = False
+    handle._writable = writable
+    handle._write_warned = False
+    handle._path = "/dev/snd/midiC4D0"
+    handle._out_size = out_size
+    return handle
+
+
+def test_real_handle_output_pending_is_buffer_minus_free(monkeypatch):
+    from ma2pi import midi_input
+
+    handle = _real_handle(midi_input)
+    monkeypatch.setattr(midi_input, "rawmidi_output_free", lambda fd: 4090)
+    assert handle.output_pending() == 6
+    monkeypatch.setattr(midi_input, "rawmidi_output_free", lambda fd: 4096)
+    assert handle.output_pending() == 0
+
+
+def test_real_handle_output_pending_unknown_cases(monkeypatch):
+    from ma2pi import midi_input
+
+    monkeypatch.setattr(midi_input, "rawmidi_output_free", lambda fd: None)
+    assert _real_handle(midi_input).output_pending() is None
+    assert _real_handle(midi_input, writable=False).output_pending() is None
+    assert _real_handle(midi_input, out_size=None).output_pending() is None
+    closed = _real_handle(midi_input)
+    closed._closed = True
+    assert closed.output_pending() is None
+
+
+def test_rawmidi_output_free_returns_none_on_error(monkeypatch):
+    from ma2pi import midi_input
+
+    def fail(fd, request, buffer, mutate):
+        raise OSError("not a rawmidi device")
+
+    monkeypatch.setattr(midi_input.fcntl, "ioctl", fail)
+    assert midi_input.rawmidi_output_free(9) is None
+
+
+def test_rawmidi_ioctl_numbers_match_kernel_headers():
+    from ma2pi import midi_input
+
+    # _IOWR('W', 0x20, struct snd_rawmidi_status) and _IOW('W', 0x30, int)
+    assert midi_input._RAWMIDI_IOCTL_DROP == 0x40045730
+    assert midi_input._RAWMIDI_IOCTL_STATUS & 0xFFFF == 0x5720
+    assert midi_input._RAWMIDI_IOCTL_STATUS >> 30 == 3
+
+
+async def test_real_handle_close_drops_pending_output(monkeypatch):
+    from ma2pi import midi_input
+
+    handle = _real_handle(midi_input)
+    handle._loop = asyncio.get_running_loop()
+    calls: list[str] = []
+    monkeypatch.setattr(handle._loop, "remove_reader", lambda fd: None)
+    monkeypatch.setattr(
+        midi_input, "rawmidi_drop_output", lambda fd: calls.append("drop")
+    )
+    monkeypatch.setattr(midi_input.os, "close", lambda fd: calls.append("close"))
+    await handle.close()
+    assert calls == ["drop", "close"]
+
+
+async def test_real_handle_close_survives_failing_drop(monkeypatch):
+    from ma2pi import midi_input
+
+    handle = _real_handle(midi_input)
+    handle._loop = asyncio.get_running_loop()
+    closed: list[int] = []
+    monkeypatch.setattr(handle._loop, "remove_reader", lambda fd: None)
+
+    def fail(fd):
+        raise OSError("no")
+
+    monkeypatch.setattr(midi_input, "rawmidi_drop_output", fail)
+    monkeypatch.setattr(midi_input.os, "close", closed.append)
+    await handle.close()
+    assert closed == [9]
+
+
+async def test_manager_output_pending_is_none_for_unknown_device(config):
+    manager = MidiManager(config, source=FakeMidiSource([]))
+    assert manager.output_pending("midicraft") is None
+
+
+def test_real_handle_read_only_close_does_not_drop(monkeypatch):
+    from ma2pi import midi_input
+
+    handle = _real_handle(midi_input, writable=False)
+    handle._loop = asyncio.new_event_loop()
+    try:
+        monkeypatch.setattr(handle._loop, "remove_reader", lambda fd: None)
+
+        def fail(fd):
+            raise AssertionError("read-only handle must not drop output")
+
+        monkeypatch.setattr(midi_input, "rawmidi_drop_output", fail)
+        monkeypatch.setattr(midi_input.os, "close", lambda fd: None)
+        handle._loop.run_until_complete(handle.close())
+    finally:
+        handle._loop.close()
+
+
+async def test_manager_stop_does_not_wait_for_a_backed_up_device(monkeypatch):
+    """A device that never drains must not hold the shutdown (kernel drain 10 s)."""
+
+    import time
+
+    from ma2pi import midi_input
+
+    handle = _real_handle(midi_input)
+    handle._loop = asyncio.get_running_loop()
+    state = {"dropped": False}
+    monkeypatch.setattr(handle._loop, "remove_reader", lambda fd: None)
+    monkeypatch.setattr(
+        midi_input,
+        "rawmidi_drop_output",
+        lambda fd: state.__setitem__("dropped", True),
+    )
+
+    def close(fd):
+        # Like the kernel: close() blocks while undrained output is queued.
+        if not state["dropped"]:
+            time.sleep(5)
+
+    monkeypatch.setattr(midi_input.os, "close", close)
+
+    async def idle():
+        await asyncio.Event().wait()
+
+    config = None
+    manager = MidiManager.__new__(MidiManager)
+    manager._stopping = False
+    manager._lock = asyncio.Lock()
+    manager._open = {
+        "midicraft": midi_input._OpenMidi(
+            midicraft_info(), handle, asyncio.create_task(idle())
+        )
+    }
+    started = time.monotonic()
+    await manager.close()
+    assert time.monotonic() - started < 1.0
+    assert manager._open == {}
+    del config

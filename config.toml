@@ -161,7 +161,7 @@ level = "INFO"
 
 [led]
 enabled = true                # Modus-LED an der ASL-Taste
-device = "asl"                # bei mehreren MIDI-Geräten erforderlich
+device = "asl-mk2-e4b3"        # bei mehreren MIDI-Geräten erforderlich
 note = 9                      # Taste 1 (Noten 9-11 = Tasten 1-3)
 attribute_color = "red"       # Attribut-Modus
 screen_color = "green"        # Screen-Modus
@@ -187,20 +187,20 @@ port = 8080
 pin_enabled = false          # PIN-Sperre; bei false ist die API im LAN offen
 pin = ""                     # 4-12 Ziffern, z. B. "123456"; leer = keine PIN
 
-[devices.cherry]
+[devices.cherry-g86]
 vendor_id = 0x046a
 product_id = 0x0000        # 0 = beliebiges Produkt dieser Vendor-ID
 name_contains = "Cherry"
 profile = "cherry-g86"
 
-[devices.asl]
+[devices.asl-mk2-e4b3]
 backend = "midi"           # ASL MK2-E4B3 meldet sich als USB-MIDI, nicht als evdev
 vendor_id = 0x04d8
 product_id = 0xe817
 name_contains = "ASL MK2"
 profile = "asl-mk2-e4b3"
 
-[devices.midicraft]
+[devices.midicraft-enc]
 backend = "midi"
 vendor_id = 0x04d8
 product_id = 0xe78c
@@ -602,9 +602,15 @@ notes = {}
 
 # LED-Rückmeldung: Nur die 15 RGB-Tasten haben LEDs; Encoder-Klicks
 # (Noten 55-59) und Fader bleiben unbeleuchtet.
+# enabled = false: Am ENC hat die LED-Ausgabe die Eingabe still gelegt. Erst
+# wieder einschalten, wenn die Messung (OpenSpec fix-midicraft-led-output,
+# Gruppe 1) einen stabilen Abstand ergeben hat. frame_interval_ms ist der
+# Mindestabstand zwischen zwei LED-Frames an dieses Gerät.
 [profiles.midicraft-enc.led_feedback]
 protocol = "midicraft-v2"
 led_notes = [65, 66, 67, 68, 69, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84]
+enabled = false
+frame_interval_ms = 20
 
 [mapping.modifiers]
 # Logo-Taste wirkt als MA-Modifier (MA + andere Taste, z. B. MA + Encoder

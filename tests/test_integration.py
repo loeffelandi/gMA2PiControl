@@ -267,11 +267,11 @@ async def test_playbacks_polling_round_trip(config):
 
 class _RecordingMidi:
     def __init__(self) -> None:
-        self.open_devices = {"midicraft": "/dev/snd/midiC4D0"}
+        self.open_devices = {"midicraft-enc": "/dev/snd/midiC4D0"}
         self.sent: list[bytes] = []
 
     def send(self, device: str, data: bytes) -> bool:
-        assert device == "midicraft"
+        assert device == "midicraft-enc"
         self.sent.append(data)
         return True
 
@@ -306,14 +306,24 @@ async def test_feedback_polls_and_resets_on_disconnect(config):
     server = await MockMa2Server().start()
     server.playbacks = answer
     cfg = client_config(config, server.port)
+    # The shipped example keeps the ENC LEDs off until they are measured.
+    enc = cfg.profiles["midicraft-enc"]
+    leds = dataclasses.replace(enc.led_feedback, enabled=True)
+    cfg = dataclasses.replace(
+        cfg,
+        profiles={**cfg.profiles, "midicraft-enc": dataclasses.replace(enc, led_feedback=leds)},
+    )
     client = Ma2Client(cfg)
     midi = _RecordingMidi()
-    feedback = ExecutorFeedback(cfg, client, midi)
+    clock = [1000.0]
+    feedback = ExecutorFeedback(cfg, client, midi, clock=lambda: clock[0])
     client.add_connection_lost_callback(feedback.reset)
     try:
         await client.start()
         await wait_until(lambda: client.authenticated)
         await asyncio.wait_for(feedback.step(), timeout=3.0)
+        while (delay := feedback.pump()) is not None:
+            clock[0] += delay
 
         assert len(midi.sent) == 15
         assert feedback._last

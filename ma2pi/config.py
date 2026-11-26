@@ -190,11 +190,15 @@ class LedFeedbackProfile:
     """How a profile's controls report executor state as LED frames.
 
     ``notes`` restricts feedback to notes that actually have an LED; ``None``
-    means every button note of the profile is LED-capable.
+    means every button note of the profile is LED-capable.  ``enabled`` turns
+    the output off for this profile only, and ``frame_interval_ms`` is the
+    minimum gap between two LED frames sent to one device.
     """
 
     protocol: str = "midicraft-v2"
     notes: tuple[int, ...] | None = None
+    enabled: bool = True
+    frame_interval_ms: int = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -1091,12 +1095,24 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
         if "led_feedback" in item:
             fb_path = f"{item_path}.led_feedback"
             fb_raw = _table(item["led_feedback"], fb_path)
-            _reject_unknown(fb_raw, {"protocol", "led_notes"}, fb_path)
+            _reject_unknown(
+                fb_raw,
+                {"protocol", "led_notes", "enabled", "frame_interval_ms"},
+                fb_path,
+            )
             protocol = _choice(
                 fb_raw.get("protocol", "midicraft-v2"),
                 f"{fb_path}.protocol",
                 {"midicraft-v2"},
             )
+            led_enabled = _bool(fb_raw.get("enabled", True), f"{fb_path}.enabled")
+            frame_interval_ms = _int(
+                fb_raw.get("frame_interval_ms", 20), f"{fb_path}.frame_interval_ms"
+            )
+            if not 1 <= frame_interval_ms <= 500:
+                raise ConfigError(
+                    f"{fb_path}.frame_interval_ms", "muss zwischen 1 und 500 liegen"
+                )
             led_notes_raw = fb_raw.get("led_notes")
             led_notes: tuple[int, ...] | None = None
             if led_notes_raw is not None:
@@ -1119,7 +1135,9 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
                     seen_led_notes.add(note)
                     parsed.append(note)
                 led_notes = tuple(parsed)
-            led_feedback = LedFeedbackProfile(protocol, led_notes)
+            led_feedback = LedFeedbackProfile(
+                protocol, led_notes, led_enabled, frame_interval_ms
+            )
 
         if not controls:
             derived: dict[str, str] = {}
