@@ -10,7 +10,7 @@ import logging
 import signal
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 from . import PRODUCT_NAME, __version__
 from .activity import (
@@ -33,6 +33,7 @@ from .device_learn import DeviceLearnManager
 from .midi_input import MidiManager, list_midi_devices
 from .network import NetworkManagerBackend, NetworkService, PendingStore
 from .playback import PlaybackRouter
+from .topology import ExecutorTopology
 from .recovery import (
     MONITOR_INTERVAL as RECOVERY_MONITOR_INTERVAL,
     RecoveryBackend,
@@ -266,8 +267,14 @@ def _led_step(
     client: Ma2Client,
     midi: MidiManager,
     holder: dict,
+    on_release: Callable[[str], None] | None = None,
 ) -> None:
-    """Reconcile ASL LED output over ``MidiManager`` without opening a second fd."""
+    """Reconcile ASL LED output over ``MidiManager`` without opening a second fd.
+
+    ``on_release`` is told the device name whenever ``[led]`` hands the
+    buttons back to the device (``9F 7F 7E``), which can blank LEDs that the
+    executor feedback drives on the same device.
+    """
 
     current: LedOutput | None = holder.get("led")
     if not config.led.enabled:
@@ -276,6 +283,8 @@ def _led_step(
             holder.clear()
             client.set_led(None)
             LOGGER.info("LED-Ausgabe deaktiviert")
+            if on_release is not None:
+                on_release(current.device_name)
         return
 
     name = _resolve_led_device_name(config)
@@ -309,6 +318,8 @@ def _led_step(
     led.open()
     led.enable()
     led.apply_mode(client.screen_encoder_active)
+    if current is not None and on_release is not None:
+        on_release(current.device_name)
     holder.clear()
     holder.update(
         {
@@ -327,11 +338,12 @@ async def _led_loop(
     client: Ma2Client,
     midi: MidiManager,
     holder: dict,
+    on_release: Callable[[str], None] | None = None,
 ) -> None:
     """Keep ``[led]`` synchronised with hot-reloads and MIDI replugs."""
 
     while True:
-        _led_step(engine.config, client, midi, holder)
+        _led_step(engine.config, client, midi, holder, on_release)
         await asyncio.sleep(1.0)
 
 
@@ -456,7 +468,8 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
     store = ConfigStore(config, engine, _config_paths(config), client=client)
     learn = LearnManager(config)
     device_learn = DeviceLearnManager(config)
-    playback = PlaybackRouter(engine, client)
+    topology = ExecutorTopology()
+    playback = PlaybackRouter(engine, client, topology=topology)
 
     def _release_for_learn(dev: str | None) -> None:
         send = client.authenticated or client.dry_run
@@ -481,7 +494,9 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
     midi.set_send_hook(
         lambda device, data: activity.record_tx(device, "midi", describe_midi(data))
     )
-    feedback = ExecutorFeedback(config, client, midi, dry_run=dry_run)
+    feedback = ExecutorFeedback(
+        config, client, midi, dry_run=dry_run, topology=topology
+    )
     client.add_connection_lost_callback(feedback.reset)
     led_holder: dict = {}
     store.add_activate_hook(hid.set_config)
@@ -493,7 +508,7 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
         lambda cfg: logging.getLogger().setLevel(cfg.logging.level.upper())
     )
     store.add_activate_hook(
-        lambda cfg: _led_step(cfg, client, midi, led_holder)
+        lambda cfg: _led_step(cfg, client, midi, led_holder, feedback.resend_device)
     )
 
     stop = asyncio.Event()
@@ -506,7 +521,8 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
 
     await client.start()
     led_task = asyncio.create_task(
-        _led_loop(engine, client, midi, led_holder), name="ma2pi-led"
+        _led_loop(engine, client, midi, led_holder, feedback.resend_device),
+        name="ma2pi-led",
     )
     def _modifier_led(control: str, pressed: bool) -> None:
         led = led_holder.get("led")

@@ -256,10 +256,13 @@ Only controls with a button target in `[mapping.playbacks]` are polled. Bank
 overrides — both `[mapping.device_banks]` and alternate profile banks — are not
 followed yet; feedback uses the first (bank 1) note binding. A `page =
 "current"` target is requested with `pageIndex = -1`, so the LEDs follow page
-changes on the console. The colour is taken from the `bC`/`bdC` fields of the
-response and mapped to the closest of the 13 MIDIcraft palette colours. Pure
-black counts as "no colour" for that field; if `bdC` is unusable too, the
-fallback applies.
+changes on the console (the console answers with the placeholder `iPage = 0`;
+a fixed page `N` is answered with `iPage = N`). The colour is taken from the `bC`/`bdC` fields of the
+response and mapped to the closest of the 13 base palette colours (white to
+pink); the colour temperatures `cto` and `ctb` are never picked by distance,
+only by name in `fallback_color` or an `asl-mk2` colour table. Pure black
+counts as "no colour" for that field; if `bdC` is unusable too, the fallback
+applies.
 
 Polling stops while the Web Remote session is down. After a reconnect and after
 a MIDI device is replugged, all LED states are re-sent. `--dry-run` logs the
@@ -268,15 +271,19 @@ stopped one dark (or off); nothing is interpolated, so faders have no feedback.
 
 ### `[profiles.<name>.led_feedback]`
 
-Declares that a profile's controls drive LEDs. Validation only accepts the
-protocol it implements:
+Declares that a profile's controls drive LEDs and how the device encodes them.
+Each profile picks its own protocol, so a MIDICRAFT controller and an ASL can
+run side by side:
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `protocol` | string | `"midicraft-v2"` | Currently the only accepted value. |
+| `protocol` | string | `"midicraft-v2"` | `"midicraft-v2"` or `"asl-mk2"`. |
 | `led_notes` | array of ints | all profile notes with a button target | Notes that actually have an LED. Controls on other notes are never lit. |
 | `enabled` | bool | `true` | Per-device switch. `false` leaves this device's LEDs untouched while other devices keep their feedback. |
 | `frame_interval_ms` | int (1–500) | `20` | Minimum gap between two LED frames sent to this device. |
+| `bright_level` | int (0–127) | `127` | `asl-mk2` only: brightness of a running executor. |
+| `dark_level` | int (0–127) | `25` | `asl-mk2` only: brightness of a stopped executor with `off_state = "dark"`. |
+| `colors` | table | see below | `asl-mk2` only: palette name → ASL colour index (0–127). |
 
 ```toml
 [profiles.midicraft-enc.led_feedback]
@@ -293,22 +300,47 @@ output buffer for more than 2 s, output to that device is paused with one
 warning and resumes in full once the device has been reopened. Input from the
 device is unaffected.
 
-`midicraft-v2` sends note-on on channel 1 with the note of the button and a
-velocity that encodes mode and colour:
+`midicraft-v2` sends note-on on the bank channel with the note of the button
+and a velocity that encodes mode and colour. The layout is the one the
+official Midicraft plugin uses and was confirmed on the ENC (velocity 15 shows
+dark CTB):
 
 | Velocity | Meaning |
 | --- | --- |
 | `0` | off |
-| `1–13` | static dark, palette index added |
-| `15–27` | static bright, palette index added |
-| `43–55` | flashing dark/off (not used) |
-| `124–127` | colour defined in the device menu (not used) |
+| `1–15` | static dark, palette index added (`1 + index`) |
+| `17–31` | static bright, palette index added (`17 + index`) |
+| `33–47`, `49–63`, `65–79` | complementary, flashing, device feedback (not used) |
 
-Palette order: white, red, orange, yellow, yellow-green, green, sea-green,
-cyan, lavender, blue, violet, magenta, pink. Configuration uses the names
-without hyphens (`yellowgreen`, `seagreen`) for `fallback_color` and in the
-`[led]` section. The encoder clicks (notes 55–59) and the faders of the
-MIDICRAFT.ENC have no LEDs and therefore stay dark.
+Palette order (index 0–14): white, red, orange, yellow, yellow-green, green,
+sea-green, cyan, lavender, blue, violet, magenta, pink, CTO, CTB.
+Configuration uses lower-case names without hyphens (`yellowgreen`,
+`seagreen`, `cto`, `ctb`) for `fallback_color` and colour tables. The encoder
+clicks (notes 55–59) and the faders of the MIDICRAFT.ENC have no LEDs and
+therefore stay dark.
+
+`asl-mk2` sends `9F 7F 7F` once after the device was opened, then per LED two
+note-ons on the button's note: channel 1 carries the brightness, channel 2 the
+ASL colour index. The index is RGB with two bits per channel
+(`16·R + 4·G + B`, each 0–3; bit 6 is ignored, so 63 and 127 are both white).
+The default table was checked on the device: white 127, red 48, orange 52,
+yellow 60, yellowgreen 44, green 12, seagreen 14, cyan 15, lavender 43,
+blue 3, violet 35, magenta 51, pink 59, cto 62, ctb 47. `colors` overrides
+single entries:
+
+```toml
+[profiles.asl-mk2-e4b3.led_feedback]
+protocol = "asl-mk2"
+led_notes = [9, 10, 11]
+colors = { blue = 80 }
+```
+
+A button LED belongs to one function. The notes used by `[led]` (`note`,
+`fine_note`, `nipple_note` on the `[led]` device) cannot be feedback targets at
+the same time; `--check-config` rejects such a configuration and names both
+fields. On the ASL MK2-E4B3 only the three buttons (notes 9–11) have LEDs and
+`[led]` uses all of them by default, so executor feedback on the ASL needs
+`[led] enabled = false` (or the button's playback target removed).
 
 ### `[devices.<name>]`
 
@@ -559,6 +591,27 @@ relative encoders are never accelerated.
 
 Executor feedback for LED-capable button targets is described in
 `[feedback]`; a fader target still has no feedback and no PickUp.
+
+### `[mapping]`: wide executors
+
+A wide (combined) executor covers several slots; the console then has no
+separate executor for the covered slots. On the Floating tile (executors from
+101) the covered slot has no button either: the Web Remote sends the leading
+`execIndex` with `buttonId 0` when you click the right half. `ma2pi` reads this
+from the console and does the same: a button target on a covered Floating slot
+(for example Exec 115 behind the 2-wide Exec 114) presses the leading executor,
+button 1. In the fader view (executors up to 100) every slot of a wide executor
+keeps its own executor, buttons and fader, so nothing is redirected there.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `combined_executors` | `"auto"` or `"off"` | `"auto"` | `auto` polls the executors of all playback targets and resolves covered Floating slots; `off` sends every target unchanged and polls nothing. |
+| `topology_interval_ms` | int | `2000` | Poll interval, `500…10000`, while `[feedback]` is off. With feedback on, `[feedback] interval_ms` applies and the same answers serve LEDs and topology. |
+
+Until the first answer has arrived, targets are sent unchanged. The LED of a
+covered slot mirrors the leading executor. A playback target whose executor does
+not exist on the polled page is logged once as a warning (control, page,
+executor).
 
 ### `[mapping.device_banks.<device>]`
 

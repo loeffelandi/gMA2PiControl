@@ -285,7 +285,8 @@ async def test_feedback_polls_and_resets_on_disconnect(config):
         items_type = frame["itemsType"][0]
         return {
             "responseType": "playbacks",
-            "iPage": 1,
+            # Measured: page N is answered with iPage N, "current" (-1) with 0.
+            "iPage": frame["pageIndex"] + 1,
             "itemGroups": [
                 {
                     "itemsType": items_type,
@@ -331,5 +332,91 @@ async def test_feedback_polls_and_resets_on_disconnect(config):
         await client._handle_disconnect("test")
         assert feedback._last == {}
     finally:
+        await client.shutdown()
+        await server.stop()
+
+
+async def test_covered_floating_slot_presses_the_leading_executor(make_config):
+    """Bank-3 style target on Exec 115 behind the 2-wide Exec 114 of page 2."""
+
+    import json
+    from pathlib import Path
+
+    from ma2pi.feedback import ExecutorFeedback
+    from ma2pi.playback import PlaybackRouter
+    from ma2pi.topology import ExecutorTopology
+
+    wide = json.loads(
+        (Path(__file__).parent / "fixtures" / "playbacks" / "page2_button.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    def answer(frame):
+        page, items_type = frame["pageIndex"], frame["itemsType"][0]
+        if page == 1 and items_type == 3:
+            return wide
+        start, count = frame["startIndex"][0], frame["itemsCount"][0]
+        return {
+            "responseType": "playbacks",
+            "iPage": page + 1,
+            "itemGroups": [
+                {
+                    "itemsType": items_type,
+                    "items": [[{"iExec": start + i, "isRun": False} for i in range(count)]],
+                }
+            ],
+        }
+
+    def mutate(data):
+        data["mapping"]["playbacks"]["mc_click_1"] = {
+            "page": 2,
+            "executor": 115,
+            "kind": "button",
+            "button": 1,
+        }
+
+    server = await MockMa2Server().start()
+    server.playbacks = answer
+    cfg = client_config(make_config(mutate), server.port)
+    client = Ma2Client(cfg)
+    engine = MappingEngine(cfg, client)
+    topology = ExecutorTopology()
+    router = PlaybackRouter(engine, client, topology=topology)
+    midi = type("Midi", (), {"open_devices": {}, "send": lambda *a: True})()
+    feedback = ExecutorFeedback(cfg, client, midi, topology=topology)
+    client.add_connection_lost_callback(feedback.reset)
+    try:
+        await client.start()
+        await wait_until(lambda: client.authenticated)
+
+        # Before the first answer the target is sent unchanged.
+        router.handle(InputEvent("key", "mc_click_1", 1, "midicraft-enc"))
+        router.handle(InputEvent("key", "mc_click_1", 0, "midicraft-enc"))
+
+        await asyncio.wait_for(feedback.step(), timeout=5.0)
+        assert topology.resolve(2, 115).covered is True
+
+        router.handle(InputEvent("key", "mc_click_1", 1, "midicraft-enc"))
+        router.handle(InputEvent("key", "mc_click_1", 0, "midicraft-enc"))
+        await wait_until(
+            lambda: len(
+                [f for f in server.frames if f.get("requestType") == "playbacks_userInput"]
+            )
+            >= 4
+        )
+        inputs = [
+            (f["execIndex"], f["buttonId"], f["pressed"])
+            for f in server.frames
+            if f.get("requestType") == "playbacks_userInput"
+        ]
+        assert inputs == [
+            (114, 0, True),
+            (114, 0, False),
+            (113, 0, True),
+            (113, 0, False),
+        ]
+    finally:
+        router.cleanup(send=False)
         await client.shutdown()
         await server.stop()

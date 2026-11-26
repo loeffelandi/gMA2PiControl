@@ -352,6 +352,24 @@ async def test_store_roundtrips_led_feedback_fields_and_keeps_others(tmp_path):
     assert again.frame_interval_ms == 50
 
 
+def test_redacted_config_roundtrips_asl_feedback(make_config):
+    def mutate(data):
+        data["profiles"]["asl-mk2-e4b3"]["led_feedback"] = {
+            "protocol": "asl-mk2",
+            "dark_level": 10,
+            "colors": {"blue": 80},
+        }
+
+    cfg = make_config(mutate)
+    payload = redacted_config(cfg)
+    feedback = payload["profiles"]["asl-mk2-e4b3"]["led_feedback"]
+    assert feedback["protocol"] == "asl-mk2"
+    assert (feedback["bright_level"], feedback["dark_level"]) == (127, 10)
+    assert feedback["colors"] == {"blue": 80}
+    midicraft = payload["profiles"]["midicraft-enc"]["led_feedback"]
+    assert "colors" not in midicraft and "dark_level" not in midicraft
+
+
 def test_redacted_config_preserves_custom_encoder_dot_control_id(make_config):
     from ma2pi.config import parse_config
 

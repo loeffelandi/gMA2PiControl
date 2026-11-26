@@ -17,7 +17,7 @@ from typing import Any, Mapping
 from . import hardkeys
 from .acceleration import ValueAccelerationSettings
 from .led_output import LedSettings, parse_color
-from .feedback import PALETTE
+from .feedback import PALETTE, build_feedback_targets
 
 DEFAULT_CONFIG_PATHS = (
     Path("/var/lib/ma2pi/config.toml"),
@@ -195,13 +195,18 @@ class LedFeedbackProfile:
     ``notes`` restricts feedback to notes that actually have an LED; ``None``
     means every button note of the profile is LED-capable.  ``enabled`` turns
     the output off for this profile only, and ``frame_interval_ms`` is the
-    minimum gap between two LED frames sent to one device.
+    minimum gap between two LED frames sent to one device.  ``bright_level``,
+    ``dark_level`` and ``colors`` (palette name, colour index) only apply to
+    ``asl-mk2``.
     """
 
     protocol: str = "midicraft-v2"
     notes: tuple[int, ...] | None = None
     enabled: bool = True
     frame_interval_ms: int = 20
+    bright_level: int = 127
+    dark_level: int = 25
+    colors: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,6 +366,11 @@ class MappingSettings:
         default_factory=ValueAccelerationSettings
     )
     resolution: ResolutionSettings = field(default_factory=ResolutionSettings)
+    #: ``auto`` reads wide (combined) executors from the console and resolves
+    #: covered slots; ``off`` sends every target unchanged.
+    combined_executors: str = "auto"
+    #: Poll gap for the executor topology while LED feedback is off.
+    topology_interval_ms: int = 2000
 
 
 @dataclass(frozen=True, slots=True)
@@ -1152,14 +1162,47 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
             fb_raw = _table(item["led_feedback"], fb_path)
             _reject_unknown(
                 fb_raw,
-                {"protocol", "led_notes", "enabled", "frame_interval_ms"},
+                {
+                    "protocol",
+                    "led_notes",
+                    "enabled",
+                    "frame_interval_ms",
+                    "bright_level",
+                    "dark_level",
+                    "colors",
+                },
                 fb_path,
             )
             protocol = _choice(
                 fb_raw.get("protocol", "midicraft-v2"),
                 f"{fb_path}.protocol",
-                {"midicraft-v2"},
+                {"midicraft-v2", "asl-mk2"},
             )
+            if protocol != "asl-mk2":
+                for key in ("bright_level", "dark_level", "colors"):
+                    if key in fb_raw:
+                        raise ConfigError(
+                            f"{fb_path}.{key}", "gilt nur für protocol = \"asl-mk2\""
+                        )
+            levels: dict[str, int] = {}
+            for key, default in (("bright_level", 127), ("dark_level", 25)):
+                level = _int(fb_raw.get(key, default), f"{fb_path}.{key}")
+                if not 0 <= level <= 127:
+                    raise ConfigError(f"{fb_path}.{key}", "muss zwischen 0 und 127 liegen")
+                levels[key] = level
+            colors_raw = _table(fb_raw.get("colors", {}), f"{fb_path}.colors")
+            colors: list[tuple[str, int]] = []
+            for color_name, raw_index in colors_raw.items():
+                color_path = f"{fb_path}.colors.{color_name}"
+                if color_name not in PALETTE:
+                    raise ConfigError(
+                        color_path,
+                        f"unbekannte Farbe {color_name!r}; erlaubt: {', '.join(PALETTE)}",
+                    )
+                color_index = _int(raw_index, color_path)
+                if not 0 <= color_index <= 127:
+                    raise ConfigError(color_path, "muss zwischen 0 und 127 liegen")
+                colors.append((color_name, color_index))
             led_enabled = _bool(fb_raw.get("enabled", True), f"{fb_path}.enabled")
             frame_interval_ms = _int(
                 fb_raw.get("frame_interval_ms", 20), f"{fb_path}.frame_interval_ms"
@@ -1191,7 +1234,13 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
                     parsed.append(note)
                 led_notes = tuple(parsed)
             led_feedback = LedFeedbackProfile(
-                protocol, led_notes, led_enabled, frame_interval_ms
+                protocol,
+                led_notes,
+                led_enabled,
+                frame_interval_ms,
+                levels["bright_level"],
+                levels["dark_level"],
+                tuple(colors),
             )
 
         if not controls:
@@ -1531,6 +1580,8 @@ def _parse_mapping(
             "encoder_acceleration",
             "value_acceleration",
             "encoder_resolution",
+            "combined_executors",
+            "topology_interval_ms",
         },
         path,
     )
@@ -1602,6 +1653,18 @@ def _parse_mapping(
     acceleration = _parse_acceleration(data.get("encoder_acceleration"))
     value_acceleration = _parse_value_acceleration(data.get("value_acceleration"))
     resolution = _parse_resolution(data.get("encoder_resolution"), modifiers)
+    combined_executors = _choice(
+        data.get("combined_executors", "auto"),
+        f"{path}.combined_executors",
+        {"auto", "off"},
+    )
+    topology_interval_ms = _int(
+        data.get("topology_interval_ms", 2000), f"{path}.topology_interval_ms"
+    )
+    if not 500 <= topology_interval_ms <= 10000:
+        raise ConfigError(
+            f"{path}.topology_interval_ms", "muss zwischen 500 und 10000 liegen"
+        )
 
     playbacks_raw = _table(data.get("playbacks", {}), f"{path}.playbacks")
     playbacks: dict[str, PlaybackMapping] = {}
@@ -1819,6 +1882,8 @@ def _parse_mapping(
         acceleration=acceleration,
         value_acceleration=value_acceleration,
         resolution=resolution,
+        combined_executors=combined_executors,
+        topology_interval_ms=topology_interval_ms,
     )
 
 
@@ -1986,7 +2051,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
         )
     screen_helper_settings = _parse_screen_helper(data.get("screen_helper", {}))
 
-    return AppConfig(
+    config = AppConfig(
         schema_version=version,
         ma2=ma2,
         devices=devices,
@@ -2003,6 +2068,38 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
         screen_helper=screen_helper_settings,
         source_path=source_path,
     )
+    _check_led_note_owner(config)
+    return config
+
+
+def _check_led_note_owner(config: AppConfig) -> None:
+    """A button LED belongs either to a fixed ``[led]`` function or to feedback."""
+
+    led = config.led
+    if not led.enabled:
+        return
+    device = led.device
+    if device is None:
+        midi_devices = [
+            name for name, item in config.devices.items() if item.backend == "midi"
+        ]
+        if len(midi_devices) != 1:
+            return
+        device = midi_devices[0]
+    owners = {
+        led.note: "led.note",
+        led.fine_note: "led.fine_note",
+        led.nipple_note: "led.nipple_note",
+    }
+    targets, _ = build_feedback_targets(config)
+    for target in targets:
+        owner = owners.get(target.note) if target.device == device else None
+        if owner is not None:
+            raise ConfigError(
+                owner,
+                f"Note {target.note} an {device} ist zugleich LED-Feedback-Ziel "
+                f"mapping.playbacks.{target.control}",
+            )
 
 
 def load_config(path: str | Path) -> AppConfig:

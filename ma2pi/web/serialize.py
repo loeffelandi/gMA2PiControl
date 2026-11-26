@@ -171,6 +171,11 @@ def _serialize_profile(profile: ProfileConfig) -> dict[str, Any]:
         }
         if fb.notes is not None:
             fb_out["led_notes"] = list(fb.notes)
+        if fb.protocol == "asl-mk2":
+            fb_out["bright_level"] = fb.bright_level
+            fb_out["dark_level"] = fb.dark_level
+            if fb.colors:
+                fb_out["colors"] = dict(fb.colors)
         out["led_feedback"] = fb_out
     return out
 
@@ -295,6 +300,8 @@ def redacted_config(config: AppConfig) -> dict[str, Any]:
                 for ctrl, entry in mapping.playbacks.items()
             },
             "device_banks": device_banks_out,
+            "combined_executors": mapping.combined_executors,
+            "topology_interval_ms": mapping.topology_interval_ms,
             "encoder_acceleration": {
                 "curve": acc.curve,
                 "window": acc.window,

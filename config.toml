@@ -366,6 +366,19 @@ id = 4
 note = 4
 direction = 1
 
+# Executor-Feedback an der ASL (Protokoll asl-mk2). Nur die drei Tasten
+# (Noten 9-11) haben LEDs, und [led] belegt sie standardmaessig; eine Taste
+# kann nur eine Funktion haben. Zum Aktivieren [led] enabled = false setzen
+# und die Tasten in [mapping.playbacks] auf Executoren legen. Der Farbindex
+# ist RGB mit 2 Bit je Kanal (16*R + 4*G + B); die Voreinstellung fuer alle
+# 15 Palettenfarben ist am Geraet geprueft, colors ueberschreibt einzelne.
+#[profiles.asl-mk2-e4b3.led_feedback]
+#protocol = "asl-mk2"
+#led_notes = [9, 10, 11]
+#bright_level = 127
+#dark_level = 25
+#colors = { green = 8 }
+
 # MIDICRAFT ENC (USB 04d8:e78c). Noten sind geraetespezifisch und werden
 # ueber den Learn-Modus pro Bank erfasst; Bank 1 enthaelt die Messwerte.
 [profiles.midicraft-enc]
@@ -611,6 +624,17 @@ protocol = "midicraft-v2"
 led_notes = [65, 66, 67, 68, 69, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84]
 enabled = false
 frame_interval_ms = 20
+
+[mapping]
+# Breite (kombinierte) Executoren: "auto" liest sie aus der Konsole. Eine Taste
+# auf einen von einer breiten Floating-Kachel überdeckten Slot (z. B. Exec 115
+# hinter dem 2 breiten Exec 114) löst dann den führenden Executor aus, weil die
+# MA für den überdeckten Slot keinen eigenen Executor kennt. "off" sendet jedes
+# Ziel unverändert.
+combined_executors = "auto"
+# Abfrageintervall der Executor-Topologie, solange die LED-Rückmeldung aus ist
+# (500-10000 ms). Mit LED-Rückmeldung gilt [feedback] interval_ms.
+topology_interval_ms = 2000
 
 [mapping.modifiers]
 # Logo-Taste wirkt als MA-Modifier (MA + andere Taste, z. B. MA + Encoder

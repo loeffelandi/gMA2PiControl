@@ -227,3 +227,149 @@ def test_find_led_target_never_falls_back_to_unrelated_midi_device(monkeypatch, 
     )
     monkeypatch.setattr(main_mod, "list_midi_devices", lambda: [unrelated])
     assert main_mod._find_led_target(cfg) is None
+
+def test_led_step_reports_every_release_of_the_buttons(make_config):
+    from ma2pi.__main__ import _led_step
+    from ma2pi.ma2_client import Ma2Client
+
+    class FakeMidi:
+        def __init__(self) -> None:
+            self.open_devices = {"asl-mk2-e4b3": "/dev/snd/midiC3D0"}
+            self.open_generations = {"asl-mk2-e4b3": 1}
+            self.sent: list[tuple[str, bytes]] = []
+
+        def send(self, device: str, data: bytes) -> bool:
+            self.sent.append((device, data))
+            return True
+
+    cfg_on = make_config(lambda d: d["led"].update({"enabled": True, "device": "asl-mk2-e4b3"}))
+    cfg_color = make_config(
+        lambda d: d["led"].update(
+            {"enabled": True, "device": "asl-mk2-e4b3", "attribute_color": 127}
+        )
+    )
+    cfg_off = make_config(lambda d: d["led"].update({"enabled": False, "device": "asl-mk2-e4b3"}))
+    client = Ma2Client(cfg_on, dry_run=True)
+    midi = FakeMidi()
+    holder: dict = {}
+    released: list[str] = []
+
+    _led_step(cfg_on, client, midi, holder, released.append)
+    assert released == []  # first start: nothing was released
+
+    _led_step(cfg_on, client, midi, holder, released.append)
+    assert released == []  # unchanged: no-op
+
+    _led_step(cfg_color, client, midi, holder, released.append)
+    assert released == ["asl-mk2-e4b3"]  # re-init sent DISABLE first
+
+    _led_step(cfg_off, client, midi, holder, released.append)
+    assert released == ["asl-mk2-e4b3", "asl-mk2-e4b3"]
+
+
+def test_resend_device_sends_the_full_state_again(make_config):
+    from ma2pi.feedback import ExecutorFeedback, RequestBlock, parse_playbacks
+
+    class Midi:
+        open_devices = {"midicraft-enc": "/dev/snd/midiC4D0"}
+
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        def send(self, device: str, data: bytes) -> bool:
+            self.sent.append(data)
+            return True
+
+    def enable(data):
+        data["profiles"]["midicraft-enc"]["led_feedback"]["enabled"] = True
+
+    midi = Midi()
+    feedback = ExecutorFeedback(make_config(enable), None, midi)
+    snapshot = parse_playbacks(
+        {
+            "iPage": 0,  # "current" is answered with the placeholder 0
+            "itemGroups": [
+                {"itemsType": 2, "items": [[{"iExec": 0, "isRun": True, "bC": "#ff0000"}]]}
+            ],
+        }
+    )
+    block = RequestBlock("current", 0, 5, 2, 2)
+    feedback._apply(snapshot, block)
+    feedback.pump()
+    first = list(midi.sent)
+    feedback._apply(snapshot, block)
+    feedback.pump()
+    assert midi.sent == first  # unchanged state is not repeated
+
+    feedback.resend_device("midicraft-enc")
+    feedback._apply(snapshot, block)
+    feedback.pump()
+    assert midi.sent[len(first):][:1] == first[:1]
+
+
+def test_fixed_leds_and_feedback_share_one_asl_device(make_config):
+    from ma2pi.__main__ import _led_step
+    from ma2pi.feedback import ExecutorFeedback, RequestBlock, parse_playbacks
+    from ma2pi.ma2_client import Ma2Client
+
+    class FakeMidi:
+        def __init__(self) -> None:
+            self.open_devices = {"asl-mk2-e4b3": "/dev/snd/midiC3D0"}
+            self.open_generations = {"asl-mk2-e4b3": 1}
+            self.sent: list[bytes] = []
+
+        def send(self, device: str, data: bytes) -> bool:
+            assert device == "asl-mk2-e4b3"
+            self.sent.append(data)
+            return True
+
+    def mutate(data):
+        # [led] keeps the mode LED on note 9; the Fine button (note 10) goes
+        # to executor feedback instead.
+        data["led"].update(
+            {"enabled": True, "device": "asl-mk2-e4b3", "fine_note": 12, "nipple_note": 13}
+        )
+        data["profiles"]["asl-mk2-e4b3"]["led_feedback"] = {
+            "protocol": "asl-mk2",
+            "led_notes": [10],
+        }
+        data["mapping"]["playbacks"]["asl_button_2"] = {
+            "page": "current",
+            "executor": 1,
+            "kind": "button",
+        }
+
+    cfg = make_config(mutate)
+    midi = FakeMidi()
+    client = Ma2Client(cfg, dry_run=True)
+    holder: dict = {}
+    feedback = ExecutorFeedback(cfg, client, midi)
+    _led_step(cfg, client, midi, holder, feedback.resend_device)
+
+    snapshot = parse_playbacks(
+        {
+            "iPage": 0,  # "current" is answered with the placeholder 0
+            "itemGroups": [
+                {"itemsType": 2, "items": [[{"iExec": 0, "isRun": True, "bC": "#ff0000"}]]}
+            ],
+        }
+    )
+    feedback._apply(snapshot, RequestBlock("current", 0, 5, 2, 2))
+    feedback.pump()
+    assert midi.sent[-1].endswith(bytes((0x90, 10, 127, 0x91, 10, 48)))
+
+    # A mode change only touches the mode LED (note 9).
+    before = len(midi.sent)
+    holder["led"].set_mode_color(True)
+    mode_frames = midi.sent[before:]
+    assert mode_frames
+    assert all(bytes((0x90, 10)) not in frame and bytes((0x91, 10)) not in frame
+               for frame in mode_frames)
+
+    # Switching feedback off writes nothing, so the fixed LEDs stay as they are.
+    before = len(midi.sent)
+    feedback.set_config(
+        make_config(lambda d: (mutate(d), d["feedback"].__setitem__("enabled", False)))
+    )
+    feedback.pump()
+    assert len(midi.sent) == before

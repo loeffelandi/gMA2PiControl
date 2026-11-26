@@ -407,6 +407,173 @@ def test_unpaired_key_up_after_connection_loss_sends_no_orphan_release(make_conf
     client.buttons.clear()
     client.commands.clear()
 
+    # Physical key release arrives after session reset -> must NOT send release or Page!
     assert router.handle(InputEvent("key", "bt_button", 0, "banktest", 2)) is True
     assert client.buttons == []
     assert client.commands == []
+
+
+# --- Kombinierte (breite) Executoren -------------------------------------
+
+
+def _combined_router(make_config, entries, topology):
+    config = _config(make_config, entries)
+    client = FakeClient()
+    router = PlaybackRouter(MappingEngine(config, client), client, topology=topology)
+    return router, client
+
+
+def _floating_topology(page: int = 2):
+    from ma2pi.topology import REGION_FLOATING, ExecutorTopology
+
+    topology = ExecutorTopology()
+    present = [n for n in range(101, 121) if n != 115]
+    topology.update(page, REGION_FLOATING, {114: 2}, present, range(101, 121))
+    return topology
+
+
+def test_covered_floating_slot_presses_the_leading_executor(make_config):
+    router, client = _combined_router(
+        make_config,
+        {"mc_click_1": {"page": 2, "executor": 115, "kind": "button", "button": 1}},
+        _floating_topology(),
+    )
+
+    assert router.handle(InputEvent("key", "mc_click_1", 1, "midicraft")) is True
+    assert router.handle(InputEvent("key", "mc_click_1", 0, "midicraft")) is True
+    # Exec 114 is the lead, the Floating tile has a single button (buttonId 0).
+    assert client.buttons == [(2, 114, 1, True), (2, 114, 1, False)]
+
+
+def test_covered_slot_ignores_the_mapped_button_number(make_config):
+    router, client = _combined_router(
+        make_config,
+        {"mc_click_1": {"page": 2, "executor": 115, "kind": "button", "button": 3}},
+        _floating_topology(),
+    )
+
+    router.handle(InputEvent("key", "mc_click_1", 1, "midicraft"))
+    router.handle(InputEvent("key", "mc_click_1", 0, "midicraft"))
+
+    assert client.buttons == [(2, 114, 1, True), (2, 114, 1, False)]
+
+
+def test_release_follows_the_pressed_target_after_topology_change(make_config):
+    from ma2pi.topology import REGION_FLOATING
+
+    topology = _floating_topology()
+    router, client = _combined_router(
+        make_config,
+        {"mc_click_1": {"page": 2, "executor": 115, "kind": "button", "button": 1}},
+        topology,
+    )
+
+    router.handle(InputEvent("key", "mc_click_1", 1, "midicraft"))
+    topology.update(2, REGION_FLOATING, {}, range(101, 121), range(101, 121))
+    router.handle(InputEvent("key", "mc_click_1", 0, "midicraft"))
+
+    assert client.buttons == [(2, 114, 1, True), (2, 114, 1, False)]
+
+
+def test_lead_and_uncovered_floating_slots_are_unchanged(make_config):
+    router, client = _combined_router(
+        make_config,
+        {
+            "mc_click_1": {"page": 2, "executor": 114, "kind": "button", "button": 1},
+            "mc_click_2": {"page": 2, "executor": 116, "kind": "button", "button": 1},
+        },
+        _floating_topology(),
+    )
+
+    for control in ("mc_click_1", "mc_click_2"):
+        router.handle(InputEvent("key", control, 1, "midicraft"))
+        router.handle(InputEvent("key", control, 0, "midicraft"))
+
+    assert client.buttons == [
+        (2, 114, 1, True),
+        (2, 114, 1, False),
+        (2, 116, 1, True),
+        (2, 116, 1, False),
+    ]
+
+
+def test_unknown_topology_sends_the_mapped_executor(make_config):
+    from ma2pi.topology import ExecutorTopology
+
+    router, client = _combined_router(
+        make_config,
+        {"mc_click_1": {"page": 2, "executor": 115, "kind": "button", "button": 1}},
+        ExecutorTopology(),
+    )
+
+    router.handle(InputEvent("key", "mc_click_1", 1, "midicraft"))
+    router.handle(InputEvent("key", "mc_click_1", 0, "midicraft"))
+
+    assert client.buttons == [(2, 115, 1, True), (2, 115, 1, False)]
+
+
+def test_other_page_is_not_redirected(make_config):
+    router, client = _combined_router(
+        make_config,
+        {"mc_click_1": {"page": 3, "executor": 115, "kind": "button", "button": 1}},
+        _floating_topology(page=2),
+    )
+
+    router.handle(InputEvent("key", "mc_click_1", 1, "midicraft"))
+
+    assert client.buttons == [(3, 115, 1, True)]
+
+
+def test_covered_fader_slot_keeps_its_own_executor(make_config):
+    from ma2pi.topology import REGION_FADER, ExecutorTopology
+
+    # Page 3, Exec 6 (1-based) is two wide in the fader view; Exec 7 is covered.
+    topology = ExecutorTopology()
+    topology.update(3, REGION_FADER, {6: 2}, [5, 6, 8, 9, 10], range(6, 11))
+    router, client = _combined_router(
+        make_config,
+        {
+            "mc_click_1": {"page": 3, "executor": 7, "kind": "button", "button": 3},
+            "mc_encoder_1": {"page": 3, "executor": 7, "kind": "fader"},
+        },
+        topology,
+    )
+
+    router.handle(InputEvent("key", "mc_click_1", 1, "midicraft"))
+    router.handle(InputEvent("key", "mc_click_1", 0, "midicraft"))
+    router.handle(InputEvent("value", "mc_encoder_1", 0.5, "midicraft"))
+
+    assert client.buttons == [(3, 7, 3, True), (3, 7, 3, False)]
+    assert client.faders == [(3, 7, 0.5)]
+
+
+def test_router_without_topology_is_unchanged(make_config):
+    config = _config(
+        make_config,
+        {"mc_click_1": {"page": 2, "executor": 115, "kind": "button", "button": 1}},
+    )
+    client = FakeClient()
+    router = PlaybackRouter(MappingEngine(config, client), client)
+
+    router.handle(InputEvent("key", "mc_click_1", 1, "midicraft"))
+
+    assert client.buttons == [(2, 115, 1, True)]
+
+
+def test_combined_executors_off_sends_the_mapped_executor(make_config):
+    def mutate(data):
+        data["mapping"]["playbacks"] = {
+            "mc_click_1": {"page": 2, "executor": 115, "kind": "button", "button": 1}
+        }
+        data["mapping"]["combined_executors"] = "off"
+
+    config = make_config(mutate)
+    client = FakeClient()
+    router = PlaybackRouter(
+        MappingEngine(config, client), client, topology=_floating_topology()
+    )
+
+    router.handle(InputEvent("key", "mc_click_1", 1, "midicraft"))
+    router.handle(InputEvent("key", "mc_click_1", 0, "midicraft"))
+
+    assert client.buttons == [(2, 115, 1, True), (2, 115, 1, False)]

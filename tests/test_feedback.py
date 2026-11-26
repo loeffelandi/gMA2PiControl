@@ -16,6 +16,7 @@ from ma2pi.feedback import (
     nearest_color,
     palette_index,
     parse_playbacks,
+    response_page,
 )
 
 
@@ -88,6 +89,9 @@ class FakeMidi:
 def _enable_enc_leds(data: dict) -> None:
     # The shipped example keeps the ENC LEDs off until they are measured.
     data["profiles"]["midicraft-enc"]["led_feedback"]["enabled"] = True
+    # These tests cover the LED path alone; polling every playback target for
+    # the executor topology is tested in test_poller.py.
+    data["mapping"]["combined_executors"] = "off"
 
 
 @pytest.fixture
@@ -114,7 +118,8 @@ def config(make_config):
 def test_palette_order_matches_firmware():
     assert PALETTE[0] == "white"
     assert PALETTE[6] == "seagreen"
-    assert PALETTE[-1] == "pink"
+    assert PALETTE[12] == "pink"
+    assert PALETTE[13:] == ("cto", "ctb")
     assert palette_index("seagreen") == 6
 
 
@@ -129,11 +134,13 @@ def test_nearest_color_exact_and_approximate():
 
 
 def test_led_velocity_table():
-    # bright = 15 + index, dark = 1 + index, off = 0
-    assert led_velocity(True, 6, "dark", 0) == 21
+    # bright = 17 + index, dark = 1 + index, off = 0 (measured on the ENC)
+    assert led_velocity(True, 6, "dark", 0) == 23
     assert led_velocity(False, 0, "dark", 0) == 1
+    assert led_velocity(True, 0, "dark", 0) == 17
+    assert led_velocity(False, 14, "dark", 0) == 15
     assert led_velocity(False, 0, "off", 0) == 0
-    assert led_velocity(True, None, "dark", 0) == 15
+    assert led_velocity(True, None, "dark", 0) == 17
     assert led_velocity(False, None, "dark", 0) == 1
 
 
@@ -210,7 +217,7 @@ def test_targets_require_led_feedback_and_button_kind(make_config):
 
 async def test_step_sends_only_changes(config):
     page1 = playbacks_payload(
-        1,
+        0,
         2,
         [
             {"iExec": 0, "isRun": True, "bC": "#ff0000"},
@@ -221,7 +228,7 @@ async def test_step_sends_only_changes(config):
         ],
     )
     page1_buttons = playbacks_payload(
-        1,
+        0,
         3,
         [
             {"iExec": 100, "isRun": True, "bC": "#0000ff"},
@@ -244,13 +251,13 @@ async def test_step_sends_only_changes(config):
         ("current", 100, 5, 3, 3),
     ]
     sent = {frame[1]: frame[2] for _, frame in midi.sent}
-    assert sent[65] == 16  # row1_1: exec 1 running, red
+    assert sent[65] == 18  # row1_1: exec 1 running, red
     assert sent[66] == 2  # row1_2: exec 2 stopped dark, red
-    assert sent[67] == 20  # row1_3: exec 3 running, green
+    assert sent[67] == 22  # row1_3: exec 3 running, green
     assert sent[68] == 1  # row1_4: exec 4 stopped, black -> white dark
     assert sent[69] == 2  # row1_5: exec 5 stopped dark, red
-    assert sent[75] == 16  # row2_1 same executor as row1_1
-    assert sent[80] == 24  # row3_1: exec 101 running, blue
+    assert sent[75] == 18  # row2_1 same executor as row1_1
+    assert sent[80] == 26  # row3_1: exec 101 running, blue
     assert sent[81] == 10  # row3_2: exec 102 stopped dark, blue
     assert len(midi.sent) == 15
     for _, frame in midi.sent:
@@ -269,8 +276,8 @@ async def _noop_sleep(_delay: float) -> None:
 
 
 async def test_step_resets_after_connection_loss(config):
-    payload = playbacks_payload(1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
-    other = playbacks_payload(1, 3, [{"iExec": 100, "isRun": False, "bC": "#ff0000"}])
+    payload = playbacks_payload(0, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
+    other = playbacks_payload(0, 3, [{"iExec": 100, "isRun": False, "bC": "#ff0000"}])
     client = FakeClient([payload, other])
     clock = FakeClock()
     midi = FakeMidi(clock=clock)
@@ -286,8 +293,8 @@ async def test_step_resets_after_connection_loss(config):
 
 
 async def test_step_without_device_keeps_state_for_retry(config):
-    payload = playbacks_payload(1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
-    other = playbacks_payload(1, 3, [{"iExec": 100, "isRun": True, "bC": "#ff0000"}])
+    payload = playbacks_payload(0, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
+    other = playbacks_payload(0, 3, [{"iExec": 100, "isRun": True, "bC": "#ff0000"}])
     client = FakeClient([payload, other])
     clock = FakeClock()
     midi = FakeMidi(accept=False, clock=clock)
@@ -307,13 +314,13 @@ async def test_step_times_out_without_answer(config):
         config, client, FakeMidi(), sleep=_noop_sleep, timeout=0.01
     )
     await feedback.step()
-    assert feedback._pending == {}
+    assert feedback._poller._pending == {}
     assert len(client.requests) == 2
 
 
 async def test_dry_run_only_logs(config, caplog):
-    payload = playbacks_payload(1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
-    other = playbacks_payload(1, 3, [{"iExec": 100, "isRun": True, "bC": "#ff0000"}])
+    payload = playbacks_payload(0, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
+    other = playbacks_payload(0, 3, [{"iExec": 100, "isRun": True, "bC": "#ff0000"}])
     client = FakeClient([payload, other])
     midi = FakeMidi()
     feedback = ExecutorFeedback(config, client, midi, dry_run=True, sleep=_noop_sleep)
@@ -359,7 +366,7 @@ def test_apply_skips_other_pages(config):
     ]
     feedback._last.clear()
     midi = feedback._midi
-    payload = playbacks_payload(1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
+    payload = playbacks_payload(2, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
     snapshot = parse_playbacks(payload)
     assert snapshot is not None
     feedback._apply(snapshot, RequestBlock(2, 0, 5, 2, 2))
@@ -393,17 +400,21 @@ def test_executor_100_is_requested_from_the_page_view(make_config):
 def test_apply_ignores_fixed_page_snapshot_for_current_targets(config):
     feedback = ExecutorFeedback(config, FakeClient([]), FakeMidi())
     feedback._targets = [LedTarget("mc_row1_1", "midicraft", 65, "current", 1)]
-    payload = playbacks_payload(
-        1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}]
-    )
-    snapshot = parse_playbacks(payload)
-    assert snapshot is not None
 
-    feedback._apply(snapshot, RequestBlock(2, 0, 5, 2, 2))
+    # A fixed page answers with iPage = page, never with the placeholder 0.
+    fixed = parse_playbacks(
+        playbacks_payload(2, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
+    )
+    assert fixed is not None
+    feedback._apply(fixed, RequestBlock(2, 0, 5, 2, 2))
     feedback.pump()
     assert feedback._midi.sent == []
 
-    feedback._apply(snapshot, RequestBlock("current", 0, 5, 2, 2))
+    current = parse_playbacks(
+        playbacks_payload(0, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
+    )
+    assert current is not None
+    feedback._apply(current, RequestBlock("current", 0, 5, 2, 2))
     feedback.pump()
     assert len(feedback._midi.sent) == 1
 
@@ -439,20 +450,20 @@ async def test_step_drops_answer_for_a_different_block(config):
     await _wait_for(lambda: len(client.requests) == 1)
     # A bottom-button answer arrives while the page block is in flight.
     client.playback_responses.put_nowait(
-        playbacks_payload(1, 3, [{"iExec": 100, "isRun": True, "bC": "#ff0000"}])
+        playbacks_payload(0, 3, [{"iExec": 100, "isRun": True, "bC": "#ff0000"}])
     )
     client.playback_responses.put_nowait(
-        playbacks_payload(1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
+        playbacks_payload(0, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
     )
     await _wait_for(lambda: len(client.requests) == 2)
     client.playback_responses.put_nowait(
-        playbacks_payload(1, 3, [{"iExec": 100, "isRun": True, "bC": "#0000ff"}])
+        playbacks_payload(0, 3, [{"iExec": 100, "isRun": True, "bC": "#0000ff"}])
     )
     await asyncio.wait_for(task, timeout=2.0)
     drain(feedback, clock)
 
     sent = {frame[1]: frame[2] for _, frame in midi.sent}
-    assert sent == {65: 16, 75: 16, 80: 24}
+    assert sent == {65: 18, 75: 18, 80: 26}
 
 
 async def test_late_answer_does_not_stall_later_cycles(config):
@@ -469,22 +480,22 @@ async def test_late_answer_does_not_stall_later_cycles(config):
     # A late bottom-button answer from the previous cycle must not shift the
     # queue and stall block A of this cycle.
     client.playback_responses.put_nowait(
-        playbacks_payload(1, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}])
+        playbacks_payload(0, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}])
     )
     task = asyncio.create_task(feedback.step())
     await _wait_for(lambda: len(client.requests) == 3)
     client.playback_responses.put_nowait(
-        playbacks_payload(1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
+        playbacks_payload(0, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
     )
     await _wait_for(lambda: len(client.requests) == 4)
     client.playback_responses.put_nowait(
-        playbacks_payload(1, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}])
+        playbacks_payload(0, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}])
     )
     await asyncio.wait_for(task, timeout=2.0)
     drain(feedback, clock)
 
     sent = {frame[1]: frame[2] for _, frame in midi.sent}
-    assert sent == {65: 16, 75: 16, 80: 10}
+    assert sent == {65: 18, 75: 18, 80: 10}
 
 
 async def test_run_follows_config_reloads(make_config, config):
@@ -521,7 +532,7 @@ async def test_reset_drains_stale_responses(config):
     midi = FakeMidi()
     feedback = ExecutorFeedback(config, client, midi, sleep=_noop_sleep)
     client.playback_responses.put_nowait(
-        playbacks_payload(1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
+        playbacks_payload(0, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
     )
     feedback.reset()
     assert client.playback_responses.empty()
@@ -529,16 +540,18 @@ async def test_reset_drains_stale_responses(config):
 
 async def test_current_targets_follow_page_change(config):
     page_one = playbacks_payload(
-        1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}]
+        0, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}]
     )
     buttons_one = playbacks_payload(
-        1, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}]
+        0, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}]
     )
+    # The console keeps answering "current" with the placeholder iPage 0 after
+    # a master page change; only the content differs.
     page_two = playbacks_payload(
-        2, 2, [{"iExec": 0, "isRun": False, "bC": "#ff0000"}]
+        0, 2, [{"iExec": 0, "isRun": False, "bC": "#ff0000"}]
     )
     buttons_two = playbacks_payload(
-        2, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}]
+        0, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}]
     )
     client = FakeClient([page_one, buttons_one, page_two, buttons_two])
     clock = FakeClock()
@@ -548,8 +561,8 @@ async def test_current_targets_follow_page_change(config):
     await feedback.step()
     drain(feedback, clock)
     sent = {frame[1]: frame[2] for _, frame in midi.sent}
-    assert sent[65] == 16
-    assert sent[75] == 16
+    assert sent[65] == 18
+    assert sent[75] == 18
 
     midi.sent.clear()
     await feedback.step()
@@ -564,7 +577,7 @@ def _frames_for(midi: FakeMidi, note: int) -> list[bytes]:
 
 def _running_snapshot(running: bool):
     snapshot = parse_playbacks(
-        playbacks_payload(1, 2, [{"iExec": 0, "isRun": running, "bC": "#ff0000"}])
+        playbacks_payload(0, 2, [{"iExec": 0, "isRun": running, "bC": "#ff0000"}])
     )
     assert snapshot is not None
     return snapshot
@@ -577,7 +590,7 @@ def test_frames_are_paced_per_device(config):
     block = RequestBlock("current", 0, 5, 2, 2)
     snapshot = parse_playbacks(
         playbacks_payload(
-            1,
+            0,
             2,
             [{"iExec": n, "isRun": True, "bC": "#ff0000"} for n in range(5)],
         )
@@ -692,7 +705,7 @@ def test_frame_interval_comes_from_profile(make_config):
     block = RequestBlock("current", 0, 5, 2, 2)
     snapshot = parse_playbacks(
         playbacks_payload(
-            1, 2, [{"iExec": n, "isRun": True, "bC": "#ff0000"} for n in range(3)]
+            0, 2, [{"iExec": n, "isRun": True, "bC": "#ff0000"} for n in range(3)]
         )
     )
     assert snapshot is not None
@@ -705,7 +718,7 @@ def test_frame_interval_comes_from_profile(make_config):
 
 def test_parse_playbacks_skips_unknown_running_state():
     payload = playbacks_payload(
-        1,
+        0,
         2,
         [{"iExec": 0}, {"iExec": 1, "isRun": True, "bC": "#ff0000"}],
     )
@@ -715,16 +728,26 @@ def test_parse_playbacks_skips_unknown_running_state():
     assert snapshot.executors[2].running is True
 
 
+def test_response_page_follows_the_measured_console_basis():
+    assert response_page("current") == 0
+    assert response_page(1) == 1
+    assert response_page(3) == 3
+
+
 def test_belongs_to_block_checks_page_type_and_range():
-    snapshot = parse_playbacks(
-        playbacks_payload(2, 2, [{"iExec": 0, "isRun": True}])
-    )
-    assert snapshot is not None
-    assert _belongs_to_block(snapshot, RequestBlock(3, 0, 5, 2, 2)) is True
-    assert _belongs_to_block(snapshot, RequestBlock("current", 0, 5, 2, 2)) is True
-    assert _belongs_to_block(snapshot, RequestBlock(2, 0, 5, 2, 2)) is False
-    assert _belongs_to_block(snapshot, RequestBlock(3, 5, 5, 2, 2)) is False
-    assert _belongs_to_block(snapshot, RequestBlock(3, 0, 5, 3, 3)) is False
+    fixed = parse_playbacks(playbacks_payload(3, 2, [{"iExec": 0, "isRun": True}]))
+    assert fixed is not None
+    assert _belongs_to_block(fixed, RequestBlock(3, 0, 5, 2, 2)) is True
+    assert _belongs_to_block(fixed, RequestBlock("current", 0, 5, 2, 2)) is False
+    assert _belongs_to_block(fixed, RequestBlock(2, 0, 5, 2, 2)) is False
+    assert _belongs_to_block(fixed, RequestBlock(4, 0, 5, 2, 2)) is False
+    assert _belongs_to_block(fixed, RequestBlock(3, 5, 5, 2, 2)) is False
+    assert _belongs_to_block(fixed, RequestBlock(3, 0, 5, 3, 3)) is False
+
+    current = parse_playbacks(playbacks_payload(0, 2, [{"iExec": 0, "isRun": True}]))
+    assert current is not None
+    assert _belongs_to_block(current, RequestBlock("current", 0, 5, 2, 2)) is True
+    assert _belongs_to_block(current, RequestBlock(1, 0, 5, 2, 2)) is False
 
 
 async def test_run_pumps_queued_frames_at_device_pace(config):
@@ -832,17 +855,17 @@ def test_bank_channel_and_empty_page_turn_leds_off(make_config):
     feedback = ExecutorFeedback(cfg, FakeClient([]), midi, clock=clock)
     block = RequestBlock("current", 0, 10, 2, 2)
     snap_on = parse_playbacks(
-        playbacks_payload(1, 2, [{"iExec": 5, "isRun": True, "bC": "#ff0000"}])
+        playbacks_payload(0, 2, [{"iExec": 5, "isRun": True, "bC": "#ff0000"}])
     )
     assert snap_on is not None
     feedback._apply(snap_on, block)
     drain(feedback, clock)
-    assert any(frame == bytes((0x91, 65, 16)) for _, frame in midi.sent)
+    assert any(frame == bytes((0x91, 65, 18)) for _, frame in midi.sent)
 
     # Empty page (unassigned executors with no `isRun`) turns lit LEDs off!
     midi.sent.clear()
     snap_empty = parse_playbacks(
-        playbacks_payload(2, 2, [{"iExec": i} for i in range(10)])
+        playbacks_payload(0, 2, [{"iExec": i} for i in range(10)])
     )
     assert snap_empty is not None
     feedback._apply(snap_empty, block)
@@ -850,17 +873,197 @@ def test_bank_channel_and_empty_page_turn_leds_off(make_config):
     assert any(frame == bytes((0x91, 65, 0)) for _, frame in midi.sent)
 
 
+def test_nearest_color_never_picks_colour_temperatures():
+    assert nearest_color("#ffb070") not in (palette_index("cto"), palette_index("ctb"))
+    assert nearest_color("#c8dcff") not in (palette_index("cto"), palette_index("ctb"))
+
+
+def test_fallback_ctb_is_sent_as_dark_ctb(make_config):
+    cfg = make_config(lambda data: data["feedback"].__setitem__("fallback_color", "ctb"))
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(cfg, FakeClient([]), midi, clock=clock)
+    snapshot = parse_playbacks(playbacks_payload(0, 2, [{"iExec": 0, "isRun": False}]))
+    assert snapshot is not None
+    feedback._apply(snapshot, RequestBlock("current", 0, 5, 2, 2))
+    drain(feedback, clock)
+    assert _frames_for(midi, 65) == [bytes((65, 15))]
+
+
+def _with_asl_feedback(**fields):
+    def mutate(data):
+        data["profiles"]["asl-mk2-e4b3"]["led_feedback"] = {
+            "protocol": "asl-mk2",
+            **fields,
+        }
+        data["mapping"]["playbacks"]["asl_click_1"] = {
+            "page": "current",
+            "executor": 1,
+            "kind": "button",
+        }
+
+    return mutate
+
+
+def _asl_frames(midi: FakeMidi) -> list[bytes]:
+    return [frame for device, frame in midi.sent if device == "asl-mk2-e4b3"]
+
+
+def _exec1(running: bool, color: str = "#ff0000"):
+    snapshot = parse_playbacks(
+        playbacks_payload(0, 2, [{"iExec": 0, "isRun": running, "bC": color}])
+    )
+    assert snapshot is not None
+    return snapshot
+
+
+def _asl_feedback(make_config, **fields):
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    midi.open_devices = {
+        "midicraft-enc": "/dev/snd/midiC4D0",
+        "asl-mk2-e4b3": "/dev/snd/midiC3D0",
+    }
+    feedback = ExecutorFeedback(
+        make_config(_with_asl_feedback(**fields)), FakeClient([]), midi, clock=clock
+    )
+    return feedback, midi, clock
+
+
+def test_asl_running_executor_sends_brightness_and_colour(make_config):
+    feedback, midi, clock = _asl_feedback(make_config)
+    feedback._apply(_exec1(True), RequestBlock("current", 0, 5, 2, 2))
+    drain(feedback, clock)
+    assert _asl_frames(midi) == [
+        bytes((0x9F, 0x7F, 0x7F, 0x90, 5, 127, 0x91, 5, 48)),
+    ]
+
+
+def test_asl_stopped_executor_is_dark_and_preamble_is_not_repeated(make_config):
+    feedback, midi, clock = _asl_feedback(make_config)
+    block = RequestBlock("current", 0, 5, 2, 2)
+    feedback._apply(_exec1(True), block)
+    drain(feedback, clock)
+    feedback._apply(_exec1(False), block)
+    drain(feedback, clock)
+    assert _asl_frames(midi)[-1] == bytes((0x90, 5, 25, 0x91, 5, 48))
+
+
+def test_asl_off_state_off_sends_zero_brightness(make_config):
+    def mutate(data):
+        _with_asl_feedback()(data)
+        data["feedback"]["off_state"] = "off"
+
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(make_config(mutate), FakeClient([]), midi, clock=clock)
+    feedback._apply(_exec1(False), RequestBlock("current", 0, 5, 2, 2))
+    drain(feedback, clock)
+    assert _asl_frames(midi)[-1].endswith(bytes((0x90, 5, 0, 0x91, 5, 48)))
+
+
+def test_asl_default_index_for_magenta(make_config):
+    feedback, midi, clock = _asl_feedback(make_config)
+    feedback._apply(_exec1(True, "#ff00ff"), RequestBlock("current", 0, 5, 2, 2))
+    drain(feedback, clock)
+    assert _asl_frames(midi)[-1].endswith(bytes((0x91, 5, 51)))
+
+
+def test_asl_default_table_covers_the_palette_as_rgb222():
+    from ma2pi.feedback import ASL_DEFAULT_COLORS
+
+    assert set(ASL_DEFAULT_COLORS) == set(PALETTE)
+    for name, index in ASL_DEFAULT_COLORS.items():
+        assert 0 <= index <= 127, name
+    # Index = 16*R + 4*G + B with two bits per channel; bit 6 is ignored.
+    assert ASL_DEFAULT_COLORS["red"] & 0x3F == 0b110000
+    assert ASL_DEFAULT_COLORS["green"] & 0x3F == 0b001100
+    assert ASL_DEFAULT_COLORS["blue"] & 0x3F == 0b000011
+    assert ASL_DEFAULT_COLORS["white"] & 0x3F == 0b111111
+
+
+def test_asl_colour_table_overrides_index(make_config):
+    feedback, midi, clock = _asl_feedback(make_config, colors={"blue": 80})
+    feedback._apply(_exec1(True, "#0000ff"), RequestBlock("current", 0, 5, 2, 2))
+    drain(feedback, clock)
+    assert _asl_frames(midi)[-1].endswith(bytes((0x91, 5, 80)))
+
+
+def test_asl_preamble_is_sent_again_after_reopen(make_config):
+    feedback, midi, clock = _asl_feedback(make_config)
+    block = RequestBlock("current", 0, 5, 2, 2)
+    feedback._sync_devices()
+    feedback._apply(_exec1(True), block)
+    drain(feedback, clock)
+    midi.open_devices = {**midi.open_devices, "asl-mk2-e4b3": "/dev/snd/midiC5D0"}
+    feedback._sync_devices()
+    feedback._apply(_exec1(True), block)
+    drain(feedback, clock)
+    frames = _asl_frames(midi)
+    assert len(frames) == 2
+    assert all(frame.startswith(bytes((0x9F, 0x7F, 0x7F))) for frame in frames)
+
+
+def test_two_devices_use_their_own_protocol(make_config):
+    feedback, midi, clock = _asl_feedback(make_config)
+    feedback._apply(_exec1(True), RequestBlock("current", 0, 5, 2, 2))
+    drain(feedback, clock)
+    enc = [frame for device, frame in midi.sent if device == "midicraft-enc"]
+    asl = _asl_frames(midi)
+    assert bytes((0x90, 65, 18)) in enc
+    assert all(len(frame) == 3 for frame in enc)
+    assert all(0x9F not in frame[:1] for frame in enc)
+    assert asl and all(len(frame) in (6, 9) for frame in asl)
+
+
+def test_asl_frames_keep_the_frame_interval(make_config):
+    def mutate(data):
+        _with_asl_feedback(frame_interval_ms=20)(data)
+        data["mapping"]["playbacks"]["asl_click_2"] = {
+            "page": "current",
+            "executor": 2,
+            "kind": "button",
+        }
+
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(make_config(mutate), FakeClient([]), midi, clock=clock)
+    snapshot = parse_playbacks(
+        playbacks_payload(
+            0,
+            2,
+            [
+                {"iExec": 0, "isRun": True, "bC": "#ff0000"},
+                {"iExec": 1, "isRun": True, "bC": "#ff0000"},
+            ],
+        )
+    )
+    assert snapshot is not None
+    feedback._apply(snapshot, RequestBlock("current", 0, 5, 2, 2))
+    drain(feedback, clock)
+    times = [
+        moment
+        for (device, _), moment in zip(midi.sent, midi.times)
+        if device == "asl-mk2-e4b3"
+    ]
+    assert len(times) == 2
+    assert times[1] - times[0] >= 0.02 - 1e-9
+
+
 async def test_current_page_stays_active_when_switching_to_watched_fixed_page(make_config):
     def mutate(data):
         data["mapping"]["playbacks"]["mc_row1_2"]["page"] = 2
 
     cfg = make_config(mutate)
+    # Cycle 1: current page is 1, fixed page 2 is also watched
     c1_cur = playbacks_payload(0, 2, [{"iExec": 0, "isRun": False, "bC": "#ff0000"}])
     c1_btn = playbacks_payload(0, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}])
-    c1_fix = playbacks_payload(1, 2, [{"iExec": 1, "isRun": False, "bC": "#00ff00"}])
-    c2_cur = playbacks_payload(1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
-    c2_btn = playbacks_payload(1, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}])
-    c2_fix = playbacks_payload(1, 2, [{"iExec": 1, "isRun": False, "bC": "#00ff00"}])
+    c1_fix = playbacks_payload(2, 2, [{"iExec": 1, "isRun": False, "bC": "#00ff00"}])
+    # Cycle 2: operator switches master page on console to Page 2; the "current"
+    # answer keeps its placeholder iPage 0.
+    c2_cur = playbacks_payload(0, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
+    c2_btn = playbacks_payload(0, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}])
+    c2_fix = playbacks_payload(2, 2, [{"iExec": 1, "isRun": False, "bC": "#00ff00"}])
 
     client = FakeClient([c1_cur, c1_btn, c1_fix, c2_cur, c2_btn, c2_fix])
     clock = FakeClock()

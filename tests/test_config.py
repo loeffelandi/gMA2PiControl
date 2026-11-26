@@ -1025,6 +1025,127 @@ def test_lua_hardkey_codes_required_for_device_bank_keys(make_config):
         make_config(mutate)
 
 
+def _asl_feedback(data, **fields):
+    data["profiles"]["asl-mk2-e4b3"]["led_feedback"] = {"protocol": "asl-mk2", **fields}
+
+
+def _asl_playback(data, control="asl_click_1"):
+    data["mapping"]["playbacks"][control] = {
+        "page": "current",
+        "executor": 6,
+        "kind": "button",
+    }
+
+
+def test_fallback_color_accepts_colour_temperatures(make_config):
+    cfg = make_config(lambda data: data["feedback"].__setitem__("fallback_color", "ctb"))
+    assert cfg.feedback.fallback_color == "ctb"
+
+
+def test_asl_led_feedback_defaults(make_config):
+    cfg = make_config(lambda data: _asl_feedback(data))
+    feedback = cfg.profiles["asl-mk2-e4b3"].led_feedback
+    assert feedback.protocol == "asl-mk2"
+    assert (feedback.bright_level, feedback.dark_level) == (127, 25)
+    assert feedback.colors == ()
+
+
+def test_asl_led_feedback_levels_and_colors(make_config):
+    cfg = make_config(
+        lambda data: _asl_feedback(
+            data, bright_level=100, dark_level=10, colors={"blue": 80, "ctb": 90}
+        )
+    )
+    feedback = cfg.profiles["asl-mk2-e4b3"].led_feedback
+    assert (feedback.bright_level, feedback.dark_level) == (100, 10)
+    assert dict(feedback.colors) == {"blue": 80, "ctb": 90}
+
+
+@pytest.mark.parametrize(
+    ("fields", "field"),
+    [
+        ({"dark_level": 200}, "dark_level"),
+        ({"bright_level": -1}, "bright_level"),
+        ({"colors": {"chartreuse": 3}}, "colors.chartreuse"),
+        ({"colors": {"blue": 128}}, "colors.blue"),
+    ],
+)
+def test_asl_led_feedback_rejects_bad_values(make_config, fields, field):
+    with pytest.raises(ConfigError, match=f"led_feedback.{field}"):
+        make_config(lambda data: _asl_feedback(data, **fields))
+
+
+@pytest.mark.parametrize("key", ["colors", "bright_level", "dark_level"])
+def test_asl_only_keys_rejected_for_midicraft(make_config, key):
+    value = {"blue": 80} if key == "colors" else 100
+
+    def mutate(data):
+        data["profiles"]["midicraft-enc"]["led_feedback"][key] = value
+
+    with pytest.raises(ConfigError, match=f"led_feedback.{key}"):
+        make_config(mutate)
+
+
+def test_led_note_owner_rejects_feedback_on_fixed_led(make_config):
+    def mutate(data):
+        _asl_feedback(data)
+        _asl_playback(data)
+        data["led"]["nipple_note"] = 5
+
+    with pytest.raises(ConfigError, match="led.nipple_note") as info:
+        make_config(mutate)
+    assert "mapping.playbacks.asl_click_1" in str(info.value)
+
+
+def test_led_note_owner_allows_separate_notes(make_config):
+    def mutate(data):
+        _asl_feedback(data)
+        _asl_playback(data)
+
+    cfg = make_config(mutate)
+    assert cfg.led.nipple_note == 11
+
+
+def test_led_note_owner_ignores_disabled_led(make_config):
+    def mutate(data):
+        _asl_feedback(data)
+        _asl_playback(data)
+        data["led"]["nipple_note"] = 5
+        data["led"]["enabled"] = False
+
+    assert make_config(mutate).led.enabled is False
+
+
+def test_commented_asl_feedback_example_is_valid(raw_config):
+    import copy
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[1] / "config.toml").read_text(encoding="utf-8")
+    start = text.index("#[profiles.asl-mk2-e4b3.led_feedback]")
+    lines = []
+    for line in text[start:].splitlines():
+        if not line.startswith("#"):
+            break
+        lines.append(line[1:])
+    example = tomllib.loads("\n".join(lines))
+
+    data = copy.deepcopy(raw_config)
+    data["profiles"]["asl-mk2-e4b3"]["led_feedback"] = example["profiles"][
+        "asl-mk2-e4b3"
+    ]["led_feedback"]
+    data["led"]["enabled"] = False
+    for control in ("asl_bank", "asl_button_2", "asl_button_3"):
+        data["mapping"]["playbacks"][control] = {
+            "page": "current",
+            "executor": 6,
+            "kind": "button",
+        }
+    cfg = parse_config(data, source_path="<test>")
+    feedback = cfg.profiles["asl-mk2-e4b3"].led_feedback
+    assert feedback.protocol == "asl-mk2"
+    assert feedback.notes == (9, 10, 11)
+
+
 def test_banked_auto_encoder_ids_skip_later_explicit_profile_ids(raw_config):
     import copy
 
@@ -1042,3 +1163,46 @@ def test_banked_auto_encoder_ids_skip_later_explicit_profile_ids(raw_config):
     wheel = cfg.profiles["banked-wheel"].controls[0]
     assert wheel.encoder_id not in {1, 2, 3, 4}
     assert wheel.encoder_id == 5
+
+
+def test_combined_executors_defaults(make_config):
+    config = make_config()
+
+    assert config.mapping.combined_executors == "auto"
+    assert config.mapping.topology_interval_ms == 2000
+
+
+def test_combined_executors_accepts_valid_values(make_config):
+    def mutate(data):
+        data["mapping"]["combined_executors"] = "off"
+        data["mapping"]["topology_interval_ms"] = 500
+
+    config = make_config(mutate)
+
+    assert config.mapping.combined_executors == "off"
+    assert config.mapping.topology_interval_ms == 500
+
+
+def test_combined_executors_rejects_unknown_value(make_config):
+    def mutate(data):
+        data["mapping"]["combined_executors"] = "maybe"
+
+    with pytest.raises(ConfigError, match="mapping.combined_executors"):
+        make_config(mutate)
+
+
+@pytest.mark.parametrize("value", [100, 499, 10001])
+def test_topology_interval_is_limited(make_config, value):
+    def mutate(data):
+        data["mapping"]["topology_interval_ms"] = value
+
+    with pytest.raises(ConfigError, match="mapping.topology_interval_ms"):
+        make_config(mutate)
+
+
+def test_topology_interval_must_be_an_integer(make_config):
+    def mutate(data):
+        data["mapping"]["topology_interval_ms"] = "2000"
+
+    with pytest.raises(ConfigError, match="mapping.topology_interval_ms"):
+        make_config(mutate)

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 from .acceleration import ValueAccelerator
 from .events import InputEvent
 from .mapping import MappingEngine
+from .topology import FLOATING_START, ExecutorTopology
 
 LOGGER = logging.getLogger("ma2pi.playback")
 
@@ -38,10 +39,12 @@ class PlaybackRouter:
         client,
         *,
         clock: Callable[[], float] = time.monotonic,
+        topology: ExecutorTopology | None = None,
     ) -> None:
         self._engine = engine
         self._client = client
         self._clock = clock
+        self._topology = topology
         self._last_value: dict[tuple[str, int | str, int], float] = {}
         self._pressed: dict[tuple[str, str], _Target] = {}
         self._warned: set[tuple[str, str]] = set()
@@ -107,6 +110,38 @@ class PlaybackRouter:
             else (base.accelerated if base is not None else False)
         )
         return _Target(page, executor, kind, button, accelerated)
+
+    def _combined_enabled(self) -> bool:
+        mapping = self._engine.config.mapping
+        return getattr(mapping, "combined_executors", "auto") != "off"
+
+    def _follow_lead(self, target: _Target) -> _Target:
+        """Send a press on a covered Floating slot to the leading executor.
+
+        The Floating tile of a wide executor has a single button and the MA has
+        no executor for the covered slot, so the Web Remote sends the leading
+        ``execIndex`` with ``buttonId 0``.  The fader view is left alone: every
+        slot of a wide fader executor keeps its own executor, buttons and fader.
+        """
+
+        if (
+            self._topology is None
+            or target.kind != "button"
+            or target.executor < FLOATING_START
+            or not self._combined_enabled()
+        ):
+            return target
+        resolution = self._topology.resolve(target.page, target.executor)
+        if not resolution.covered:
+            return target
+        LOGGER.debug(
+            "Executor %d auf Page %s ist von %d überdeckt; Taste geht an %d",
+            target.executor,
+            target.page,
+            resolution.executor,
+            resolution.executor,
+        )
+        return replace(target, executor=resolution.executor, button=1)
 
     def _client_live(self) -> bool:
         return bool(
@@ -211,6 +246,7 @@ class PlaybackRouter:
                 return True
             pressed = event.value >= 0.5
             if pressed:
+                target = self._follow_lead(target)
                 self._pressed[(event.device, event.control)] = target
             self._client.playback_button(
                 target.page,

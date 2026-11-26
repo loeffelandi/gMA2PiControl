@@ -1,16 +1,19 @@
 """Executor feedback: poll playback state and drive controller LEDs.
 
-The MIDICRAFT controllers show an executor state as a note-on whose velocity
-encodes mode and colour (manual §8):
+Each MIDI profile picks its LED encoding with ``led_feedback.protocol``:
 
-* ``0``            off
-* ``1–13``         static dark, palette index added
-* ``15–27``        static bright, palette index added
-* ``43–55``        flashing dark/off
-* ``124–127``      colour defined in the device menu
+``midicraft-v2``
+    One note-on whose velocity encodes mode and colour, as the official
+    Midicraft plugin sends it and as measured on the ENC (2026-11-26):
+    ``0`` off, ``1 + index`` static dark, ``17 + index`` static bright, with
+    15 palette colours (index 0–14).  Flashing and complementary modes are
+    not used.
+``asl-mk2``
+    ``9F 7F 7F`` once after opening, then per LED two note-ons: channel 1
+    carries the brightness, channel 2 the device's colour index.
 
-This module only uses the first three ranges.  Colour and running state come
-from the Web Remote ``playbacks`` response (``isRun``, ``bC``/``bdC``).
+Colour and running state come from the Web Remote ``playbacks`` response
+(``isRun``, ``bC``/``bdC``).
 """
 
 from __future__ import annotations
@@ -19,10 +22,13 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Protocol
+
+from .led_output import ENABLE as ASL_ENABLE
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from .config import AppConfig
+    from .config import AppConfig, LedFeedbackProfile
+    from .topology import ExecutorTopology
 
 LOGGER = logging.getLogger("ma2pi.feedback")
 
@@ -41,8 +47,12 @@ PALETTE: tuple[str, ...] = (
     "violet",
     "magenta",
     "pink",
+    "cto",
+    "ctb",
 )
 
+#: Appearance colours are matched against these only; the colour
+#: temperatures CTO and CTB are chosen by name, never by distance.
 PALETTE_RGB: dict[str, tuple[int, int, int]] = {
     "white": (255, 255, 255),
     "red": (255, 0, 0),
@@ -59,8 +69,29 @@ PALETTE_RGB: dict[str, tuple[int, int, int]] = {
     "pink": (255, 128, 255),
 }
 
-#: Velocity base per LED mode.
-MODE_BASE: dict[str, int] = {"off": 0, "dark": 1, "bright": 15}
+#: Velocity base per LED mode (``midicraft-v2``).
+MODE_BASE: dict[str, int] = {"off": 0, "dark": 1, "bright": 17}
+
+#: ASL colour index per palette colour.  The index is RGB with two bits per
+#: channel (``16·R + 4·G + B``, bit 6 is ignored); every entry was checked on
+#: the device on 2026-11-26.
+ASL_DEFAULT_COLORS: dict[str, int] = {
+    "white": 127,
+    "red": 48,
+    "orange": 52,
+    "yellow": 60,
+    "yellowgreen": 44,
+    "green": 12,
+    "seagreen": 14,
+    "cyan": 15,
+    "lavender": 43,
+    "blue": 3,
+    "violet": 35,
+    "magenta": 51,
+    "pink": 59,
+    "cto": 62,
+    "ctb": 47,
+}
 
 #: MIDI status byte for note-on on channel 1.
 NOTE_ON = 0x90
@@ -101,6 +132,8 @@ def nearest_color(value: Any) -> int | None:
     best_index = 0
     best_distance = float("inf")
     for index, name in enumerate(PALETTE):
+        if name not in PALETTE_RGB:
+            continue
         distance = sum(
             (channel - target) ** 2
             for channel, target in zip(rgb, PALETTE_RGB[name])
@@ -127,6 +160,84 @@ def led_velocity(
     return MODE_BASE["dark"] + index
 
 
+#: What the feedback remembers per LED; compared to suppress repeats.
+LedState = int | tuple[int, int]
+
+
+class LedEncoder(Protocol):
+    #: Sent once before the first frame after a device was (re)opened.
+    preamble: bytes
+
+    def state(
+        self, running: bool, color: int | None, off_state: str, fallback: int
+    ) -> LedState: ...
+
+    def off(self) -> LedState: ...
+
+    def frame(self, channel: int, note: int, state: LedState) -> bytes: ...
+
+
+class MidicraftEncoder:
+    """``midicraft-v2``: one note-on on the bank channel."""
+
+    preamble = b""
+
+    def state(
+        self, running: bool, color: int | None, off_state: str, fallback: int
+    ) -> LedState:
+        return led_velocity(running, color, off_state, fallback)
+
+    def off(self) -> LedState:
+        return MODE_BASE["off"]
+
+    def frame(self, channel: int, note: int, state: LedState) -> bytes:
+        assert isinstance(state, int)
+        return bytes((NOTE_ON | ((channel - 1) & 0x0F), note, state))
+
+
+class AslEncoder:
+    """``asl-mk2``: brightness on channel 1, colour index on channel 2."""
+
+    preamble = ASL_ENABLE
+
+    def __init__(self, bright: int, dark: int, colors: Mapping[str, int]) -> None:
+        table = {**ASL_DEFAULT_COLORS, **colors}
+        self._indices = tuple(table[name] for name in PALETTE)
+        self._bright = bright
+        self._dark = dark
+
+    def state(
+        self, running: bool, color: int | None, off_state: str, fallback: int
+    ) -> LedState:
+        index = self._indices[fallback if color is None else color]
+        if running:
+            return (self._bright, index)
+        if off_state == "off":
+            return (0, index)
+        return (self._dark, index)
+
+    def off(self) -> LedState:
+        return (0, self._indices[0])
+
+    def frame(self, channel: int, note: int, state: LedState) -> bytes:
+        assert isinstance(state, tuple)
+        brightness, index = state
+        return bytes((NOTE_ON, note, brightness, NOTE_ON | 1, note, index))
+
+
+_MIDICRAFT = MidicraftEncoder()
+
+
+def encoder_for(feedback: "LedFeedbackProfile") -> LedEncoder:
+    """Return the LED encoder for a profile's ``led_feedback`` table."""
+
+    if feedback.protocol == "asl-mk2":
+        return AslEncoder(
+            feedback.bright_level, feedback.dark_level, dict(feedback.colors)
+        )
+    return _MIDICRAFT
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutorState:
     running: bool
@@ -142,6 +253,22 @@ class PlaybackSnapshot:
     executors: dict[int, ExecutorState]
     seen_executors: frozenset[int] = field(default_factory=frozenset)
     empty_executors: frozenset[int] = field(default_factory=frozenset)
+    #: Leading executor -> width, for every ``combinedItems > 1`` in the answer.
+    combined: Mapping[int, int] = field(default_factory=dict)
+
+    def lead_of(self, executor: int) -> int | None:
+        """Return the leading executor that covers ``executor``, if any.
+
+        A slot is covered when a wide executor reaches over it and the answer
+        has no item of its own for it.
+        """
+
+        if executor in self.seen_executors:
+            return None
+        for lead, width in self.combined.items():
+            if lead < executor < lead + width:
+                return lead
+        return None
 
 
 def _iter_items(items: Any) -> list[dict[str, Any]]:
@@ -169,6 +296,7 @@ def parse_playbacks(payload: dict[str, Any]) -> PlaybackSnapshot | None:
     executors: dict[int, ExecutorState] = {}
     seen_executors: set[int] = set()
     empty_executors: set[int] = set()
+    combined: dict[int, int] = {}
     items_type = 0
     for group in payload.get("itemGroups") or []:
         if not isinstance(group, dict):
@@ -183,6 +311,9 @@ def parse_playbacks(payload: dict[str, Any]) -> PlaybackSnapshot | None:
                 continue
             exec_num = index + 1
             seen_executors.add(exec_num)
+            width = item.get("combinedItems")
+            if isinstance(width, int) and not isinstance(width, bool) and width > 1:
+                combined[exec_num] = width
             if item.get("isEmpty") is True:
                 empty_executors.add(exec_num)
                 continue
@@ -205,6 +336,7 @@ def parse_playbacks(payload: dict[str, Any]) -> PlaybackSnapshot | None:
         executors,
         frozenset(seen_executors),
         frozenset(empty_executors),
+        combined,
     )
 
 
@@ -231,10 +363,22 @@ def _block_key(page: int | str, executor: int) -> tuple[int | str, int]:
     return (page, 100 if executor > 100 else 0)
 
 
+def response_page(page: int | str) -> int:
+    """Return the ``iPage`` the console answers a request for ``page`` with.
+
+    Measured on onPC 3.9: ``pageIndex N - 1`` (page ``N``) is answered with
+    ``iPage = N``; ``pageIndex = -1`` ("current") returns the data of the active
+    master page with the placeholder ``iPage = 0``.  The two ranges are disjoint,
+    so one comparison separates the answers of "current" and fixed pages.
+    """
+
+    return 0 if page == "current" else int(page)
+
+
 def _belongs_to_block(snapshot: PlaybackSnapshot, block: RequestBlock) -> bool:
     """Check that a response answers the given request block."""
 
-    if block.page != "current" and snapshot.page + 1 != block.page:
+    if snapshot.page != response_page(block.page):
         return False
     if snapshot.items_type and snapshot.items_type != block.items_type:
         return False
@@ -256,6 +400,19 @@ def _frame_intervals(config: "AppConfig") -> dict[str, float]:
     return result
 
 
+def _encoders(config: "AppConfig") -> dict[str, LedEncoder]:
+    """LED encoder per configured MIDI device with ``led_feedback``."""
+
+    result: dict[str, LedEncoder] = {}
+    for name, device in config.devices.items():
+        if device.backend != "midi":
+            continue
+        feedback = config.profiles[device.profile].led_feedback
+        if feedback is not None:
+            result[name] = encoder_for(feedback)
+    return result
+
+
 def _default_bank_size(config: "AppConfig", device_name: str) -> int:
     settings = config.mapping.device_banks.get(device_name)
     if settings is not None and settings.bank_size is not None:
@@ -272,9 +429,11 @@ def _default_bank_size(config: "AppConfig", device_name: str) -> int:
     return max(1, buttons)
 
 
-def _resolve_playback_for_bank(
+def resolve_playback_target(
     config: "AppConfig", device_name: str, bank_num: int, control: str
-) -> tuple[int | str, int] | None:
+) -> tuple[int | str, int, str] | None:
+    """Return ``(page, executor, kind)`` of a control in one bank, if it has one."""
+
     settings = config.mapping.device_banks.get(device_name)
     layer = settings.banks.get(bank_num) if settings is not None else None
     if layer is not None and control in layer.keys:
@@ -288,8 +447,6 @@ def _resolve_playback_for_bank(
         if override is not None and override.kind is not None
         else (base.kind if base is not None else "button")
     )
-    if kind != "button":
-        return None
     page = (
         override.page
         if override is not None and override.page is not None
@@ -309,7 +466,16 @@ def _resolve_playback_for_bank(
         and (layer is None or layer.ma_page is None)
     ):
         executor += (bank_num - 1) * _default_bank_size(config, device_name)
-    return page, executor
+    return page, executor, kind
+
+
+def _resolve_playback_for_bank(
+    config: "AppConfig", device_name: str, bank_num: int, control: str
+) -> tuple[int | str, int] | None:
+    resolved = resolve_playback_target(config, device_name, bank_num, control)
+    if resolved is None or resolved[2] != "button":
+        return None
+    return resolved[0], resolved[1]
 
 
 def build_feedback_targets(
@@ -377,6 +543,14 @@ def build_feedback_targets(
                     executor
                 )
 
+    return targets, blocks_from_ranges(ranges)
+
+
+def blocks_from_ranges(
+    ranges: Mapping[tuple[int | str, int], list[int]],
+) -> dict[tuple[int | str, int], RequestBlock]:
+    """Cut executor numbers per ``(page, region)`` into 5-aligned request blocks."""
+
     blocks: dict[tuple[int | str, int], RequestBlock] = {}
     for key, executors in ranges.items():
         page, boundary = key
@@ -386,7 +560,7 @@ def build_feedback_targets(
         count = (highest // 5) * 5 - start + 5
         items_type = 3 if boundary else 2
         blocks[key] = RequestBlock(page, start, count, items_type, items_type)
-    return targets, blocks
+    return blocks
 
 
 def _outbox_key(channel: int, note: int) -> int | tuple[int, int]:
@@ -412,24 +586,35 @@ class ExecutorFeedback:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         timeout: float | None = None,
+        topology: "ExecutorTopology | None" = None,
     ) -> None:
+        from .poller import PlaybackPoller
+        from .topology import ExecutorTopology
+
         self.config = config
         self._client = client
         self._midi = midi
         self._dry_run = dry_run
         self._clock = clock
         self._sleep = sleep
-        self._timeout_override = timeout
+        self.topology = topology if topology is not None else ExecutorTopology()
+        self._poller = PlaybackPoller(
+            config,
+            client,
+            self.topology,
+            on_answer=self._apply,
+            clock=clock,
+            timeout=timeout,
+        )
         self._targets: list[LedTarget] = []
         self._blocks: dict[tuple[int | str, int], RequestBlock] = {}
-        self._fixed_pages: frozenset[int] = frozenset()
-        self._known_current_page: int | None = None
-        self._last: dict[tuple[str, int] | tuple[str, int, int], int] = {}
-        self._pending: dict[tuple[int | str, int], float] = {}
+        self._last: dict[tuple[str, int] | tuple[str, int, int], LedState] = {}
         self._devices: dict[str, tuple[str, int]] = {}
-        self._outbox: dict[str, dict[int | tuple[int, int], int]] = {}
+        self._outbox: dict[str, dict[int | tuple[int, int], LedState]] = {}
         self._next_send: dict[str, float] = {}
         self._intervals: dict[str, float] = {}
+        self._encoders: dict[str, LedEncoder] = {}
+        self._preambled: set[str] = set()
         self._unconsumed_since: dict[str, float] = {}
         self._pending_after_send: dict[str, int] = {}
         self._stalled: set[str] = set()
@@ -441,32 +626,32 @@ class ExecutorFeedback:
 
         self.config = config
         self._targets, self._blocks = build_feedback_targets(config)
-        self._fixed_pages = frozenset(
-            int(page) for page, _ in self._blocks if isinstance(page, int)
-        )
-        self._known_current_page = None
         self._intervals = _frame_intervals(config)
+        self._encoders = _encoders(config)
         self._last.clear()
-        self._pending.clear()
+        self._poller.set_config(config, self._blocks)
         self._clear_output(clear_stalled=True)
-        self._drain_responses()
 
     def reset(self) -> None:
         """Forget cached states, e.g. after a connection loss."""
 
         self._last.clear()
-        self._pending.clear()
-        self._known_current_page = None
+        self._poller.reset()
         self._clear_output()
-        self._drain_responses()
 
     def _clear_output(self, *, clear_stalled: bool = False) -> None:
         self._outbox.clear()
         self._next_send.clear()
         self._unconsumed_since.clear()
         self._pending_after_send.clear()
+        self._preambled.clear()
         if clear_stalled:
             self._stalled.clear()
+
+    def resend_device(self, device: str) -> None:
+        """Send the full LED state of one device again on the next poll."""
+
+        self._reset_device(device)
 
     def _reset_device(self, device: str) -> None:
         for key in [k for k in self._last if k[0] == device]:
@@ -475,31 +660,12 @@ class ExecutorFeedback:
         self._next_send.pop(device, None)
         self._unconsumed_since.pop(device, None)
         self._pending_after_send.pop(device, None)
+        self._preambled.discard(device)
         self._stalled.discard(device)
-
-    def _drain_responses(self) -> None:
-        """Discard answers that belong to a previous connection or config."""
-
-        queue = getattr(self._client, "playback_responses", None)
-        if queue is None:
-            return
-        while True:
-            try:
-                queue.get_nowait()
-            except asyncio.QueueEmpty:
-                return
 
     @property
     def targets(self) -> tuple[LedTarget, ...]:
         return tuple(self._targets)
-
-    def _interval(self) -> float:
-        return max(0.1, self.config.feedback.interval_ms / 1000.0)
-
-    def _timeout(self) -> float:
-        if self._timeout_override is not None:
-            return self._timeout_override
-        return max(2.0 * self._interval(), 1.0)
 
     async def run(self) -> None:
         """Poll until cancelled, following later config reloads."""
@@ -524,14 +690,13 @@ class ExecutorFeedback:
                         LOGGER.info(
                             "Executor-Feedback aktiv, aber kein LED-fähiges Button-Ziel"
                         )
-                if active:
-                    try:
-                        await self.step()
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:  # pragma: no cover - defensive
-                        LOGGER.exception("Executor-Feedback-Zyklus fehlgeschlagen")
-                await self._sleep(self._interval())
+                try:
+                    await self.step()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # pragma: no cover - defensive
+                    LOGGER.exception("Executor-Feedback-Zyklus fehlgeschlagen")
+                await self._sleep(self._poller.interval())
         finally:
             pump.cancel()
             try:
@@ -574,13 +739,17 @@ class ExecutorFeedback:
                 continue
             if self._output_stalled(device, now):
                 continue
-            raw_key, velocity = next(iter(outbox.items()))
+            raw_key, state = next(iter(outbox.items()))
             channel, note = _unpack_outbox_key(raw_key)
-            status_byte = NOTE_ON | ((channel - 1) & 0x0F)
+            encoder = self._encoders.get(device, _MIDICRAFT)
+            payload = encoder.frame(channel, note, state)
+            if encoder.preamble and device not in self._preambled:
+                payload = encoder.preamble + payload
             interval = self._intervals.get(device, _DEFAULT_FRAME_INTERVAL)
-            if self._midi.send(device, bytes((status_byte, note, velocity))):
+            if self._midi.send(device, payload):
                 del outbox[raw_key]
-                self._last[self._led_cache_key(device, channel, note)] = velocity
+                self._preambled.add(device)
+                self._last[self._led_cache_key(device, channel, note)] = state
                 if probe is not None:
                     after = probe(device)
                     if after is not None and after > 0:
@@ -625,16 +794,20 @@ class ExecutorFeedback:
         return True
 
     async def step(self) -> None:
-        """Run one poll cycle: request open blocks and apply answers."""
+        """Run one poll cycle: request open blocks and apply answers.
 
-        if not self.config.feedback.enabled or not self._targets:
-            return
+        The poller also serves the executor topology, so a cycle can run with
+        LED feedback off; the LED-only parts then stay idle.
+        """
+
         if not getattr(self._client, "authenticated", False):
             return
-        self._sync_devices()
-        for key, block in list(self._blocks.items()):
-            await self._request_block(key, block)
-        self.pump()
+        led_active = self.config.feedback.enabled and bool(self._targets)
+        if led_active:
+            self._sync_devices()
+        await self._poller.step()
+        if led_active:
+            self.pump()
 
     def _sync_devices(self) -> None:
         paths = getattr(self._midi, "open_devices", {}) or {}
@@ -653,84 +826,45 @@ class ExecutorFeedback:
         for name in changed:
             self._reset_device(name)
 
-    async def _request_block(
-        self, key: tuple[int | str, int], block: RequestBlock
-    ) -> None:
-        now = self._clock()
-        deadline = self._pending.get(key)
-        if deadline is not None and now < deadline:
-            return
-        timeout = self._timeout()
-        self._pending[key] = now + timeout
-        self._drain_responses()
-        self._client.request_playbacks(
-            block.page, block.start, block.count, block.items_type, block.view
-        )
-        queue = self._client.playback_responses
-        ends = now + timeout
-        while True:
-            remaining = ends - self._clock()
-            if remaining <= 0:
-                break
-            try:
-                payload = await asyncio.wait_for(queue.get(), timeout=remaining)
-            except asyncio.TimeoutError:
-                break
-            snapshot = parse_playbacks(payload)
-            if snapshot is None:
-                LOGGER.debug("Playbacks-Antwort ohne Executor-Daten verworfen")
-                continue
-            if not _belongs_to_block(snapshot, block):
-                LOGGER.debug(
-                    "Playbacks-Antwort passt nicht zu %s.%s und wird verworfen",
-                    block.page,
-                    block.start,
-                )
-                continue
-            self._pending.pop(key, None)
-            self._apply(snapshot, block)
-            return
-        self._pending.pop(key, None)
-        LOGGER.debug(
-            "Playbacks-Antwort für %s.%s ausgeblieben", block.page, block.start
-        )
-
     def _apply(self, snapshot: PlaybackSnapshot, block: RequestBlock) -> None:
         feedback = self.config.feedback
         fallback = palette_index(feedback.fallback_color)
         empty_page = not snapshot.executors and bool(snapshot.seen_executors)
+        mirror = self.config.mapping.combined_executors != "off"
         for target in self._targets:
-            if target.page == "current":
-                if block.page != "current":
-                    continue
-            elif target.page != snapshot.page + 1:
+            if snapshot.page != response_page(target.page):
                 continue
-            state = snapshot.executors.get(target.executor)
-            if state is not None:
-                velocity = led_velocity(
-                    state.running, state.color, feedback.off_state, fallback
+            encoder = self._encoders.get(target.device, _MIDICRAFT)
+            executor = snapshot.executors.get(target.executor)
+            if executor is None and mirror:
+                lead = snapshot.lead_of(target.executor)
+                if lead is not None:
+                    executor = snapshot.executors.get(lead)
+            if executor is not None:
+                state = encoder.state(
+                    executor.running, executor.color, feedback.off_state, fallback
                 )
             elif target.executor in snapshot.empty_executors or (
                 empty_page and target.executor in snapshot.seen_executors
             ):
-                velocity = MODE_BASE["off"]
+                state = encoder.off()
             else:
                 continue
             led = self._led_cache_key(target.device, target.channel, target.note)
             out_key = _outbox_key(target.channel, target.note)
             waiting = self._outbox.get(target.device)
-            if self._last.get(led) == velocity:
+            if self._last.get(led) == state:
                 if waiting is not None:
                     waiting.pop(out_key, None)
                 continue
             if self._dry_run:
                 LOGGER.info(
-                    "dry-run: LED %s Note %d Velocity %d",
+                    "dry-run: LED %s Note %d Frame %s",
                     target.control,
                     target.note,
-                    velocity,
+                    encoder.frame(target.channel, target.note, state).hex(" "),
                 )
-                self._last[led] = velocity
+                self._last[led] = state
                 continue
-            self._outbox.setdefault(target.device, {})[out_key] = velocity
+            self._outbox.setdefault(target.device, {})[out_key] = state
             self._wake.set()
