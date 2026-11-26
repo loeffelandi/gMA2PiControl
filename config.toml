@@ -2263,7 +2263,7 @@ cells = [
   { label = "X18", control = "x18", color = "blue", row = 8, col = 8 },
   { label = "X19", control = "x19", color = "blue", row = 8, col = 9 },
   { label = "X20", control = "x20", color = "blue", row = 8, col = 10 },
-  { label = "MA", color = "black", row = 8, col = 12 },
+  { label = "MA", control = "ma", color = "white", row = 8, col = 12 },
   { label = "", color = "black", row = 8, col = 13 },
   { label = "Please", control = "please_big", col_span = 2, color = "green", row = 8, col = 14 },
   { label = "", color = "black", row = 8, col = 16 },
