@@ -66,7 +66,7 @@
 - [x] 6.2 `deploy/ma2pi.service` mit `Restart=always`, `After=network-online.target`, `User=ma2pi`, `ProtectSystem=strict`, `PrivateTmp=true`, `PrivateDevices=false`, `NoNewPrivileges` anlegen; `systemd-analyze verify` ist grün, Start/Stop funktioniert. Verifiziert 2026-11-26: verify grün, Dienst `active`/`enabled`, Start/Stop/Restart ok. **Abweichung:** `DeviceAllow` mit Pfad-Globs entfernt – der Geräte-Cgroup-Filter verweigerte den Zugriff (EPERM) auf cgroup v2; Gerätezugriff läuft stattdessen über die udev-Gruppe `ma2pi` (dokumentiert in der Unit).
 - [x] 6.3 udev-Regeln für Cherry (0x046a) und ASL (ermittelte ID) mit `GROUP="ma2pi"`, `MODE="0660"` anlegen; `udevadm test` und Lesetest als `ma2pi` bestätigen den Zugriff. Verifiziert 2026-11-26: Regeln aktiv (`/dev/input/event4` und `/dev/snd/midiC3D0` = `root:ma2pi 0660`); Lesetest als `ma2pi` erfolgreich – der Dienst öffnet beide Geräte.
 - [ ] 6.4 README für Installation, Update und Rollback schreiben; die dokumentierten Befehle werden auf dem Pi einmal vollständig ausgeführt.
-- [ ] 6.5 Dienst nach Reboot, onPC-Neustart und Geräte-Replug prüfen; er startet automatisch, verbindet sich neu und nimmt beide Geräte wieder auf.
+- [x] 6.5 Dienst nach Reboot, onPC-Neustart und Geräte-Replug prüfen; er startet automatisch, verbindet sich neu und nimmt beide Geräte wieder auf. Verifiziert 2026-11-26: Pi-Reboot → Dienst `active`/`enabled` startet selbst (neue PID), öffnet Cherry + ASL, LED aktiv, Session authentifiziert; onPC-Neustart → Reconnect ohne Daemon-Neustart; Cherry-/ASL-Replug → Geräte werden neu aufgenommen (LED nach ASL-Replug via `still_attached()`-Fix, ADR-/Commit `1184bfd`).
 
 ## 7. Integration und Hardware-Abnahme
 
@@ -74,7 +74,7 @@
 - [x] 7.2 Dry-Run mit der Beispielkonfiguration end-to-end ausführen und die erwartete Frame-Folge für einen typischen Programmiervorgang dokumentieren.
 - [x] 7.3 Hardware-Smoke-Test durchführen: MA+Fix → Desk Lock, Store halten → Store Options, Clear halten → ClearAll, Go+/Go−, Number-Block; Ergebnis protokollieren. Bestanden 2026-11-26 (Benutzer bestätigt alle fünf Punkte onPC-seitig); Frame-Nachweis in `docs/hardware-smoke-2026-11-26.log` (MA 68 mit Hold, Fix 41, Store 59 mit Hold, Clear 105 mit Hold, Go 10/11, Ziffern + Please 106).
 - [ ] 7.4 Hardware-Stresstest durchführen: vier Encoder gleichzeitig schnell drehen plus Hardkey-Spam über zehn Minuten; onPC bleibt bedienbar, kein Release geht verloren.
-- [ ] 7.5 Reconnect-Abnahme: onPC neu starten und Keyboard/ASL im Betrieb trennen und wieder anstecken; keine hängenden Modifier, kein Daemon-Neustart nötig.
+- [x] 7.5 Reconnect-Abnahme: onPC neu starten und Keyboard/ASL im Betrieb trennen und wieder anstecken; keine hängenden Modifier, kein Daemon-Neustart nötig. Bestanden 2026-11-26: onPC-Neustart → neue Session ohne hängenden Modifier (Clear/Ziffern wirken danach); Cherry- und ASL-Replug im Betrieb → Release gehaltener Keys + Wiederöffnen ohne Daemon-Neustart; ASL-LEDs kommen nach Replug wieder (Fix `1184bfd`).
 - [x] 7.6 ADR-Status anhand der Nachweise aktualisieren: 0001, 0003, 0004, 0005, 0007 auf Accepted bei bestandener Prüfung; 0002 auf Accepted oder dokumentierten CMD-Fallback; 0006 auf Accepted bei grüner Validierung. Erledigt 2026-11-26: 0002, 0003, 0004, 0005, 0006, 0007 auf Accepted (mit Verifikations-Nachweis); 0001 auf Superseded by 0016 korrigiert; 0014/0016 bereits Accepted.
 
 ## 8. Dokumentation und Abschluss
