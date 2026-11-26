@@ -139,11 +139,13 @@ async def _led_loop(config: AppConfig, client: Ma2Client, holder: dict) -> None:
     while True:
         await asyncio.sleep(2.0)
         current = holder.get("led")
-        if current is not None and current.is_open:
+        if current is not None and current.is_open and current.still_attached():
             continue
         path = config.led.device or _find_led_device(config)
         if not path or not Path(path).exists():
             continue
+        if current is not None:
+            current.close()  # toten Handle nach Replug freigeben
         led = LedOutput(path, config.led)
         try:
             led.open()

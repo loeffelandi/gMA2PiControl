@@ -62,6 +62,27 @@ def test_led_output_writes_are_optional(tmp_path):
     led.close()
 
 
+def test_still_attached_detects_replug(tmp_path):
+    path = tmp_path / "led.mid"
+    path.touch()
+    led = LedOutput(path, LedSettings())
+    assert not led.still_attached()  # nicht geöffnet
+    led.open()
+    assert led.is_open and led.still_attached()
+
+    # Replug simulieren: Knoten wird neu erzeugt (neue Inode), der alte fd bleibt.
+    path.unlink()
+    path.touch()
+    assert led.is_open  # fd ist noch gesetzt ...
+    assert not led.still_attached()  # ... gehört aber nicht mehr zum Gerät
+
+    # Gerät ganz weg: ebenfalls nicht mehr attached.
+    path.unlink()
+    assert not led.still_attached()
+    led.close()
+    assert not led.is_open
+
+
 def test_led_config_defaults(make_config):
     cfg = make_config(lambda data: data.pop("led"))
     assert cfg.led.enabled is False

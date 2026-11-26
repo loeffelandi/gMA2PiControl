@@ -82,6 +82,23 @@ class LedOutput:
     def is_open(self) -> bool:
         return self._fd is not None
 
+    def still_attached(self) -> bool:
+        """True, wenn der offene Handle noch zum aktuellen Gerät gehört.
+
+        Nach einem Replug wird der Geräteknoten neu erzeugt (neue Inode); der
+        alte fd ist dann tot, obwohl ``is_open`` weiter True wäre. Der Vergleich
+        von ``fstat(fd)`` und ``stat(path)`` erkennt das, damit die LED-Schleife
+        neu öffnet und das Enable-Sequenz erneut sendet.
+        """
+        if self._fd is None:
+            return False
+        try:
+            cur = os.stat(self.path)
+            old = os.fstat(self._fd)
+        except OSError:
+            return False
+        return (cur.st_dev, cur.st_ino) == (old.st_dev, old.st_ino)
+
     def open(self) -> None:
         if self._fd is not None:
             return
