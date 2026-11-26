@@ -468,6 +468,7 @@ class Ma2Client:
         self._page = EncoderPage()
         self._page_task: asyncio.Task[None] | None = None
         self._screen_mode = False
+        self._ma_held = False
         self._led = None
         self._screen_helper = ScreenHelper(config.screen_helper)
         self._rest: dict[tuple[str, int], float] = {}
@@ -503,6 +504,12 @@ class Ma2Client:
         """True while the encoders are hard-wired to the screen encoders."""
 
         return self._screen_mode
+
+    @property
+    def screen_encoder_active(self) -> bool:
+        """True while encoders act as screen encoders (toggle or held MA)."""
+
+        return self._screen_mode or self._ma_held
 
     @property
     def connected(self) -> bool:
@@ -541,6 +548,26 @@ class Ma2Client:
         """Attach an LED output; it follows the encoder mode."""
 
         self._led = led
+
+    def set_screen_modifier(self, held: bool) -> None:
+        """Follow the engine's momentary screen-encoder modifier (MA)."""
+
+        if held == self._ma_held:
+            return
+        self._ma_held = held
+        LOGGER.info("Screen-Encoder-Modifier %s", "gehalten" if held else "losgelassen")
+        self._refresh_mode_led()
+
+    def _refresh_mode_led(self) -> None:
+        """Show the effective encoder mode on the ASL LED."""
+
+        if self._led is None:
+            LOGGER.debug("Modus-LED: kein LED-Ausgang verbunden")
+            return
+        try:
+            self._led.set_mode_color(self.screen_encoder_active)
+        except Exception:
+            LOGGER.exception("Modus-LED konnte nicht gesetzt werden")
 
     def encoder_press(self, slot: int, pressed: bool, screen: bool = False) -> None:
         self._submit(EncoderPress(slot, pressed, screen=screen))
@@ -795,6 +822,9 @@ class Ma2Client:
                 break
         if was_connected:
             LOGGER.warning("Session beendet: %s", reason)
+            if self._ma_held:
+                self._ma_held = False
+                self._refresh_mode_led()
             for callback in list(self._connection_lost_callbacks):
                 try:
                     callback()
@@ -994,7 +1024,7 @@ class Ma2Client:
                 "Screen" if self._screen_mode else "Attribut",
             )
             if self._led is not None:
-                self._led.apply_mode(self._screen_mode)
+                self._led.apply_mode(self.screen_encoder_active)
             return
         else:  # pragma: no cover - exhaustive
             raise TypeError(f"unbekannte Aktion {action!r}")

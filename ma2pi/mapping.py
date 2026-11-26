@@ -95,6 +95,9 @@ class MappingEngine:
         self._pending_hold: dict[str, float] = {}
         self._press_targets: dict[str, tuple[int, bool]] = {}
         self.modifier_hook: Callable[[str, bool], None] | None = None
+        #: Called with the momentary screen-encoder state when it changes.
+        self.screen_modifier_hook: Callable[[bool], None] | None = None
+        self._screen_modifier_active = False
         self._encoders: dict[int, EncoderState] = {}
         self._bank_encoder_states: dict[tuple[str, int, int], EncoderState] = {}
         self._encoder_profiles: dict[int, EncoderProfile | MidiEncoderProfile] = {}
@@ -156,6 +159,8 @@ class MappingEngine:
                 self._release(event.control, event.device, moment)
             else:
                 LOGGER.debug("ignoriere Key-Wert %s für %s", event.value, event.control)
+                return
+            self._update_screen_modifier()
         elif event.kind == "encoder":
             self._feed_encoder(
                 event.control, event.value, moment, event.device, event.bank
@@ -259,6 +264,19 @@ class MappingEngine:
             except Exception as exc:  # LED feedback must never break input
                 LOGGER.debug("Modifier-Hook fehlgeschlagen: %s", exc)
 
+    def _update_screen_modifier(self) -> None:
+        """Report the momentary screen-encoder modifier when its state changes."""
+
+        active = self._screen_encoder_requested()
+        if active == self._screen_modifier_active:
+            return
+        self._screen_modifier_active = active
+        if self.screen_modifier_hook is not None:
+            try:
+                self.screen_modifier_hook(active)
+            except Exception as exc:  # LED feedback must never break input
+                LOGGER.debug("Screen-Modifier-Hook fehlgeschlagen: %s", exc)
+
     def _add_held(
         self,
         control: str,
@@ -303,6 +321,7 @@ class MappingEngine:
             self._pending_hold.pop(held.control, None)
         if keys:
             LOGGER.warning("Gerät %s verloren: %d Taste(n) freigegeben", device, len(keys))
+        self._update_screen_modifier()
 
     def cleanup(self, *, send: bool = True) -> None:
         keys = sorted(self._held.values(), key=lambda held: held.order, reverse=True)
@@ -319,6 +338,7 @@ class MappingEngine:
         self._order = 0
         self._pending_hold.clear()
         self.clear_encoder_pending()
+        self._update_screen_modifier()
 
     def on_connection_lost(self) -> None:
         """Clear local state without replaying frames on the new session."""
@@ -332,6 +352,7 @@ class MappingEngine:
         self._order = 0
         self._pending_hold.clear()
         self.clear_encoder_pending()
+        self._update_screen_modifier()
 
     def clear_encoder_pending(self) -> None:
         for state in self._all_states():

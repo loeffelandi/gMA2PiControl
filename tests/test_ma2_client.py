@@ -19,6 +19,7 @@ from ma2pi.actions import (
     Release,
     EncoderPress,
     EncoderResolution,
+    ToggleScreenMode,
     merge_encoder,
 )
 from ma2pi.events import InputEvent
@@ -746,6 +747,29 @@ async def test_nipple_hardkey_drives_led(make_config):
     await client._dispatch(Press("NIPPLE"))
     await client._dispatch(Release("NIPPLE"))
     assert client._led.calls == [True, False]
+
+
+async def test_ma_modifier_turns_mode_led_green(make_config):
+    class Led:
+        def __init__(self):
+            self.calls = []
+
+        def set_mode_color(self, screen_mode):
+            self.calls.append(screen_mode)
+
+        def apply_mode(self, screen_mode):
+            self.calls.append(screen_mode)
+
+    client, transport = _canbus_client(make_config)
+    client._led = Led()
+    client.set_screen_modifier(True)
+    assert client.screen_encoder_active
+    client.set_screen_modifier(False)
+    assert not client.screen_encoder_active
+    await client._dispatch(ToggleScreenMode())
+    client.set_screen_modifier(True)
+    await client._dispatch(ToggleScreenMode())
+    assert client._led.calls == [True, False, True, True, True]
 
 
 def _load_page(client, resolution=0):

@@ -293,7 +293,7 @@ async def _led_loop(
         except OSError:
             continue
         led.enable()
-        led.apply_mode(bool(client.screen_mode))
+        led.apply_mode(client.screen_encoder_active)
         if activity is not None:
             _attach_led_activity(led, activity)
         holder["led"] = led
@@ -451,6 +451,7 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
             led.set_fine(pressed)
 
     engine.modifier_hook = _modifier_led
+    engine.screen_modifier_hook = client.set_screen_modifier
     web_service = await _start_web(
         config, client, store, learn, device_learn, activity
     )

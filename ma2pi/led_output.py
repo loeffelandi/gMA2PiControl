@@ -181,9 +181,14 @@ class LedOutput:
         brightness = cfg.fine_pressed_brightness if pressed else cfg.fine_idle_brightness
         self.set_button(cfg.fine_note, cfg.fine_color, brightness)
 
-    def apply_mode(self, screen_mode: bool) -> None:
+    def set_mode_color(self, screen_mode: bool) -> None:
+        """Colour the mode LED green (screen) or red (attribute)."""
+
         self.set_color(
             self.settings.screen_color if screen_mode else self.settings.attribute_color
         )
+
+    def apply_mode(self, screen_mode: bool) -> None:
+        self.set_mode_color(screen_mode)
         self.set_nipple(False)
         self.set_fine(False)

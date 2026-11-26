@@ -297,6 +297,24 @@ def test_middle_button_notifies_modifier_hook(engine, sink):
     assert calls == [("asl_button_2", True), ("asl_button_2", False)]
 
 
+def test_ma_notifies_screen_modifier_hook(engine, sink):
+    calls = []
+    engine.screen_modifier_hook = calls.append
+    engine.handle(key("ma", 1))
+    engine.handle(key("ma", 1))  # Doppel-Press ändert nichts
+    assert calls == [True]
+    engine.handle(key("ma", 0))
+    assert calls == [True, False]
+
+
+def test_cleanup_notifies_screen_modifier_off(engine, sink):
+    calls = []
+    engine.screen_modifier_hook = calls.append
+    engine.handle(key("ma", 1))
+    engine.cleanup()
+    assert calls == [True, False]
+
+
 def test_click_without_middle_button_sends_press(engine, sink):
     engine.handle(key("asl_click_1", 1, "asl"))
     engine.handle(key("asl_click_1", 0, "asl"))
