@@ -195,4 +195,30 @@ describe('AssignDialog special mappings', () => {
       expect.objectContaining({ action: 'screen', screen: 4 }),
     );
   });
+
+  it('rejects empty attribute name and refreshes Screen-Encoder when slot changes', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(AssignDialog, {
+      props: {
+        control: 'encoder.1',
+        bank: 1,
+        kind: 'relative-encoder',
+        count: 1,
+        initial: { action: 'encoder', slot: 1, screen: 8 },
+        screenEncoders: { '1': 8, '2': 6 },
+        onSave,
+        onClose: vi.fn(),
+      },
+    });
+
+    // Changing slot 1 -> 2 updates Screen-Encoder 8 -> 6
+    await fireEvent.input(screen.getByLabelText('Slot'), { target: { value: '2' } });
+    expect((screen.getByLabelText(/Screen-Encoder/) as HTMLSelectElement).value).toBe('6');
+
+    // Switching to Attributname with empty attribute is rejected
+    await fireEvent.change(screen.getByLabelText('Ziel'), { target: { value: 'attribute' } });
+    await fireEvent.click(screen.getByText('Speichern'));
+    expect(screen.getByRole('alert').textContent).toContain('Attributnamen');
+    expect(onSave).not.toHaveBeenCalled();
+  });
 });

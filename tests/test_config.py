@@ -1023,3 +1023,22 @@ def test_lua_hardkey_codes_required_for_device_bank_keys(make_config):
 
     with pytest.raises(ConfigError, match="hardkeys.MACRO"):
         make_config(mutate)
+
+
+def test_banked_auto_encoder_ids_skip_later_explicit_profile_ids(raw_config):
+    import copy
+
+    data = copy.deepcopy(raw_config)
+    # Place a banked profile with auto-ID relative-encoder BEFORE asl-mk2-e4b3 (id=1..3)
+    reordered: dict = {
+        "banked-wheel": {
+            "controls": [{"id": "wheel_a", "kind": "relative-encoder"}],
+            "banks": [{"number": 1, "channel": 1, "notes": {"40": "wheel_a"}}],
+        }
+    }
+    reordered.update(data["profiles"])
+    data["profiles"] = reordered
+    cfg = parse_config(data, source_path="<test>")
+    wheel = cfg.profiles["banked-wheel"].controls[0]
+    assert wheel.encoder_id not in {1, 2, 3, 4}
+    assert wheel.encoder_id == 5

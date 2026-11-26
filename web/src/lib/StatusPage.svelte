@@ -32,6 +32,7 @@
   let pulseTimers: Record<string, ReturnType<typeof setTimeout>> =
     Object.create(null);
   let seenActivityDevices: Record<string, true> = Object.create(null);
+  let lostSeqByDevice: Record<string, number> = Object.create(null);
 
   function maxLostSeq(entries: ActivityEntry[]): number {
     let max = -1;
@@ -43,28 +44,48 @@
     return max;
   }
 
-  function lostDeviceNames(entries: ActivityEntry[], afterSeq: number): string[] {
-    const names: string[] = [];
+  function lostDeviceEntries(
+    entries: ActivityEntry[],
+    afterSeq: number,
+  ): { name: string; seq: number }[] {
+    const out: { name: string; seq: number }[] = [];
     for (const entry of entries) {
       if (entry.kind === 'device-lost' && entry.seq > afterSeq) {
         const colon = entry.summary.indexOf(':');
         const name = (
           colon >= 0 ? entry.summary.slice(0, colon) : entry.summary
         ).trim();
-        if (name) names.push(name);
+        if (name) out.push({ name, seq: entry.seq });
       }
     }
-    return names;
+    return out;
   }
 
   function collectActivityDevices(state: StatusState): string[] {
     const seen: Record<string, true> = Object.create(null);
     for (const name of Object.keys(state.activity.devices)) {
-      seen[name] = true;
+      if (!(name in lostSeqByDevice)) {
+        seen[name] = true;
+      }
     }
     for (const entry of state.activity.entries) {
-      if (entry.device && entry.device !== 'system' && entry.device !== 'ma2') {
-        seen[entry.device] = true;
+      if (
+        entry.device &&
+        entry.device !== 'system' &&
+        entry.device !== 'ma2' &&
+        entry.kind !== 'device-lost'
+      ) {
+        const lostSeq = lostSeqByDevice[entry.device];
+        if (lostSeq === undefined || entry.seq > lostSeq) {
+          delete lostSeqByDevice[entry.device];
+          seen[entry.device] = true;
+        }
+      }
+    }
+    for (const [name, info] of Object.entries(state.status?.presence ?? {})) {
+      if (info?.connected && name in lostSeqByDevice) {
+        delete lostSeqByDevice[name];
+        seen[name] = true;
       }
     }
     return Object.keys(seen);
@@ -161,6 +182,12 @@
       }
       lastConfigGeneration = next.configGeneration;
       lastDeviceLostSeq = maxLostSeq(next.activity.entries);
+      for (const item of lostDeviceEntries(next.activity.entries, -1)) {
+        lostSeqByDevice[item.name] = Math.max(
+          lostSeqByDevice[item.name] ?? -1,
+          item.seq,
+        );
+      }
       for (const name of collectActivityDevices(next)) {
         seenActivityDevices[name] = true;
       }
@@ -179,13 +206,18 @@
 
     const currentMaxLost = maxLostSeq(next.activity.entries);
     if (currentMaxLost > lastDeviceLostSeq) {
-      for (const name of lostDeviceNames(next.activity.entries, lastDeviceLostSeq)) {
-        delete seenActivityDevices[name];
+      for (const item of lostDeviceEntries(next.activity.entries, lastDeviceLostSeq)) {
+        lostSeqByDevice[item.name] = Math.max(
+          lostSeqByDevice[item.name] ?? -1,
+          item.seq,
+        );
+        delete seenActivityDevices[item.name];
       }
       lastDeviceLostSeq = currentMaxLost;
       shouldReload = true;
     } else if (next.status === null && next.activity.entries.length === 0) {
       lastDeviceLostSeq = -1;
+      lostSeqByDevice = Object.create(null);
       seenActivityDevices = Object.create(null);
       previousCounts = Object.create(null);
     }
@@ -401,7 +433,7 @@
       <ol
         class="log"
         {@attach trackLogScroll}
-        {@attach scrollLogOnCount(snapshot.activity.entries.length)}
+        {@attach scrollLogOnCount(snapshot.activity.entries.at(-1)?.seq ?? 0)}
       >
         {#each snapshot.activity.entries as entry (entry.seq)}
           <li

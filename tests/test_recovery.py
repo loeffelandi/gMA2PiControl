@@ -194,3 +194,20 @@ async def test_recovery_api_roundtrip(make_config, tmp_path):
         assert bad_bool.status == 422
     finally:
         await client.close()
+
+
+async def test_recovery_rolls_back_backend_when_store_save_fails(tmp_path):
+    from ma2pi.recovery import RecoveryError, RecoveryService, RecoveryStore
+
+    backend = FakeRecoveryBackend()
+    store = RecoveryStore(tmp_path / "recovery.toml")
+    service = RecoveryService(backend, store)
+
+    def fail_save(_settings):
+        raise OSError("disk full")
+
+    store.save = fail_save  # type: ignore[method-assign]
+    with pytest.raises(RecoveryError, match="nicht schreibbar"):
+        await service.save({"enabled": True})
+    assert backend.disabled == 1
+    assert service.settings.enabled is False

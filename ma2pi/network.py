@@ -1604,7 +1604,10 @@ class NetworkService:
                         LOGGER.error("Rollback beim Start fehlgeschlagen: %s", exc)
                 else:
                     remaining = (
-                        max(0.0, pending.deadline - self._clock())
+                        min(
+                            self._confirm_timeout,
+                            max(0.0, pending.deadline - self._clock()),
+                        )
                         if pending.deadline is not None
                         else 0.0
                     )

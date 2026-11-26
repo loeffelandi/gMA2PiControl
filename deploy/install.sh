@@ -74,6 +74,7 @@ install -d -o root -g root -m 0755 "${APP_DIR}/web"
 cp -a "${WEB_DIST}" "${APP_DIR}/web/dist"
 
 find "${APP_DIR}" -type d -name '__pycache__' -prune -exec rm -rf {} +
+chmod -R u+rwX,go+rX "${APP_DIR}"
 chown -R root:root "${APP_DIR}"
 
 if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
@@ -81,6 +82,7 @@ if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
 fi
 "${VENV_DIR}/bin/python" -m pip install --quiet --upgrade pip
 "${VENV_DIR}/bin/python" -m pip install --quiet "${APP_DIR}"
+chmod -R u+rwX,go+rX "${VENV_DIR}"
 chown -R root:root "${VENV_DIR}"
 
 install -m 0644 "${REPO_DIR}/deploy/ma2pi.service" "${SERVICE_FILE}"

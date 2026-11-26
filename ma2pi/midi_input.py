@@ -351,16 +351,28 @@ class RealMidiHandle:
         self._closed = True
         self._detach_reader()
         if self._writable:
-            # Without this the kernel waits up to 10 s for a device that does
-            # not take its output before it lets close() return.
-            try:
-                rawmidi_drop_output(self._fd)
-            except OSError as exc:
-                LOGGER.debug(
-                    "MIDI-Ausgabe an %s lässt sich nicht verwerfen: %s",
-                    self._path,
-                    exc,
-                )
+            # Give a healthy device up to 30 ms to consume a trailing frame
+            # (such as ASL DISABLE), then drop any stalled remainder so
+            # kernel close() never blocks for 10 s.
+            size = getattr(self, "_out_size", None)
+            should_drop = True
+            if size is not None:
+                for attempt in range(6):
+                    free = rawmidi_output_free(self._fd)
+                    if free is None or free >= size:
+                        should_drop = free is None
+                        break
+                    if attempt < 5:
+                        await asyncio.sleep(0.005)
+            if should_drop:
+                try:
+                    rawmidi_drop_output(self._fd)
+                except OSError as exc:
+                    LOGGER.debug(
+                        "MIDI-Ausgabe an %s lässt sich nicht verwerfen: %s",
+                        self._path,
+                        exc,
+                    )
         try:
             os.close(self._fd)
         except OSError:  # pragma: no cover - defensive

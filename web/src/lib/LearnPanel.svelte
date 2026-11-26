@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
 
-  import type { ApiClient, DeviceLearnStatus } from './api';
+  import { ApiError, type ApiClient, type DeviceLearnStatus } from './api';
   import type { StatusStore } from './status';
 
   interface Props {
@@ -40,7 +40,16 @@
   );
   const ownsOpenSession = $derived(startedSession || activeHere);
 
+  function formatError(cause: unknown, fallback: string): string {
+    if (cause instanceof ApiError) return cause.detail || cause.message || fallback;
+    if (cause instanceof Error) return cause.message || fallback;
+    return fallback;
+  }
+
   function applyStatus(next: DeviceLearnStatus | null): void {
+    if (!next?.active) {
+      startedSession = false;
+    }
     status = next;
     onStatus?.(next);
   }
@@ -56,7 +65,7 @@
       applyStatus(next);
     } catch (cause) {
       if (destroyed || epoch !== actionEpoch || (!force && busy)) return;
-      error = cause instanceof Error ? cause.message : 'Status nicht verfügbar';
+      error = formatError(cause, 'Status nicht verfügbar');
       onStatus?.(null);
     } finally {
       inFlight = false;
@@ -123,7 +132,7 @@
         await refresh(true);
       }
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Aktion fehlgeschlagen';
+      error = formatError(cause, 'Aktion fehlgeschlagen');
     } finally {
       busy = false;
     }

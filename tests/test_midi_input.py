@@ -784,3 +784,18 @@ def test_select_midi_devices_assigns_distinct_nodes(make_config):
     selected = select_midi_devices(cfg, [m1, m2])
     paths = sorted(info.path for info in selected.values())
     assert paths == ["/dev/snd/midiC3D0", "/dev/snd/midiC4D0"]
+
+
+async def test_real_handle_close_skips_drop_when_bytes_drain_cleanly(monkeypatch):
+    from ma2pi import midi_input
+
+    handle = _real_handle(midi_input, out_size=4096)
+    handle._loop = asyncio.get_running_loop()
+    calls: list[str] = []
+    probes = iter([4093, 4096])
+    monkeypatch.setattr(handle._loop, "remove_reader", lambda fd: None)
+    monkeypatch.setattr(midi_input, "rawmidi_output_free", lambda fd: next(probes))
+    monkeypatch.setattr(midi_input, "rawmidi_drop_output", lambda fd: calls.append("drop"))
+    monkeypatch.setattr(midi_input.os, "close", lambda fd: calls.append("close"))
+    await handle.close()
+    assert calls == ["close"]

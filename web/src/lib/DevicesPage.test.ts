@@ -504,4 +504,77 @@ describe('DevicesPage learn highlight', () => {
     const cell = screen.getByText('B').closest('button')!;
     expect(cell.classList.contains('active')).toBe(true);
   });
+
+  it('saves custom-named relative-encoder via encoder_id and clears modifiers on Bank 1', async () => {
+    const customEncDevice = {
+      ...device,
+      name: 'wheeldev',
+      profile: 'wheelprof',
+      controls: {
+        ...device.controls,
+        inventory: [
+          { id: 'wheel_pan', kind: 'relative-encoder' as const, label: 'W1', encoder_id: 8 },
+          { id: 'bt_button', kind: 'button' as const, label: 'B' },
+        ],
+      },
+      layout: {
+        profile: 'wheelprof',
+        columns: 2,
+        rows: [
+          {
+            cells: [
+              { label: 'W1', control: 'wheel_pan', col_span: 1, row_span: 1, color: null, row: null, col: null },
+              { label: 'B', control: 'bt_button', col_span: 1, row_span: 1, color: null, row: null, col: null },
+            ],
+          },
+        ],
+      },
+    };
+    const cfgWithMod = {
+      ...config,
+      profiles: {
+        ...config.profiles,
+        wheelprof: {
+          controls: [
+            { id: 'wheel_pan', kind: 'relative-encoder', encoder_id: 8 },
+            { id: 'bt_button', kind: 'button' },
+          ],
+          banks: [{ number: 1, channel: 1, notes: { '40': 'wheel_pan', '41': 'bt_button' } }],
+        },
+      },
+      mapping: {
+        ...config.mapping,
+        keys: {},
+        modifiers: { bt_button: { hardkey: 'MA' } },
+      },
+    };
+    const api = fakeApi([customEncDevice], cfgWithMod);
+    render(DevicesPage, { props: { api } });
+    await waitFor(() => expect(screen.getByText('W1')).toBeTruthy());
+
+    // Save custom-named relative-encoder -> uses encoder_id: 8
+    await fireEvent.click(screen.getByText('W1'));
+    await fireEvent.click(screen.getByText('Zuweisen'));
+    await fireEvent.input(screen.getByLabelText('Slot'), { target: { value: '3' } });
+    await fireEvent.click(screen.getByText('Speichern'));
+    await waitFor(() => expect(api.updateConfig).toHaveBeenCalledTimes(1));
+    expect(api.updateConfig).toHaveBeenLastCalledWith({
+      mapping: {
+        encoders: expect.arrayContaining([{ id: 8, slot: 3 }]),
+      },
+    });
+
+    // Clear modifier on Bank 1 -> emits modifiers.bt_button = null
+    await fireEvent.click(screen.getByText('B'));
+    await fireEvent.click(screen.getByText('Zuweisen'));
+    await fireEvent.click(screen.getByText('Belegung löschen'));
+    await waitFor(() => expect(api.updateConfig).toHaveBeenCalledTimes(2));
+    expect(api.updateConfig).toHaveBeenLastCalledWith({
+      mapping: {
+        keys: { bt_button: null },
+        playbacks: { bt_button: null },
+        modifiers: { bt_button: null },
+      },
+    });
+  });
 });

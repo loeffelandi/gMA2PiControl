@@ -160,3 +160,37 @@ async def test_pin_session_expires_and_locks_out_after_five_failures(make_config
         assert expired.status == 401
     finally:
         await client.close()
+
+
+async def test_put_config_with_unchanged_pin_enabled_keeps_other_sessions(
+    tmp_path,
+):
+    import shutil
+    from ma2pi.config import load_config
+    from ma2pi.config_store import ConfigPaths
+    from ma2pi.mapping import MappingEngine
+    from ma2pi.runtime import ConfigStore
+    from ma2pi.web import PIN_SESSIONS_KEY, redacted_config
+    from .conftest import NullSink
+
+    paths = ConfigPaths(state_dir=tmp_path / "state", etc_dir=tmp_path / "etc")
+    paths.state_dir.mkdir(parents=True)
+    shutil.copy(Path(__file__).resolve().parents[1] / "config.toml", paths.config)
+    initial = load_config(paths.config)
+    store = ConfigStore(initial, MappingEngine(initial, NullSink()), paths)
+    await store.apply({"web": {"pin_enabled": True, "pin": "424242"}})
+    app = create_app(store.config, dist_dir=Path("/nonexistent"), config_store=store)
+    other_token = app[PIN_SESSIONS_KEY].issue()
+
+    server = TestServer(app)
+    client = TestClient(server)
+    await client.start_server()
+    try:
+        await client.post("/api/auth/login", json={"pin": "424242"}, headers=HEADERS)
+        payload = redacted_config(store.config)
+        # UI submits full web section including unchanged pin_enabled=True without changing PIN
+        saved = await client.put("/api/config", json=payload, headers=HEADERS)
+        assert saved.status == 200
+        assert app[PIN_SESSIONS_KEY].valid(other_token) is True
+    finally:
+        await client.close()

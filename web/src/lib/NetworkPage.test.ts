@@ -368,4 +368,59 @@ describe('NetworkPage', () => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
   });
+
+  it('re-syncs form fields when WebSocket reports pending cleared after rollback', async () => {
+    const { StatusStore } = await import('./status');
+    const store = new StatusStore({
+      factory: () => ({ onopen: null, onmessage: null, onclose: null, onerror: null, close: vi.fn() }),
+    });
+    store.connect();
+
+    let calls = 0;
+    const api = fakeApi();
+    (api.network as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return status({
+          mode: 'static',
+          current: { address: '192.168.10.60', subnet_mask: '255.255.255.0', gateway: null, dns: [] },
+          pending: {
+            mode: 'static',
+            address: '192.168.10.60',
+            subnet_mask: '255.255.255.0',
+            phase: 'awaiting_confirmation',
+            started_at: new Date().toISOString(),
+            deadline: new Date(Date.now() + 60_000).toISOString(),
+            target_url: 'http://192.168.10.60:8080/',
+            error: null,
+          },
+        });
+      }
+      return status({
+        mode: 'dhcp',
+        current: { address: '192.168.10.50', subnet_mask: '255.255.255.0', gateway: '192.168.10.1', dns: [] },
+        pending: null,
+        last_result: { status: 'rolled_back', at: new Date().toISOString(), detail: 'Timeout' },
+      });
+    });
+
+    render(NetworkPage, { props: { api, store } });
+    await waitFor(() => expect(screen.getByText(/Warte auf Bestätigung/)).toBeTruthy());
+
+    store.receive(
+      JSON.stringify({
+        type: 'network',
+        data: {
+          pending: null,
+          last_result: { status: 'rolled_back', at: new Date().toISOString(), detail: 'Timeout' },
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect((screen.getByLabelText('DHCP') as HTMLInputElement).checked).toBe(true);
+      expect((screen.getByLabelText('IPv4-Adresse') as HTMLInputElement).value).toBe('192.168.10.50');
+    });
+    store.disconnect();
+  });
 });

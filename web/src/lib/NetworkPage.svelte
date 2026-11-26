@@ -145,8 +145,8 @@
     dns = next.current.dns.join(', ');
   }
 
-  async function load(initial = false): Promise<void> {
-    const hadPending = pending !== null;
+  async function load(initial = false, forceSync = false): Promise<void> {
+    const hadPending = forceSync || pending !== null;
     try {
       const next = await api.network();
       status = next;
@@ -221,9 +221,10 @@
       const event = store.state.network;
       if (!event || event === previous) return;
       previous = event;
+      const wasPending = pending !== null;
       setPending(event.pending);
       lastResult = event.last_result;
-      if (event.pending === null) void load(false);
+      if (event.pending === null) void load(false, wasPending);
     });
   });
 

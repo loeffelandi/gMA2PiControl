@@ -170,3 +170,35 @@ def test_legacy_profile_inventory_is_derived(config):
     inventory = {item["id"]: item for item in entry["controls"]["inventory"]}
     assert inventory["encoder.1"]["kind"] == "relative-encoder"
     assert inventory["asl_click_1"]["kind"] == "button"
+
+
+def test_device_summary_includes_encoder_id_and_deduplicates_claimed_paths(make_config):
+    from ma2pi.hid_input import DeviceInfo
+
+    def mutate(data):
+        data["profiles"]["banked-enc"] = {
+            "controls": [
+                {"id": "wheel_pan", "kind": "relative-encoder", "encoder_id": 8}
+            ],
+            "banks": [{"number": 1, "channel": 1, "notes": {"40": "wheel_pan"}}],
+        }
+        data["devices"]["wheel-1"] = {
+            "backend": "midi",
+            "vendor_id": 0x1234,
+            "product_id": 0x5678,
+            "profile": "banked-enc",
+        }
+        data["devices"]["wheel-2"] = {
+            "backend": "midi",
+            "vendor_id": 0x1234,
+            "product_id": 0x5678,
+            "profile": "banked-enc",
+        }
+
+    cfg = make_config(mutate)
+    d1 = DeviceInfo("/dev/snd/midiC2D0", "Wheel", 0x1234, 0x5678, True, backend="midi")
+    d2 = DeviceInfo("/dev/snd/midiC1D0", "Wheel", 0x1234, 0x5678, True, backend="midi")
+    by_name = {item["name"]: item for item in device_summary(cfg, [d1, d2])}
+    assert by_name["wheel-1"]["detected"]["path"] == "/dev/snd/midiC1D0"
+    assert by_name["wheel-2"]["detected"]["path"] == "/dev/snd/midiC2D0"
+    assert by_name["wheel-1"]["controls"]["inventory"][0]["encoder_id"] == 8

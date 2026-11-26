@@ -1134,30 +1134,17 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
                 "Bänke und flache Noten schließen sich aus; Noten je Bank definieren",
             )
 
-        # Assign/check integer encoder IDs for banked relative-encoder controls.
+        # Check explicit integer encoder IDs for banked relative-encoder controls first;
+        # automatic IDs are assigned in a second pass after every explicit ID is registered.
         if banks and controls:
-            next_auto_id = 1
-            resolved_controls: list[ControlProfile] = []
             for ctrl in controls:
-                if ctrl.kind != "relative-encoder":
-                    resolved_controls.append(ctrl)
-                    continue
-                chosen_id = ctrl.encoder_id
-                if chosen_id is None:
-                    while next_auto_id in global_encoder_ids:
-                        next_auto_id += 1
-                    chosen_id = next_auto_id
-                    next_auto_id += 1
-                if chosen_id in global_encoder_ids:
-                    raise ConfigError(
-                        f"{item_path}.controls",
-                        f"Encoder-ID {chosen_id} ist bereits in einem anderen Profil definiert",
-                    )
-                global_encoder_ids.add(chosen_id)
-                resolved_controls.append(
-                    ControlProfile(ctrl.id, ctrl.kind, ctrl.label, chosen_id)
-                )
-            controls = resolved_controls
+                if ctrl.kind == "relative-encoder" and ctrl.encoder_id is not None:
+                    if ctrl.encoder_id in global_encoder_ids:
+                        raise ConfigError(
+                            f"{item_path}.controls",
+                            f"Encoder-ID {ctrl.encoder_id} ist bereits in einem anderen Profil definiert",
+                        )
+                    global_encoder_ids.add(ctrl.encoder_id)
 
         led_feedback: LedFeedbackProfile | None = None
         if "led_feedback" in item:
@@ -1245,6 +1232,39 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
             controls=tuple(controls),
             banks=tuple(banks),
             led_feedback=led_feedback,
+        )
+
+    next_auto_id = 1
+    for name, profile in list(profiles.items()):
+        if not profile.banks or not profile.controls:
+            continue
+        if not any(
+            ctrl.kind == "relative-encoder" and ctrl.encoder_id is None
+            for ctrl in profile.controls
+        ):
+            continue
+        resolved_controls: list[ControlProfile] = []
+        for ctrl in profile.controls:
+            if ctrl.kind == "relative-encoder" and ctrl.encoder_id is None:
+                while next_auto_id in global_encoder_ids:
+                    next_auto_id += 1
+                chosen_id = next_auto_id
+                next_auto_id += 1
+                global_encoder_ids.add(chosen_id)
+                resolved_controls.append(
+                    ControlProfile(ctrl.id, ctrl.kind, ctrl.label, chosen_id)
+                )
+            else:
+                resolved_controls.append(ctrl)
+        profiles[name] = ProfileConfig(
+            keys=profile.keys,
+            encoders=profile.encoders,
+            notes=profile.notes,
+            midi_encoders=profile.midi_encoders,
+            midi_values=profile.midi_values,
+            controls=tuple(resolved_controls),
+            banks=profile.banks,
+            led_feedback=profile.led_feedback,
         )
     return profiles
 

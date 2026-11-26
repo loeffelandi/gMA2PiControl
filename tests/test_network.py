@@ -943,3 +943,35 @@ async def test_ntp_wall_clock_jump_does_not_rollback_monotonic_window(tmp_path):
     res = await service.confirm(local_ip="192.168.10.50")
     assert res["last_result"]["status"] == "confirmed"
     await service.close()
+
+
+async def test_resume_clamps_rebooted_monotonic_deadline_to_confirm_timeout(tmp_path):
+    store = PendingStore(tmp_path / "pending.json")
+    # Persisted wall-clock deadline was 1_700_050_000 on previous boot; after reboot without RTC,
+    # wall clock stepped backwards to 1_700_000_010 -> remaining must clamp to confirm_timeout!
+    store.save(
+        PendingChange(
+            interface="eth0",
+            profile_uuid="uuid-1",
+            profile_name="Wired",
+            created_profile=False,
+            previous=RawIPv4(method="auto"),
+            candidate=Candidate(mode="dhcp"),
+            started_at=1_700_049_940.0,
+            phase="awaiting_confirmation",
+            deadline=1_700_050_000.0,
+        )
+    )
+    started_timers: list[float] = []
+    backend = FakeBackend()
+    service = NetworkService(
+        backend,
+        store,
+        confirm_timeout=60.0,
+        clock=lambda: 1_700_000_010.0,
+    )
+    orig_start = service._start_timer
+    service._start_timer = lambda delay: started_timers.append(delay) or orig_start(delay)  # type: ignore[method-assign]
+    await service.resume()
+    assert started_timers == [60.0]
+    await service.close()

@@ -52,3 +52,15 @@ def test_dict_json_pin_psk_and_traceback_secrets_are_redacted():
     for leaked in ("dict-secret", "9876", "wlan-geheim", "json-secret", "tok-abc123", "trace-secret", "ap-pass"):
         assert leaked not in output
     assert "***" in output
+
+
+def test_escaped_quotes_inside_secret_are_fully_redacted():
+    stream = io.StringIO()
+    setup_logging("INFO", stream)
+    logger = logging.getLogger("ma2pi.test")
+    logger.info(r'json={"password": "ab\"cd", "psk": "ef\\gh\"ij"}')
+    logger.info(r"repr={'password': 'xy\'zw'}")
+    output = stream.getvalue()
+    assert "cd" not in output
+    assert "ij" not in output
+    assert "zw" not in output

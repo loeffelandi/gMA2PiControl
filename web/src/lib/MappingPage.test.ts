@@ -635,4 +635,97 @@ describe('MappingPage', () => {
     });
     expect(api.updateConfig).not.toHaveBeenCalled();
   });
+
+  it('rejects empty hardkey modifier, deduplicates stale learnStore, and resolves custom encoder_id', async () => {
+    const { StatusStore } = await import('./status');
+    let socket: { onopen: (() => void) | null; onmessage: ((ev: { data: string }) => void) | null; close: () => void } | null = null;
+    const store = new StatusStore({
+      factory: () => {
+        socket = { onopen: null, onmessage: null, close: vi.fn() };
+        return socket as never;
+      },
+    });
+    store.connect();
+    socket!.onopen?.();
+    // Pre-populate store with a stale cancelled learn result
+    store.receive(JSON.stringify({ type: 'learn', data: { kind: 'encoder', status: 'cancelled' } }));
+
+    const api = fakeApi();
+    (api.devices as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      ...structuredClone(devices),
+      {
+        name: 'custom-wheel',
+        backend: 'midi',
+        profile: 'custom-wheel',
+        vendor_id: 0x1234,
+        product_id: 0x5678,
+        vendor_product: '1234:5678',
+        name_contains: null,
+        detected: { path: '/dev/snd/midiC9D0' },
+        controls: {
+          keys: [],
+          notes: [],
+          encoders: [],
+          midi_encoders: [],
+          values: [],
+          inventory: [
+            { id: 'wheel_pan', kind: 'relative-encoder', label: 'Pan', encoder_id: 8 },
+            { id: 'unbound_fader', kind: 'fader', label: 'UF' },
+          ],
+          banks: [{ number: 1, channel: 1, notes: { '40': 'wheel_pan' } }],
+          logical: ['wheel_pan', 'unbound_fader'],
+        },
+        layout: null,
+        bank_size: 1,
+      },
+    ]);
+
+    render(MappingPage, { props: { api, learnStore: store } });
+    await waitFor(() => expect(screen.getByDisplayValue('Fix')).toBeTruthy());
+
+    // Unbound value control must NOT display fake note 0
+    expect(screen.getByText(/unbound_fader \(fader\)/)).toBeTruthy();
+
+    // Start encoder learn -> regular status event must NOT cancel via stale learnStore.state.learn
+    const encLearnBtns = screen.getAllByTestId('encoder-learn');
+    await fireEvent.click(encLearnBtns[0]);
+    store.receive(
+      JSON.stringify({
+        type: 'status',
+        data: {
+          connected: true,
+          authenticated: true,
+          session: 1,
+          queue_depth: 0,
+          rate: 0,
+          screen_mode: false,
+          frames_sent: 0,
+          last_frame_types: [],
+          reconnects: 0,
+          last_error: null,
+          generation: 1,
+          busy: false,
+        },
+      }),
+    );
+    expect((encLearnBtns[0] as HTMLButtonElement).disabled).toBe(true);
+
+    // Custom-named relative-encoder capture resolves encoder_id = 8
+    store.receive(
+      JSON.stringify({
+        type: 'learn',
+        data: { kind: 'encoder', status: 'captured', control: 'wheel_pan' },
+      }),
+    );
+    await waitFor(() => expect((encLearnBtns[0] as HTMLButtonElement).disabled).toBe(false));
+
+    // Empty hardkey modifier must block save
+    await fireEvent.click(screen.getByText('Modifier hinzufügen'));
+    await fireEvent.click(screen.getByText('Speichern'));
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('Hardkey angeben');
+    });
+    expect(api.updateConfig).not.toHaveBeenCalled();
+    store.disconnect();
+  });
 });

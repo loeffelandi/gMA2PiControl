@@ -141,12 +141,19 @@ class LedOutput:
             self._write(DISABLE, "disable")
         finally:
             try:
-                from .midi_input import rawmidi_drop_output
+                import time as _time
+                from .midi_input import rawmidi_drop_output, rawmidi_output_free
 
-                try:
-                    rawmidi_drop_output(self._fd)
-                except OSError:
-                    pass
+                size = rawmidi_output_free(self._fd)
+                if size is not None:
+                    # Wait briefly if we can probe free space; if unconsumed, drop.
+                    _time.sleep(0.005)
+                    after = rawmidi_output_free(self._fd)
+                    if after is not None and after < size:
+                        try:
+                            rawmidi_drop_output(self._fd)
+                        except OSError:
+                            pass
                 os.close(self._fd)
             finally:
                 self._fd = None

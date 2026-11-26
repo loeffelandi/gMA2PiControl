@@ -226,15 +226,15 @@ class DeviceLearnManager:
         # control just captured so they do not trigger a false duplicate-note
         # error on the next control.
         if session.last_sweep is not None:
-            sw_ch, sw_note, sw_val, sw_kind = session.last_sweep
+            sw_ch, sw_note, sw_val, sw_kind, sw_moving = session.last_sweep
             if (
                 sw_kind != "button"
                 and raw.channel == sw_ch
                 and note == sw_note
-                and raw.value != sw_val
+                and (raw.value != sw_val or sw_moving)
                 and moment - session.last_event <= SWEEP_SETTLE_SECONDS
             ):
-                session.last_sweep = (sw_ch, sw_note, raw.value, sw_kind)
+                session.last_sweep = (sw_ch, sw_note, raw.value, sw_kind, True)
                 session.last_event = moment
                 return True
             session.last_sweep = None
@@ -259,7 +259,13 @@ class DeviceLearnManager:
         session.captured[note] = captured_ctrl
         session.index += 1
         session.last_event = moment
-        session.last_sweep = (raw.channel, note, raw.value, current_kind)
+        session.last_sweep = (
+            raw.channel,
+            note,
+            raw.value,
+            current_kind,
+            current_kind == "relative-encoder",
+        )
         session.error = None
         LOGGER.info(
             "Geräte-Learn: %s -> Note %d (Kanal %d)",
@@ -319,7 +325,12 @@ class DeviceLearnManager:
     def _conflict(
         self, device: str, session: _Session, channel: int, note: int
     ) -> str | None:
-        profile = self.config.profiles[self.config.devices[device].profile]
+        device_cfg = self.config.devices.get(device)
+        if device_cfg is None:
+            return None
+        profile = self.config.profiles.get(device_cfg.profile)
+        if profile is None:
+            return None
         for bank in profile.banks:
             if bank.channel != channel:
                 continue

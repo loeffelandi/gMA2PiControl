@@ -178,6 +178,22 @@ class PlaybackRouter:
                 is_held = getattr(self._engine, "is_held", None)
                 if is_held is not None and is_held(event.device, event.control):
                     return False
+                settings = config.mapping.device_banks.get(event.device)
+                layer = settings.banks.get(event.bank) if settings is not None else None
+                if layer is not None and event.control in layer.keys:
+                    return False
+                target = self._resolve(event)
+                if target is None:
+                    return False
+                if target.kind == "button":
+                    LOGGER.debug(
+                        "Playback-Release ohne Press verworfen: %s (%s)",
+                        event.control,
+                        event.device,
+                    )
+                    return True
+                self._warn_mismatch(event, target)
+                return True
 
             settings = config.mapping.device_banks.get(event.device)
             layer = settings.banks.get(event.bank) if settings is not None else None

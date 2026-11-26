@@ -231,25 +231,10 @@ def _block_key(page: int | str, executor: int) -> tuple[int | str, int]:
     return (page, 100 if executor > 100 else 0)
 
 
-def _belongs_to_block(
-    snapshot: PlaybackSnapshot,
-    block: RequestBlock,
-    *,
-    known_current_page: int | None = None,
-    fixed_pages: frozenset[int] = frozenset(),
-) -> bool:
+def _belongs_to_block(snapshot: PlaybackSnapshot, block: RequestBlock) -> bool:
     """Check that a response answers the given request block."""
 
-    snap_page = snapshot.page + 1
-    if block.page != "current":
-        if snap_page != block.page:
-            return False
-    elif (
-        known_current_page is not None
-        and snap_page != known_current_page
-        and snap_page in fixed_pages
-    ):
-        # Reject a late answer for a polled fixed page when current page differs.
+    if block.page != "current" and snapshot.page + 1 != block.page:
         return False
     if snapshot.items_type and snapshot.items_type != block.items_type:
         return False
@@ -695,12 +680,7 @@ class ExecutorFeedback:
             if snapshot is None:
                 LOGGER.debug("Playbacks-Antwort ohne Executor-Daten verworfen")
                 continue
-            if not _belongs_to_block(
-                snapshot,
-                block,
-                known_current_page=self._known_current_page,
-                fixed_pages=self._fixed_pages,
-            ):
+            if not _belongs_to_block(snapshot, block):
                 LOGGER.debug(
                     "Playbacks-Antwort passt nicht zu %s.%s und wird verworfen",
                     block.page,
@@ -708,8 +688,6 @@ class ExecutorFeedback:
                 )
                 continue
             self._pending.pop(key, None)
-            if block.page == "current":
-                self._known_current_page = snapshot.page + 1
             self._apply(snapshot, block)
             return
         self._pending.pop(key, None)

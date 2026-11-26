@@ -397,3 +397,16 @@ def test_acceleration_separates_banks_and_emits_no_info_log(make_config, caplog)
     # Bank 2 starts cleanly at 0.2 instead of amplifying -0.8 against Bank 1!
     assert client.faders[-1][2] == pytest.approx(0.2)
     assert caplog.records == []
+
+
+def test_unpaired_key_up_after_connection_loss_sends_no_orphan_release(make_config):
+    router, client, _ = _router(make_config, {"ma_page": 4})
+    router.handle(InputEvent("key", "bt_button", 1, "banktest", 1))
+    assert len(client.buttons) == 1
+    router.on_connection_lost()
+    client.buttons.clear()
+    client.commands.clear()
+
+    assert router.handle(InputEvent("key", "bt_button", 0, "banktest", 2)) is True
+    assert client.buttons == []
+    assert client.commands == []

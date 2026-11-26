@@ -89,19 +89,25 @@ async def events_handler(
     drop_waiter = asyncio.create_task(dropped.wait(), name="ma2pi-events-dropped")
     try:
         if initial is not None:
-            await ws.send_json(initial)
+            await asyncio.wait_for(ws.send_json(initial), timeout=5.0)
         while not reader.done() and not drop_waiter.done():
             getter = asyncio.create_task(queue.get(), name="ma2pi-events-get")
             done, _ = await asyncio.wait(
                 {getter, reader, drop_waiter}, return_when=asyncio.FIRST_COMPLETED
             )
             if getter in done and not drop_waiter.done():
-                await ws.send_json(getter.result())
+                try:
+                    await asyncio.wait_for(ws.send_json(getter.result()), timeout=5.0)
+                except TimeoutError:
+                    LOGGER.warning("UI-Client nimmt WebSocket-Frames nicht ab, trenne Verbindung")
+                    break
             else:
                 getter.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await getter
                 break
+    except TimeoutError:
+        LOGGER.warning("UI-Client nimmt initialen WebSocket-Frame nicht ab, trenne Verbindung")
     finally:
         bus.unsubscribe(queue)
         drop_waiter.cancel()

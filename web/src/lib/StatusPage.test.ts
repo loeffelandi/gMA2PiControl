@@ -407,6 +407,44 @@ describe('StatusPage', () => {
       expect(container.querySelector('.device-id')?.textContent).toBe('cherry');
     });
 
+    // Disconnect again, then replug with fresh RX activity (seq > lostSeq) -> reloads!
+    currentDevices = [{ ...devices[0], detected: null }];
+    socket.emitMessage({
+      type: 'activity',
+      data: {
+        entries: [
+          {
+            seq: 10,
+            ts: 1700000010,
+            direction: 'rx',
+            device: 'system',
+            kind: 'device-lost',
+            summary: 'cherry: device lost',
+          },
+        ],
+      },
+    });
+    await waitFor(() => expect(devicesLoader).toHaveBeenCalledTimes(5));
+
+    currentDevices = [{ ...devices[0], detected: { path: '/dev/input/event2' } }];
+    socket.emitMessage({
+      type: 'activity',
+      data: {
+        devices: { cherry: { rx: 2, tx: 0, last_rx: 1700000012, last_tx: null } },
+        entries: [
+          {
+            seq: 11,
+            ts: 1700000012,
+            direction: 'rx',
+            device: 'cherry',
+            kind: 'key',
+            summary: 'ch_pg_plus · value 1',
+          },
+        ],
+      },
+    });
+    await waitFor(() => expect(devicesLoader).toHaveBeenCalledTimes(6));
+
     store.disconnect();
   });
 });

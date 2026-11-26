@@ -11,12 +11,14 @@
   import AssignDialog from './AssignDialog.svelte';
   import DeviceSurface from './DeviceSurface.svelte';
   import LearnPanel from './LearnPanel.svelte';
+  import type { StatusStore } from './status';
 
   interface Props {
     api: ApiClient;
+    store?: StatusStore;
   }
 
-  let { api }: Props = $props();
+  let { api, store }: Props = $props();
 
   type AnyConfig = Record<string, any>;
 
@@ -104,6 +106,9 @@
       config = nextConfig;
       if (!selectedDevice || !devices.some((entry) => entry.name === selectedDevice)) {
         selectedDevice = devices[0]?.name ?? null;
+        dialog = null;
+        showLearn = false;
+        learnControl = null;
       }
       const active = devices.find((entry) => entry.name === selectedDevice) ?? null;
       if (active) {
@@ -133,6 +138,9 @@
     selectedDevice = name;
     lastSyncedDevice = name;
     selection = [];
+    dialog = null;
+    showLearn = false;
+    learnControl = null;
     const target = devices.find((entry) => entry.name === name) ?? null;
     if (target) {
       bankSize = target.bank_size;
@@ -234,9 +242,38 @@
     };
   }
 
+  function encoderIdFor(control: string): number | null {
+    const invHit = inventory.find((item) => item.id === control);
+    if (
+      invHit?.kind === 'relative-encoder' &&
+      typeof invHit.encoder_id === 'number' &&
+      Number.isInteger(invHit.encoder_id) &&
+      invHit.encoder_id >= 1
+    ) {
+      return invHit.encoder_id;
+    }
+    const profHit = Array.isArray(profile?.controls)
+      ? profile.controls.find((item: AnyConfig) => item?.id === control)
+      : null;
+    if (
+      profHit?.kind === 'relative-encoder' &&
+      typeof profHit.encoder_id === 'number' &&
+      Number.isInteger(profHit.encoder_id) &&
+      profHit.encoder_id >= 1
+    ) {
+      return profHit.encoder_id;
+    }
+    if (control.startsWith('encoder.')) {
+      const parsed = Number(control.slice('encoder.'.length));
+      if (Number.isInteger(parsed) && parsed >= 1) return parsed;
+    }
+    return null;
+  }
+
   function encoderFor(control: string): AnyConfig | null {
-    if (!config || !control.startsWith('encoder.')) return null;
-    const id = Number(control.slice('encoder.'.length));
+    if (!config) return null;
+    const id = encoderIdFor(control);
+    if (id === null) return null;
     const override = layerEncoderList(bank).find((entry) => entry.id === id);
     if (override) return override;
     return globalEncoderList().find((entry) => entry.id === id) ?? null;
@@ -253,8 +290,8 @@
     if (layer?.keys?.[control] !== undefined || layer?.playbacks?.[control] !== undefined) {
       return true;
     }
-    if (control.startsWith('encoder.')) {
-      const id = Number(control.slice('encoder.'.length));
+    const id = encoderIdFor(control);
+    if (id !== null) {
       return layerEncoderList(number).some((entry) => entry.id === id);
     }
     return false;
@@ -265,8 +302,9 @@
     if (bank >= 2) return false;
     if (config?.mapping?.keys?.[control] !== undefined) return true;
     if (config?.mapping?.playbacks?.[control] !== undefined) return true;
-    if (control.startsWith('encoder.')) {
-      const id = Number(control.slice('encoder.'.length));
+    if (config?.mapping?.modifiers?.[control] !== undefined) return true;
+    const id = encoderIdFor(control);
+    if (id !== null) {
       return globalEncoderList().some((entry) => entry.id === id);
     }
     return false;
@@ -279,16 +317,16 @@
     dialogControls.some((ctrl) => hasRemovableAssignment(ctrl)),
   );
   const dialogInherited = $derived.by(() => {
-    if (!dialog || bank < 2) return false;
-    const ctrl = dialog.control;
-    const override = layerFor(bank)?.playbacks?.[ctrl];
-    const base = config?.mapping?.playbacks?.[ctrl];
-    return (
-      !hasLayerOverrideFor(bank, ctrl) &&
-      Boolean(base) &&
-      (override?.executor === undefined || override?.executor === null) &&
-      bankOffset() > 0
-    );
+    if (!dialog || bank < 2 || dialogControls.length === 0) return false;
+    return dialogControls.every((ctrl) => {
+      const override = layerFor(bank)?.playbacks?.[ctrl];
+      const base = config?.mapping?.playbacks?.[ctrl];
+      return (
+        !hasLayerOverrideFor(bank, ctrl) &&
+        Boolean(base) &&
+        (override?.executor === undefined || override?.executor === null)
+      );
+    });
   });
 
   function keyAssignment(key: AnyConfig): string | undefined {
@@ -366,8 +404,9 @@
     const target = selection.length > 1 ? selection[0] : control;
     const layerKey = layerFor(bank)?.keys?.[target] ?? null;
     const playback = playbackFor(target);
-    const encoder = target.startsWith('encoder.') ? encoderFor(target) : null;
+    const encoder = encoderIdFor(target) !== null ? encoderFor(target) : null;
     const key = keyFor(target);
+    const modifier = bank === 1 ? config?.mapping?.modifiers?.[target] ?? null : null;
     const initial = layerKey
       ? keyInitial(layerKey)
       : playback
@@ -388,7 +427,9 @@
             }
           : key
             ? keyInitial(key)
-            : null;
+            : modifier?.hardkey
+              ? { action: 'hardkey', hardkey: String(modifier.hardkey) }
+              : null;
     dialog = {
       control: target,
       initial,
@@ -403,10 +444,10 @@
         throw new Error('Encoder-Ziele nur für ein einzelnes Control.');
       }
       const control = controls[0];
-      if (!control.startsWith('encoder.')) {
+      const id = encoderIdFor(control);
+      if (id === null) {
         throw new Error('Control ist kein Attribut-Encoder.');
       }
-      const id = Number(control.slice('encoder.'.length));
       const attribute = String(values.attribute ?? '').trim();
       const slot = Number(values.slot);
       const target: AnyConfig = attribute ? { id, attribute } : { id, slot };
@@ -495,6 +536,9 @@
       area.playbacks[control] = null;
 
       if (useGlobalScope) {
+        if (config?.mapping?.modifiers?.[control] !== undefined) {
+          (patch.mapping.modifiers ??= {})[control] = null;
+        }
         const layer1 = layerFor(1);
         if (
           layer1?.keys?.[control] !== undefined ||
@@ -595,8 +639,8 @@
     const patch: AnyConfig = { mapping: {} };
 
     for (const control of controls) {
-      const isEncoder = control.startsWith('encoder.');
-      const encoderId = isEncoder ? Number(control.slice('encoder.'.length)) : null;
+      const encoderId = encoderIdFor(control);
+      const isEncoder = encoderId !== null;
       const hasOverride = hasLayerOverrideFor(bank, control);
 
       if (bank >= 2 || hasOverride) {
@@ -627,6 +671,9 @@
       } else {
         (patch.mapping.keys ??= {})[control] = null;
         (patch.mapping.playbacks ??= {})[control] = null;
+        if (config?.mapping?.modifiers?.[control] !== undefined) {
+          (patch.mapping.modifiers ??= {})[control] = null;
+        }
       }
     }
 
@@ -836,9 +883,10 @@
           {/if}
         </div>
 
-        {#if showLearn}
+        {#if showLearn && device.backend === 'midi' && banks.length}
           <LearnPanel
             {api}
+            {store}
             device={device.name}
             {bank}
             control={learnControl}
@@ -862,6 +910,7 @@
       initial={dialog.initial}
       inherited={dialogInherited}
       hasAssignment={dialogHasAssignment}
+      screenEncoders={config?.mapping?.screen_encoders ?? {}}
       onSave={saveAssignment}
       onClear={clearAssignment}
       onClose={() => (dialog = null)}

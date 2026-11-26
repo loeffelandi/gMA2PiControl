@@ -49,7 +49,16 @@ def _controls(profile: ProfileConfig) -> dict[str, Any]:
         for value in profile.midi_values
     ]
     inventory = [
-        {"id": control.id, "kind": control.kind, "label": control.label}
+        {
+            "id": control.id,
+            "kind": control.kind,
+            "label": control.label,
+            **(
+                {"encoder_id": control.encoder_id}
+                if control.encoder_id is not None
+                else {}
+            ),
+        }
         for control in profile.controls
     ]
     declared = {control["id"] for control in inventory}
@@ -154,16 +163,28 @@ def device_summary(
     """Describe every configured device, optionally matched to live hardware."""
 
     pool = list(detected or [])
+    evdev_pool = sorted(
+        (info for info in pool if info.backend == "evdev"),
+        key=lambda info: (-info.keyboard_score, -info.input_score, info.path),
+    )
+    midi_pool = sorted(
+        (info for info in pool if info.backend == "midi"),
+        key=lambda info: info.path,
+    )
+    claimed_paths: set[str] = set()
     result: list[dict[str, Any]] = []
     for name, device in config.devices.items():
+        candidates = midi_pool if device.backend == "midi" else evdev_pool
         match = next(
             (
                 info
-                for info in pool
-                if info.backend == device.backend and device_matches(device, info)
+                for info in candidates
+                if info.path not in claimed_paths and device_matches(device, info)
             ),
             None,
         )
+        if match is not None:
+            claimed_paths.add(match.path)
         profile = config.profiles[device.profile]
         result.append(
             _entry(

@@ -126,7 +126,7 @@ def _serialize_profile(profile: ProfileConfig) -> dict[str, Any]:
                 **(
                     {"encoder_id": ctrl.encoder_id}
                     if ctrl.encoder_id is not None
-                    and not ctrl.id.startswith("encoder.")
+                    and ctrl.id != f"encoder.{ctrl.encoder_id}"
                     else {}
                 ),
             }

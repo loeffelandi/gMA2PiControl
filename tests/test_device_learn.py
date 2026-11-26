@@ -215,3 +215,29 @@ def test_fader_sweep_does_not_conflict_button_release_ignored_and_abandoned_expi
     abandoned = manager.poll()
     assert abandoned == {"active": False, "abandoned": True}
     assert manager.active is False
+
+
+def test_relative_encoder_identical_velocities_absorbed_during_sweep(make_config):
+    def mutate(data):
+        data["profiles"]["encbank"] = {
+            "controls": [
+                {"id": "wheel_1", "kind": "relative-encoder"},
+                {"id": "btn_1", "kind": "button"},
+            ],
+            "banks": [{"number": 1, "channel": 1, "notes": {}}],
+        }
+        data["devices"]["encdev"] = {
+            "backend": "midi",
+            "vendor_id": 0x1234,
+            "product_id": 0x5678,
+            "profile": "encbank",
+        }
+
+    now = [0.0]
+    manager = DeviceLearnManager(make_config(mutate), clock=lambda: now[0])
+    manager.start("encdev", 1)
+    manager.handle_raw("encdev", RawEvent("note_on", "30", 127, channel=1))
+    now[0] = 0.05
+    manager.handle_raw("encdev", RawEvent("note_on", "30", 127, channel=1))
+    assert manager.status()["error"] is None
+    assert manager.status()["current"] == "btn_1"

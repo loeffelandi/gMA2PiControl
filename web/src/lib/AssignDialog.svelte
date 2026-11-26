@@ -52,6 +52,7 @@
     initial?: InitialValues | null;
     inherited?: boolean;
     hasAssignment?: boolean;
+    screenEncoders?: Record<string, number | undefined>;
     onSave: (values: {
       action: ActionKind;
       hardkey: string;
@@ -64,6 +65,7 @@
       start: number;
       step: number;
       slot: number;
+      encoderMode?: 'slot' | 'attribute';
       attribute: string;
       screen: number;
       scope: AssignScope;
@@ -80,6 +82,7 @@
     initial = null,
     inherited = false,
     hasAssignment = false,
+    screenEncoders,
     onSave,
     onClear,
     onClose,
@@ -142,6 +145,20 @@
     edits = { forBase: currentBase, values: { ...prev, [name]: value } };
   }
 
+  function setSlot(nextSlot: number): void {
+    const currentBase = base;
+    const prev = edits.forBase === currentBase ? edits.values : {};
+    const nextValues: Partial<FormValues> = { ...prev, slot: nextSlot };
+    if (screenEncoders) {
+      const mapped =
+        nextSlot >= 1 && nextSlot <= 4
+          ? Number(screenEncoders[String(nextSlot)] ?? 0)
+          : 0;
+      nextValues.encoderScreen = Number.isInteger(mapped) ? mapped : 0;
+    }
+    edits = { forBase: currentBase, values: nextValues };
+  }
+
   function openModal(node: HTMLDialogElement) {
     if (typeof node.showModal === 'function') {
       if (!node.open) {
@@ -192,8 +209,53 @@
   async function submit(event: SubmitEvent): Promise<void> {
     event.preventDefault();
     if (multi && action === 'encoder') return;
-    saving = true;
     error = null;
+
+    const trimmedAttribute = field('attribute').trim();
+    const trimmedPage = field('page').trim();
+    const trimmedHardkey = field('hardkey').trim();
+    const trimmedCommand = field('command').trim();
+
+    if (action === 'encoder') {
+      if (encoderMode === 'attribute') {
+        if (!trimmedAttribute) {
+          error = 'Bitte einen Attributnamen eingeben.';
+          return;
+        }
+      } else if (!Number.isInteger(slot) || slot < 1 || slot > 8) {
+        error = 'Slot muss zwischen 1 und 8 liegen.';
+        return;
+      }
+    } else if (action === 'hardkey' && !trimmedHardkey) {
+      error = 'Bitte einen Hardkey eingeben.';
+      return;
+    } else if (action === 'command' && !trimmedCommand) {
+      error = 'Bitte einen Befehl eingeben.';
+      return;
+    } else if (action === 'executor') {
+      const pageNum = Number(trimmedPage);
+      const pageValid =
+        trimmedPage === 'current' ||
+        (trimmedPage !== '' && Number.isInteger(pageNum) && pageNum >= 1);
+      if (!pageValid) {
+        error = 'Page muss "current" oder eine ganze Zahl ab 1 sein.';
+        return;
+      }
+      if (!Number.isInteger(executor) || executor < 1) {
+        error = 'Executor muss eine ganze Zahl ab 1 sein.';
+        return;
+      }
+      if (multi && (!Number.isInteger(step) || step < 1)) {
+        error = 'Schrittweite muss eine ganze Zahl ab 1 sein.';
+        return;
+      }
+      if (targetKind === 'button' && ![1, 2, 3].includes(Number(field('button')))) {
+        error = 'Button muss 1, 2 oder 3 sein.';
+        return;
+      }
+    }
+
+    saving = true;
     try {
       const currentScreen =
         action === 'screen'
@@ -203,9 +265,9 @@
             : 0;
       await onSave({
         action,
-        hardkey: field('hardkey'),
-        command: field('command'),
-        page: field('page'),
+        hardkey: trimmedHardkey,
+        command: trimmedCommand,
+        page: trimmedPage,
         executor,
         targetKind,
         button: field('button'),
@@ -213,9 +275,10 @@
         start: executor,
         step,
         slot,
+        encoderMode,
         attribute:
           action === 'encoder' && encoderMode === 'attribute'
-            ? field('attribute')
+            ? trimmedAttribute
             : '',
         screen: currentScreen,
         scope: inherited && action === 'executor' && bank >= 2 ? field('scope') : 'bank',
@@ -283,7 +346,7 @@
               type="number"
               min="1"
               max="8"
-              bind:value={() => field('slot'), (v) => setField('slot', v)}
+              bind:value={() => field('slot'), (v) => setSlot(v)}
             />
           </label>
           {#if slot >= 1 && slot <= 4 && bank === 1}

@@ -406,6 +406,16 @@ class RecoveryService:
             await asyncio.to_thread(self._store.save, candidate)
         except OSError as exc:
             self._settings = previous
+            try:
+                if previous.enabled:
+                    await self._backend.apply(previous)
+                else:
+                    await self._backend.disable()
+            except Exception as rollback_exc:
+                LOGGER.error(
+                    "Rettungs-WLAN-Rollback nach Speicherfehler fehlgeschlagen: %s",
+                    rollback_exc,
+                )
             raise RecoveryError(f"Rettungs-Einstellungen nicht schreibbar: {exc}") from exc
 
         self._settings = candidate

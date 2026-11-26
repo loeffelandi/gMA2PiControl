@@ -350,3 +350,26 @@ async def test_store_roundtrips_led_feedback_fields_and_keeps_others(tmp_path):
     again = reloaded.profiles["midicraft-enc"].led_feedback
     assert again.enabled is False
     assert again.frame_interval_ms == 50
+
+
+def test_redacted_config_preserves_custom_encoder_dot_control_id(make_config):
+    from ma2pi.config import parse_config
+
+    def mutate(data):
+        data["profiles"]["banked-enc"] = {
+            "controls": [
+                {"id": "encoder.pan", "kind": "relative-encoder", "encoder_id": 9}
+            ],
+            "banks": [{"number": 1, "channel": 1, "notes": {"40": "encoder.pan"}}],
+        }
+
+    cfg = make_config(mutate)
+    payload = redacted_config(cfg)
+    ctrl = payload["profiles"]["banked-enc"]["controls"][0]
+    assert ctrl["id"] == "encoder.pan"
+    assert ctrl["encoder_id"] == 9
+    payload["ma2"].pop("password_set", None)
+    payload["ma2"]["password_env"] = "MA2PI_PASSWORD"
+    payload["web"].pop("pin_set", None)
+    reparsed = parse_config(payload, source_path="<roundtrip>")
+    assert reparsed.profiles["banked-enc"].controls[0].encoder_id == 9

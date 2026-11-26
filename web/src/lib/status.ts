@@ -213,6 +213,9 @@ export class StatusStore {
       this.patch({
         status: info,
         activity: mergeSnapshot(info.activity),
+        ...(typeof info.generation === 'number'
+          ? { configGeneration: info.generation }
+          : {}),
         lastError: null,
       });
     } else if (message.type === 'activity' && message.data) {

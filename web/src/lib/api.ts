@@ -197,6 +197,7 @@ export interface DeviceControlInventory {
   id: string;
   kind: 'button' | 'fader' | 'poti' | 'encoder' | 'relative-encoder';
   label: string | null;
+  encoder_id?: number;
 }
 
 export interface DeviceBank {

@@ -18,7 +18,7 @@
 
   interface ValueControlInfo {
     control: string;
-    note: number;
+    note: number | null;
     kind: 'fader' | 'poti' | 'encoder';
   }
 
@@ -32,6 +32,7 @@
     id: string;
     kind: 'button' | 'fader' | 'poti' | 'encoder' | 'relative-encoder';
     label?: string | null;
+    encoder_id?: number;
   }
 
   interface KeyRow {
@@ -140,8 +141,10 @@
         kind: entry.kind,
       });
     }
+    const bankOne =
+      (controls.banks ?? []).find((entry) => entry.number === 1) ?? controls.banks?.[0];
     const firstBankNotes: Record<string, number> = {};
-    for (const entry of bankNotesList(controls.banks?.[0])) {
+    for (const entry of bankNotesList(bankOne)) {
       if (!(entry.control in firstBankNotes)) {
         firstBankNotes[entry.control] = entry.note;
       }
@@ -152,7 +155,7 @@
         seen[item.id] = true;
         out.push({
           control: item.id,
-          note: firstBankNotes[item.id] ?? 0,
+          note: item.id in firstBankNotes ? firstBankNotes[item.id] : null,
           kind: item.kind,
         });
       }
@@ -194,6 +197,40 @@
     ])].sort(),
   );
 
+  function encoderIdOfEntry(entry: RawInventoryEntry): number | null {
+    if (entry.kind !== 'relative-encoder') return null;
+    if (
+      typeof entry.encoder_id === 'number' &&
+      Number.isInteger(entry.encoder_id) &&
+      entry.encoder_id >= 1
+    ) {
+      return entry.encoder_id;
+    }
+    if (entry.id.startsWith('encoder.')) {
+      const parsed = Number(entry.id.slice('encoder.'.length));
+      if (Number.isInteger(parsed) && parsed >= 1) return parsed;
+    }
+    return null;
+  }
+
+  function encoderIdForControl(control: string): number | null {
+    for (const device of devices) {
+      const controls = device.controls as unknown as {
+        inventory?: RawInventoryEntry[];
+      };
+      const hit = (controls.inventory ?? []).find((entry) => entry.id === control);
+      if (hit) {
+        const resolved = encoderIdOfEntry(hit);
+        if (resolved !== null) return resolved;
+      }
+    }
+    if (control.startsWith('encoder.')) {
+      const parsed = Number(control.slice('encoder.'.length));
+      if (Number.isInteger(parsed) && parsed >= 1) return parsed;
+    }
+    return null;
+  }
+
   const encoderIds = $derived(
     [...new Set(devices.flatMap((device) => {
       const controls = device.controls as unknown as {
@@ -202,9 +239,8 @@
         inventory?: RawInventoryEntry[];
       };
       const invIds = (controls.inventory ?? [])
-        .filter((entry) => entry.kind === 'relative-encoder' && entry.id.startsWith('encoder.'))
-        .map((entry) => Number(entry.id.slice('encoder.'.length)))
-        .filter((id) => Number.isInteger(id) && id >= 1);
+        .map((entry) => encoderIdOfEntry(entry))
+        .filter((id): id is number => id !== null);
       return [
         ...(controls.encoders ?? []).map((entry) => entry.id),
         ...(controls.midi_encoders ?? []).map((entry) => entry.id),
@@ -254,6 +290,10 @@
         inventory?: RawInventoryEntry[];
         banks?: RawBankEntry[];
       };
+      const encoderAliases = (controls.inventory ?? [])
+        .map((entry) => encoderIdOfEntry(entry))
+        .filter((id): id is number => id !== null)
+        .map((id) => `encoder.${id}`);
       const names = [
         ...(controls.keys ?? []).map((entry) => entry.control),
         ...(controls.notes ?? []).map((entry) => entry.control),
@@ -261,6 +301,7 @@
         ...(controls.midi_encoders ?? []).map((entry) => entry.control ?? `encoder.${entry.id}`),
         ...(controls.values ?? []).map((entry) => entry.control),
         ...(controls.inventory ?? []).map((entry) => entry.id),
+        ...encoderAliases,
         ...(controls.banks ?? []).flatMap((bank) =>
           bankNotesList(bank).map((entry) => entry.control),
         ),
@@ -348,15 +389,21 @@
     }
   }
 
+  let previousLearn: LearnResult | null = null;
+
   onMount(() => {
     void loadInitial();
     if (!learnStore) return;
-    learnState = learnStore.state.learn;
+    previousLearn = learnStore.state.learn;
+    learnState = previousLearn;
     presence = learnStore.state.status?.presence ?? {};
     return learnStore.subscribe(() => {
-      learnState = learnStore.state.learn;
       presence = learnStore.state.status?.presence ?? {};
-      applyLearn(learnState);
+      const next = learnStore.state.learn;
+      if (next === previousLearn) return;
+      previousLearn = next;
+      learnState = next;
+      applyLearn(next);
     });
   });
 
@@ -388,9 +435,9 @@
         dirty = true;
       }
     } else if (result.kind === 'encoder') {
-      const id = Number(result.control?.split('.')[1] ?? 0);
+      const id = result.control ? encoderIdForControl(result.control) : null;
       const row = encoderRows.find((entry) => entry.uid === targetUid);
-      if (row && id > 0) {
+      if (row && id !== null && id > 0) {
         row.id = id;
         dirty = true;
       }
@@ -403,11 +450,15 @@
     control: string,
     uid: number,
   ): Promise<void> {
+    previousLearn = learnStore?.state.learn ?? null;
     pendingLearn = { kind, uid };
     learnedControl = null;
     message = null;
     try {
-      await api.startLearn(kind, deviceForControl(control));
+      const started = await api.startLearn(kind, deviceForControl(control));
+      if (started) {
+        learnState = started;
+      }
       message = { ok: true, text: `Learn aktiv – bitte ${kind === 'key' ? 'Taste drücken' : 'Encoder drehen'}.` };
     } catch (error) {
       pendingLearn = null;
@@ -517,6 +568,16 @@
     return null;
   }
 
+  function modifierError(): string | null {
+    for (const row of modifierRows) {
+      if (!row.control) return 'Bitte für jeden Modifier ein Control wählen.';
+      if (row.kind === 'hardkey' && !row.hardkey.trim()) {
+        return `Bitte für Modifier ${row.control} einen Hardkey angeben.`;
+      }
+    }
+    return null;
+  }
+
   function removeByUid<T extends { uid: number }>(rows: T[], uid: number): T[] {
     return rows.filter((row) => row.uid !== uid);
   }
@@ -554,8 +615,8 @@
       if (!row.control) continue;
       if (row.kind === 'local') {
         modifiers[row.control] = { local: true, hardkey: null };
-      } else if (row.hardkey) {
-        modifiers[row.control] = { hardkey: row.hardkey, local: null };
+      } else if (row.hardkey.trim()) {
+        modifiers[row.control] = { hardkey: row.hardkey.trim(), local: null };
       }
     }
     for (const control of originalModifiers) {
@@ -649,7 +710,7 @@
   }
 
   async function save(): Promise<void> {
-    const invalid = playbackError();
+    const invalid = modifierError() ?? playbackError();
     if (invalid) {
       message = { ok: false, text: invalid };
       return;
@@ -691,7 +752,11 @@
             <span class="muted">
               · Werte:
               {valueControlsOf(device)
-                .map((entry) => `${entry.control} (${entry.note}, ${entry.kind})`)
+                .map((entry) =>
+                  entry.note !== null
+                    ? `${entry.control} (${entry.note}, ${entry.kind})`
+                    : `${entry.control} (${entry.kind})`,
+                )
                 .join(', ')}
             </span>
           {/if}

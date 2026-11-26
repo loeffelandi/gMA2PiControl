@@ -304,3 +304,14 @@ async def test_process_input_records_rx() -> None:
     assert entry["direction"] == "rx"
     assert entry["device"] == "cherry"
     assert entry["summary"] == "ch_pg_plus · value 1 · note 42 · bank 1"
+
+
+def test_describe_midi_formats_asl_compound_and_control_frames() -> None:
+    assert describe_midi(b"\x9f\x7f\x7f") == "led enable"
+    assert describe_midi(b"\x9f\x7f\x7e") == "led disable"
+    assert (
+        describe_midi(b"\x9f\x7f\x7f\x90\x09\x7f\x91\x09\x04")
+        == "note 9 · brightness 127 · color 4"
+    )
+    assert describe_midi(b"\x90\x09\x19\x91\x09\x3c") == "note 9 · brightness 25 · color 60"
+    assert describe_midi(b"\x90\x41\x25") == "note 65 · velocity 37"

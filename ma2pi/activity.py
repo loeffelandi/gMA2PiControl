@@ -90,8 +90,27 @@ def describe_frame(kind: str, frame: dict[str, Any]) -> str:
 
 
 def describe_midi(data: bytes) -> str:
-    """Describe a device write as note/velocity when it is a note-on frame."""
+    """Describe a device write as note/velocity or ASL LED frame."""
 
+    if data == b"\x9f\x7f\x7f":
+        return "led enable"
+    if data == b"\x9f\x7f\x7e":
+        return "led disable"
+    if (
+        len(data) >= 9
+        and data[:3] == b"\x9f\x7f\x7f"
+        and (data[3] & 0xF0) == 0x90
+        and (data[6] & 0xF0) == 0x90
+        and data[4] == data[7]
+    ):
+        return _clean(f"note {data[4]} · brightness {data[5]} · color {data[8]}")
+    if (
+        len(data) == 6
+        and (data[0] & 0xF0) == 0x90
+        and (data[3] & 0xF0) == 0x90
+        and data[1] == data[4]
+    ):
+        return _clean(f"note {data[1]} · brightness {data[2]} · color {data[5]}")
     if len(data) >= 3 and data[0] & 0xF0 == 0x90:
         return _clean(f"note {data[1]} · velocity {data[2]}")
     return _clean(f"{len(data)} Byte")

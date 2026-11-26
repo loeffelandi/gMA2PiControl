@@ -467,7 +467,9 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
             playback.release_device(dev, send=send)
             engine.release_device(dev, send=send)
 
-    learn.on_start = _release_for_learn
+    # Global Mapping-Learn intercepts events from every device in _process_input,
+    # so starting it must release any held controls on all devices.
+    learn.on_start = lambda _dev: _release_for_learn(None)
     device_learn.on_start = _release_for_learn
     store.set_playback(playback)
     client.add_connection_lost_callback(engine.on_connection_lost)

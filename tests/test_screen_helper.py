@@ -62,6 +62,47 @@ def test_close_releases_socket():
     assert helper._sock is None
 
 
+async def test_async_dns_coalesces_latest_screen_and_cancels_on_close(monkeypatch):
+    import asyncio
+    import socket as _socket
+
+    gate = asyncio.Event()
+    helper = ScreenHelper(ScreenHelperSettings(enabled=True, host="onpc.local", port=31337))
+    fake = FakeSocket()
+    helper._sock = fake
+    helper._family = _socket.AF_INET
+
+    async def fake_getaddrinfo(*_args, **_kwargs):
+        await gate.wait()
+        return [(_socket.AF_INET, _socket.SOCK_DGRAM, 0, "", ("192.168.10.20", 31337))]
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", fake_getaddrinfo)
+    helper.send(1)
+    helper.send(3)
+    gate.set()
+    await asyncio.sleep(0.01)
+    assert fake.sent == [(b"screen 3", ("192.168.10.20", 31337))]
+
+    # Now test close() while DNS resolution is still pending
+    gate2 = asyncio.Event()
+    helper2 = ScreenHelper(ScreenHelperSettings(enabled=True, host="onpc.local", port=31337))
+    fake2 = FakeSocket()
+    helper2._sock = fake2
+    helper2._family = _socket.AF_INET
+
+    async def slow_getaddrinfo(*_args, **_kwargs):
+        await gate2.wait()
+        return [(_socket.AF_INET, _socket.SOCK_DGRAM, 0, "", ("192.168.10.20", 31337))]
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", slow_getaddrinfo)
+    helper2.send(2)
+    helper2.close()
+    gate2.set()
+    await asyncio.sleep(0.01)
+    assert fake2.sent == []
+    assert helper2._sock is None
+
+
 def test_client_screen_shortcut_dry_run_logs(small_config, caplog):
     from ma2pi.ma2_client import Ma2Client
 

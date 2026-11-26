@@ -48,10 +48,7 @@
     return fallback;
   }
 
-  function startLive(): void {
-    if (liveStarted) return;
-    liveStarted = true;
-    statusStore.connect();
+  function runVersionCheck(): void {
     api
       .checkVersion()
       .then(() => {
@@ -60,6 +57,18 @@
       .catch((error: unknown) => {
         versionError = formatError(error, 'Versionsprüfung fehlgeschlagen');
       });
+  }
+
+  function startLive(): void {
+    if (liveStarted) {
+      if (versionError !== null) {
+        runVersionCheck();
+      }
+      return;
+    }
+    liveStarted = true;
+    statusStore.connect();
+    runVersionCheck();
   }
 
   function stopLive(clear = false): void {
@@ -221,7 +230,7 @@
     {:else if page === 'mapping'}
       <MappingPage {api} learnStore={statusStore} />
     {:else if page === 'devices'}
-      <DevicesPage {api} />
+      <DevicesPage {api} store={statusStore} />
     {:else if page === 'advanced'}
       <AdvancedPage {api} onAuthChange={() => void refreshAuth()} />
     {:else if page === 'backups'}

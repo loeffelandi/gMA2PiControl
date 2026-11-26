@@ -222,3 +222,17 @@ Fader-Endwerte erneut gesendet werden.
 - **WHEN** während getrennter Verbindung die Bank gewechselt wurde und die
   Session danach wieder steht
 - **THEN** wird bei der nächsten Eingabe die MA-Page erneut gesendet
+
+### Requirement: Ungepaartes Loslassen erzeugt keinen Executor-Frame
+
+Trifft für ein Playback-Button-Control ein Loslassen (`value < 0.5`) ein, ohne
+dass dafür im `PlaybackRouter` ein aktiver Tastendruck vermerkt ist (etwa nach
+Verbindungsverlust, Konfigurations-Cleanup oder Ende eines Lernmodus), MUST der
+Router das Ereignis verwerfen, ohne einen `playbackButton`-Release-Frame oder
+einen `Page`-Befehl zu senden.
+
+#### Scenario: Physisches Loslassen nach Session-Reset
+
+- **WHEN** eine gehaltene Playback-Taste durch Verbindungsverlust zurückgesetzt
+  wurde und der Bediener sie nach dem Reconnect loslässt
+- **THEN** sendet `ma2pi` keinen verwaisten Release-Frame an die neue Session

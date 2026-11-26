@@ -173,4 +173,44 @@ describe('LearnPanel', () => {
     unmount();
     expect(api.cancelDeviceLearn).toHaveBeenCalledOnce();
   });
+
+  it('clears startedSession when session ends externally and formats ApiError.detail', async () => {
+    const { ApiError } = await import('./api');
+    let active = false;
+    const api = fakeApi({
+      deviceLearnStatus: vi.fn(async () =>
+        active
+          ? { active: true, device: 'midicraft', bank: 2, channel: 2, current: 'mc_fader_1', total: 1, index: 0 }
+          : { active: false },
+      ),
+      startDeviceLearn: vi.fn(async () => {
+        active = true;
+        return {
+          active: true,
+          device: 'midicraft',
+          bank: 2,
+          channel: 2,
+          current: 'mc_fader_1',
+          total: 1,
+          index: 0,
+        };
+      }),
+      skipDeviceLearn: vi.fn(async () => {
+        throw new ApiError(409, 'conflict', 'Sitzung bereits beendet');
+      }),
+    });
+
+    const { unmount } = render(LearnPanel, { props: { api, device: 'midicraft', bank: 2 } });
+    await waitFor(() => expect(screen.getByText('Learn starten')).toBeTruthy());
+    await fireEvent.click(screen.getByText('Learn starten'));
+    await waitFor(() => expect(screen.getByText('Überspringen')).toBeTruthy());
+    await fireEvent.click(screen.getByText('Überspringen'));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Sitzung bereits beendet'));
+
+    // Session ends on daemon and 500 ms poll observes active: false -> startedSession clears!
+    active = false;
+    await waitFor(() => expect(screen.getByText('Learn starten')).toBeTruthy(), { timeout: 1500 });
+    unmount();
+    expect(api.cancelDeviceLearn).not.toHaveBeenCalled();
+  });
 });

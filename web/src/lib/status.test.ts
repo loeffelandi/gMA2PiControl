@@ -213,4 +213,30 @@ describe('StatusStore', () => {
       lastError: null,
     });
   });
+
+  it('populates configGeneration from initial status messages too', () => {
+    const store = new StatusStore({
+      factory: () => ({ onopen: null, onmessage: null, onclose: null, onerror: null, close: vi.fn() }),
+    });
+    store.receive(
+      JSON.stringify({
+        type: 'status',
+        data: {
+          connected: true,
+          authenticated: true,
+          session: 1,
+          queue_depth: 0,
+          rate: 0,
+          screen_mode: false,
+          frames_sent: 0,
+          last_frame_types: [],
+          reconnects: 0,
+          last_error: null,
+          generation: 12,
+          busy: false,
+        },
+      }),
+    );
+    expect(store.state.configGeneration).toBe(12);
+  });
 });

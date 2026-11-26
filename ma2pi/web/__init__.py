@@ -533,6 +533,7 @@ def create_app(
         password = ma2.get("password") if isinstance(ma2, dict) else None
         if password is not None and not isinstance(password, str):
             return _json_error(422, "invalid_request", "password muss eine Zeichenkette sein")
+        prev_pin = (store.config.web.pin_enabled, store.config.web.pin)
         sanitized = _sanitize_web_config_patch(body)
         try:
             config = await store.apply(sanitized, password=password)
@@ -546,10 +547,7 @@ def create_app(
         response = web.json_response(
             {"generation": store.generation, "config": redacted_config(config)}
         )
-        web_patch = body.get("web")
-        if isinstance(web_patch, dict) and (
-            "pin" in web_patch or "pin_enabled" in web_patch
-        ):
+        if (config.web.pin_enabled, config.web.pin) != prev_pin:
             sessions = request.app[PIN_SESSIONS_KEY]
             sessions.clear()
             bus.close_all()

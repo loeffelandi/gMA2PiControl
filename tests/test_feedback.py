@@ -848,3 +848,30 @@ def test_bank_channel_and_empty_page_turn_leds_off(make_config):
     feedback._apply(snap_empty, block)
     drain(feedback, clock)
     assert any(frame == bytes((0x91, 65, 0)) for _, frame in midi.sent)
+
+
+async def test_current_page_stays_active_when_switching_to_watched_fixed_page(make_config):
+    def mutate(data):
+        data["mapping"]["playbacks"]["mc_row1_2"]["page"] = 2
+
+    cfg = make_config(mutate)
+    c1_cur = playbacks_payload(0, 2, [{"iExec": 0, "isRun": False, "bC": "#ff0000"}])
+    c1_btn = playbacks_payload(0, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}])
+    c1_fix = playbacks_payload(1, 2, [{"iExec": 1, "isRun": False, "bC": "#00ff00"}])
+    c2_cur = playbacks_payload(1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
+    c2_btn = playbacks_payload(1, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}])
+    c2_fix = playbacks_payload(1, 2, [{"iExec": 1, "isRun": False, "bC": "#00ff00"}])
+
+    client = FakeClient([c1_cur, c1_btn, c1_fix, c2_cur, c2_btn, c2_fix])
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(cfg, client, midi, sleep=_noop_sleep, clock=clock, timeout=0.05)
+
+    await feedback.step()
+    drain(feedback, clock)
+    midi.sent.clear()
+
+    await feedback.step()
+    drain(feedback, clock)
+    sent_notes = {frame[1]: frame[2] for _, frame in midi.sent}
+    assert sent_notes.get(65) is not None and sent_notes[65] > 2

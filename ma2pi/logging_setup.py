@@ -13,7 +13,7 @@ import re
 from typing import Any
 
 _SECRET_KEYS = re.compile(
-    r"""(?i)(?P<prefix>["']?(?:password|passwd|pwd|password_hash|md5|pin|psk|wifi-sec\.psk|token|ma2pi_pin)["']?\s*[=:]\s*)(?:'[^']*'|\"[^\"]*\"|[^\s,;\}\]]+)"""
+    r"""(?i)(?P<prefix>["']?(?:password|passwd|pwd|password_hash|md5|pin|psk|wifi-sec\.psk|token|ma2pi_pin)["']?\s*[=:]\s*)(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|[^\s,;\}\]]+)"""
 )
 _MD5 = re.compile(r"\b[0-9a-fA-F]{32}\b")
 
