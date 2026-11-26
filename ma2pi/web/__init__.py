@@ -394,9 +394,10 @@ def create_app(
         learn = request.app.get(LEARN_KEY)
         if learn is None:
             return _json_error(503, "learn_unavailable", "Learn-Modus nicht aktiv")
-        body = await _json_body(request)
-        if body is None:
-            return _json_error(400, "invalid_json", "JSON-Objekt erwartet")
+        try:
+            body = await request.json()
+        except Exception:
+            return _json_error(400, "invalid_json", "JSON-Körper erwartet")
         try:
             result = learn.start(body.get("kind"), device=body.get("device"))
         except LearnBusy as exc:

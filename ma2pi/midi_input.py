@@ -323,6 +323,7 @@ class MidiManager:
         self._unknown_notes: set[tuple[str, int]] = set()
         self._unknown_channels: set[tuple[str, int]] = set()
         self._raw_hook: Callable[[str, RawEvent], bool] | None = None
+        self._send_hook: Callable[[str, bytes], None] | None = None
         self._retry: dict[str, tuple[float, float]] = {}
         self._scan_delay = poll_interval
         self._seen_any = False
@@ -346,6 +347,11 @@ class MidiManager:
 
         self._raw_hook = hook
 
+    def set_send_hook(self, hook: Callable[[str, bytes], None] | None) -> None:
+        """Observe successful writes to a device (activity display)."""
+
+        self._send_hook = hook
+
     def send(self, device: str, data: bytes) -> bool:
         """Write raw MIDI bytes to an open configured device.
 
@@ -359,7 +365,13 @@ class MidiManager:
         write = getattr(entry.handle, "write", None)
         if write is None:
             return False
-        return bool(write(data))
+        ok = bool(write(data))
+        if ok and self._send_hook is not None:
+            try:
+                self._send_hook(device, data)
+            except Exception:  # pragma: no cover - a hook must not break output
+                LOGGER.debug("MIDI-Send-Hook fehlgeschlagen", exc_info=True)
+        return ok
 
     async def run(self, queue: "asyncio.Queue[InputEvent | DeviceLost]") -> None:
         try:

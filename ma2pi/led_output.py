@@ -85,7 +85,9 @@ class LedOutput:
     def __init__(self, path: str | Path, settings: LedSettings) -> None:
         self.path = Path(path)
         self.settings = settings
+        self.device_name = settings.device or "asl"
         self._fd: int | None = None
+        self.on_write: Callable[[str], None] | None = None
 
     @property
     def is_open(self) -> bool:
@@ -118,24 +120,30 @@ class LedOutput:
         if self._fd is None:
             return
         try:
-            self._write(DISABLE)
+            self._write(DISABLE, "disable")
         finally:
             try:
                 os.close(self._fd)
             finally:
                 self._fd = None
 
-    def _write(self, payload: bytes) -> None:
+    def _write(self, payload: bytes, label: str = "led") -> None:
         if self._fd is None:
             return
         try:
             os.write(self._fd, payload)
         except OSError as exc:
             LOGGER.warning("LED-Frame konnte nicht gesendet werden: %s", exc)
+            return
+        if self.on_write is not None:
+            try:
+                self.on_write(label)
+            except Exception:  # pragma: no cover - a hook must not break output
+                LOGGER.debug("LED-Hook fehlgeschlagen", exc_info=True)
 
     def enable(self) -> None:
         """Switch the buttons into MIDI LED mode."""
-        self._write(ENABLE)
+        self._write(ENABLE, "enable")
 
     def set_color(self, index: int) -> None:
         """Set brightness and colour index in one write; no release frame.
@@ -147,7 +155,8 @@ class LedOutput:
         self._write(
             ENABLE
             + note_on(self.settings.brightness_channel, note, self.settings.brightness)
-            + note_on(self.settings.color_channel, note, index)
+            + note_on(self.settings.color_channel, note, index),
+            "color",
         )
 
     def set_button(self, note: int, color: int, brightness: int) -> None:
@@ -156,7 +165,8 @@ class LedOutput:
         self._write(
             ENABLE
             + note_on(self.settings.brightness_channel, note, brightness)
-            + note_on(self.settings.color_channel, note, color)
+            + note_on(self.settings.color_channel, note, color),
+            "button",
         )
 
     def set_nipple(self, pressed: bool) -> None:

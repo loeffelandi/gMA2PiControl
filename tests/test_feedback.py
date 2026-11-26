@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from ma2pi.feedback import (
     ExecutorFeedback,
     LedTarget,
     PALETTE,
     RequestBlock,
+    _belongs_to_block,
     _block_key,
     build_feedback_targets,
     led_velocity,
@@ -295,7 +298,7 @@ def test_apply_skips_other_pages(config):
     ]
     feedback._last.clear()
     midi = feedback._midi
-    payload = playbacks_payload(2, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
+    payload = playbacks_payload(1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
     snapshot = parse_playbacks(payload)
     assert snapshot is not None
     feedback._apply(snapshot, RequestBlock(2, 0, 5, 2, 2))
@@ -329,7 +332,7 @@ def test_apply_ignores_fixed_page_snapshot_for_current_targets(config):
     feedback = ExecutorFeedback(config, FakeClient([]), FakeMidi())
     feedback._targets = [LedTarget("mc_row1_1", "midicraft", 65, "current", 1)]
     payload = playbacks_payload(
-        2, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}]
+        1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}]
     )
     snapshot = parse_playbacks(payload)
     assert snapshot is not None
@@ -352,6 +355,15 @@ class ManualClient:
         self.requests.append((page, start, count, items_type, view))
 
 
+async def _wait_for(predicate, timeout: float = 2.0) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() > deadline:
+            raise AssertionError("condition not reached")
+        await asyncio.sleep(0.005)
+
+
 async def test_step_drops_answer_for_a_different_block(config):
     client = ManualClient()
     midi = FakeMidi()
@@ -359,16 +371,81 @@ async def test_step_drops_answer_for_a_different_block(config):
         config, client, midi, sleep=_noop_sleep, timeout=0.05
     )
     task = asyncio.create_task(feedback.step())
-    await asyncio.sleep(0)
-    assert client.requests[0][3] == 2
+    await _wait_for(lambda: len(client.requests) == 1)
     # A bottom-button answer arrives while the page block is in flight.
     client.playback_responses.put_nowait(
         playbacks_payload(1, 3, [{"iExec": 100, "isRun": True, "bC": "#ff0000"}])
     )
+    client.playback_responses.put_nowait(
+        playbacks_payload(1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
+    )
+    await _wait_for(lambda: len(client.requests) == 2)
+    client.playback_responses.put_nowait(
+        playbacks_payload(1, 3, [{"iExec": 100, "isRun": True, "bC": "#0000ff"}])
+    )
     await asyncio.wait_for(task, timeout=2.0)
 
+    sent = {frame[1]: frame[2] for _, frame in midi.sent}
+    assert sent == {65: 16, 75: 16, 80: 24}
+
+
+async def test_late_answer_does_not_stall_later_cycles(config):
+    client = ManualClient()
+    midi = FakeMidi()
+    feedback = ExecutorFeedback(
+        config, client, midi, sleep=_noop_sleep, timeout=0.02
+    )
+    await feedback.step()
     assert len(client.requests) == 2
     assert midi.sent == []
+
+    # A late bottom-button answer from the previous cycle must not shift the
+    # queue and stall block A of this cycle.
+    client.playback_responses.put_nowait(
+        playbacks_payload(1, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}])
+    )
+    task = asyncio.create_task(feedback.step())
+    await _wait_for(lambda: len(client.requests) == 3)
+    client.playback_responses.put_nowait(
+        playbacks_payload(1, 2, [{"iExec": 0, "isRun": True, "bC": "#ff0000"}])
+    )
+    await _wait_for(lambda: len(client.requests) == 4)
+    client.playback_responses.put_nowait(
+        playbacks_payload(1, 3, [{"iExec": 100, "isRun": False, "bC": "#0000ff"}])
+    )
+    await asyncio.wait_for(task, timeout=2.0)
+
+    sent = {frame[1]: frame[2] for _, frame in midi.sent}
+    assert sent == {65: 16, 75: 16, 80: 10}
+
+
+async def test_run_follows_config_reloads(make_config, config):
+    async def tiny_sleep(_delay: float) -> None:
+        await asyncio.sleep(0.005)
+
+    client = FakeClient([])
+    feedback = ExecutorFeedback(
+        config, client, FakeMidi(), sleep=tiny_sleep, timeout=0.01
+    )
+    task = asyncio.create_task(feedback.run())
+    try:
+        await _wait_for(lambda: len(client.requests) >= 2)
+
+        disabled = make_config(
+            lambda data: data["feedback"].__setitem__("enabled", False)
+        )
+        feedback.set_config(disabled)
+        await asyncio.sleep(0.02)
+        count = len(client.requests)
+        await asyncio.sleep(0.05)
+        assert len(client.requests) == count
+
+        feedback.set_config(config)
+        await _wait_for(lambda: len(client.requests) >= count + 2)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
 
 async def test_reset_drains_stale_responses(config):
@@ -408,3 +485,27 @@ async def test_current_targets_follow_page_change(config):
     await feedback.step()
     sent = {frame[1]: frame[2] for _, frame in midi.sent}
     assert sent == {65: 2, 75: 2}
+
+
+def test_parse_playbacks_skips_unknown_running_state():
+    payload = playbacks_payload(
+        1,
+        2,
+        [{"iExec": 0}, {"iExec": 1, "isRun": True, "bC": "#ff0000"}],
+    )
+    snapshot = parse_playbacks(payload)
+    assert snapshot is not None
+    assert 1 not in snapshot.executors
+    assert snapshot.executors[2].running is True
+
+
+def test_belongs_to_block_checks_page_type_and_range():
+    snapshot = parse_playbacks(
+        playbacks_payload(2, 2, [{"iExec": 0, "isRun": True}])
+    )
+    assert snapshot is not None
+    assert _belongs_to_block(snapshot, RequestBlock(3, 0, 5, 2, 2)) is True
+    assert _belongs_to_block(snapshot, RequestBlock("current", 0, 5, 2, 2)) is True
+    assert _belongs_to_block(snapshot, RequestBlock(2, 0, 5, 2, 2)) is False
+    assert _belongs_to_block(snapshot, RequestBlock(3, 5, 5, 2, 2)) is False
+    assert _belongs_to_block(snapshot, RequestBlock(3, 0, 5, 3, 3)) is False

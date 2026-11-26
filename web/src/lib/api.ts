@@ -43,6 +43,27 @@ export interface VersionInfo {
   ui: string;
 }
 
+export interface ActivityDevice {
+  rx: number;
+  tx: number;
+  last_rx: number | null;
+  last_tx: number | null;
+}
+
+export interface ActivityEntry {
+  seq: number;
+  ts: number;
+  direction: 'rx' | 'tx';
+  device: string;
+  kind: string;
+  summary: string;
+}
+
+export interface ActivityInfo {
+  devices: Record<string, ActivityDevice>;
+  log: ActivityEntry[];
+}
+
 export interface StatusInfo {
   connected: boolean;
   authenticated: boolean;
@@ -56,6 +77,7 @@ export interface StatusInfo {
   last_error: string | null;
   generation: number;
   busy: boolean;
+  activity?: ActivityInfo;
 }
 
 export type NetworkMode = 'dhcp' | 'static';

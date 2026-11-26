@@ -475,6 +475,7 @@ class Ma2Client:
         self.by_type: Counter[str] = Counter()
         self.last_frame_types: deque[str] = deque(maxlen=50)
         self.sent_frames: list[dict[str, Any]] = []
+        self.on_frame: Callable[[str, dict[str, Any]], None] | None = None
         self.reconnects = 0
         self.login_failures = 0
         self.last_error: str | None = None
@@ -749,6 +750,7 @@ class Ma2Client:
     def _deliver_playbacks(self, message: dict[str, Any]) -> None:
         """Hand a playback snapshot to the feedback task, dropping stale ones."""
 
+        LOGGER.debug("rx playbacks: %s", message)
         try:
             self._playback_responses.put_nowait(message)
         except asyncio.QueueFull:
@@ -1058,6 +1060,11 @@ class Ma2Client:
         self.sent_frames.append(frame)
         if len(self.sent_frames) > 1000:
             del self.sent_frames[:500]
+        if self.on_frame is not None:
+            try:
+                self.on_frame(kind, frame)
+            except Exception:  # pragma: no cover - a hook must not break sending
+                LOGGER.debug("Frame-Hook fehlgeschlagen", exc_info=True)
 
     async def _backpressure_loop(self) -> None:
         try:

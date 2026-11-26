@@ -219,14 +219,15 @@
     gap: 0.6rem;
     max-width: 26rem;
     padding: 0.8rem;
-    background: #1f242b;
-    border: 1px solid #39424e;
-    border-radius: 0.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
   }
 
   h3 {
     margin: 0;
     font-size: 0.95rem;
+    font-weight: 500;
   }
 
   label {
@@ -257,7 +258,7 @@
   }
 
   .error {
-    color: #ff9b8f;
+    color: var(--danger);
   }
 
   .actions {
@@ -269,9 +270,9 @@
   input,
   select {
     padding: 0.3rem;
-    background: #12161b;
-    border: 1px solid #39424e;
-    border-radius: 0.25rem;
+    background: var(--surface-inset);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
     color: inherit;
   }
 </style>

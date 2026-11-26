@@ -130,6 +130,12 @@ class ExecutorState:
 
 @dataclass(frozen=True, slots=True)
 class PlaybackSnapshot:
+    """One decoded ``playbacks`` response.
+
+    ``page`` is the raw ``iPage`` and therefore 0-based; a configured page is
+    ``page + 1``.  ``executors`` is keyed by the 1-based executor number.
+    """
+
     page: int
     items_type: int
     executors: dict[int, ExecutorState]
@@ -170,10 +176,17 @@ def parse_playbacks(payload: dict[str, Any]) -> PlaybackSnapshot | None:
             index = item.get("iExec")
             if not isinstance(index, int):
                 continue
+            running = item.get("isRun")
+            if isinstance(running, bool):
+                pass
+            elif isinstance(running, int):
+                running = bool(running)
+            else:
+                # Unknown state: keep the LED as it is instead of guessing.
+                continue
             color = nearest_color(item.get("bC"))
             if color is None:
                 color = nearest_color(item.get("bdC"))
-            running = bool(item.get("isRun"))
             executors[index + 1] = ExecutorState(running, color)
     if not executors:
         return None
@@ -208,10 +221,12 @@ def _belongs_to_block(snapshot: PlaybackSnapshot, block: RequestBlock) -> bool:
     """Check that a response answers the given request block.
 
     Requests and responses are not correlated by the Web Remote, so a late
-    answer can arrive after its block timed out.  Matching the item type and
+    answer can arrive after its block timed out.  Matching page, item type and
     the requested executor range keeps such answers from being applied.
     """
 
+    if block.page != "current" and snapshot.page + 1 != block.page:
+        return False
     if snapshot.items_type and snapshot.items_type != block.items_type:
         return False
     expected = range(block.start + 1, block.start + block.count + 1)
@@ -391,32 +406,44 @@ class ExecutorFeedback:
         deadline = self._pending.get(key)
         if deadline is not None and now < deadline:
             return
-        self._pending[key] = now + self._timeout()
+        timeout = self._timeout()
+        self._pending[key] = now + timeout
+        # Only one request may be in flight, so anything already queued is a
+        # late answer from an earlier cycle and must not be applied.
+        self._drain_responses()
         self._client.request_playbacks(
             block.page, block.start, block.count, block.items_type, block.view
         )
         queue = self._client.playback_responses
-        try:
-            payload = await asyncio.wait_for(queue.get(), timeout=self._timeout())
-        except asyncio.TimeoutError:
+        ends = now + timeout
+        while True:
+            remaining = ends - self._clock()
+            if remaining <= 0:
+                break
+            try:
+                payload = await asyncio.wait_for(queue.get(), timeout=remaining)
+            except asyncio.TimeoutError:
+                break
+            snapshot = parse_playbacks(payload)
+            if snapshot is None:
+                LOGGER.debug("Playbacks-Antwort ohne Executor-Daten verworfen")
+                continue
+            if not _belongs_to_block(snapshot, block):
+                # Keep waiting for our own answer instead of leaving the queue
+                # one position out of step.
+                LOGGER.debug(
+                    "Playbacks-Antwort passt nicht zu %s.%s und wird verworfen",
+                    block.page,
+                    block.start,
+                )
+                continue
             self._pending.pop(key, None)
-            LOGGER.debug(
-                "Playbacks-Antwort für %s.%s ausgeblieben", block.page, block.start
-            )
+            self._apply(snapshot, block)
             return
         self._pending.pop(key, None)
-        snapshot = parse_playbacks(payload)
-        if snapshot is None:
-            LOGGER.debug("Playbacks-Antwort ohne Executor-Daten verworfen")
-            return
-        if not _belongs_to_block(snapshot, block):
-            LOGGER.debug(
-                "Playbacks-Antwort passt nicht zu %s.%s und wird verworfen",
-                block.page,
-                block.start,
-            )
-            return
-        self._apply(snapshot, block)
+        LOGGER.debug(
+            "Playbacks-Antwort für %s.%s ausgeblieben", block.page, block.start
+        )
 
     def _apply(self, snapshot: PlaybackSnapshot, block: RequestBlock) -> None:
         feedback = self.config.feedback
@@ -427,7 +454,7 @@ class ExecutorFeedback:
                 # answers for a fixed page must not drive ``current`` targets.
                 if block.page != "current":
                     continue
-            elif target.page != snapshot.page:
+            elif target.page != snapshot.page + 1:
                 continue
             state = snapshot.executors.get(target.executor)
             if state is None:

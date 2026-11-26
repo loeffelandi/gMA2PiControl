@@ -1,4 +1,4 @@
-# ma2pi JSON-API
+# gMA2PiControl JSON-API
 
 Die Oberfläche spricht ausschließlich über diese API mit dem Daemon. Alle
 Antworten sind JSON; die WebSocket-Verbindung liefert Live-Ereignisse. Die
@@ -95,12 +95,31 @@ Mismatch einen Hinweis. `ui` ist ein Build-Stempel aus `web/dist/index.html`.
   "reconnects": 0,
   "last_error": null,
   "generation": 3,
-  "busy": false
+  "busy": false,
+  "activity": {
+    "devices": {
+      "cherry": { "rx": 120, "tx": 0, "last_rx": 1790000000.12, "last_tx": null },
+      "midicraft": { "rx": 34, "tx": 12, "last_rx": 1790000000.9, "last_tx": 1790000000.88 }
+    },
+    "log": [
+      { "seq": 210, "ts": 1790000000.91, "direction": "tx",
+        "device": "ma2", "kind": "playbacksRequest",
+        "summary": "playbacksRequest" }
+    ]
+  }
 }
 ```
 
 `generation` steigt nach jedem erfolgreichen Apply. `busy` ist `true`, während
 ein Apply läuft. Zugangsdaten sind nie enthalten.
+
+`activity` zählt RX (vom Gerät gelesen) und TX (zum Gerät geschrieben) seit dem
+Prozessstart. Zeitstempel sind Sekunden seit der Epoche. `log` ist ein Ring der
+letzten 100 Ereignisse mit monotoner `seq`; Summary-Texte enthalten keine
+Kommandotexte oder Zugangsdaten. Frames an onPC erscheinen nur im Log unter der
+Kennung `ma2` und zählen nicht als Gerät. Wiederkehrende Polling-Frames
+(`playbacksRequest`) werden nicht protokolliert, damit echte Eingaben im Ring
+bleiben.
 
 ### `GET /api/events` (WebSocket)
 
@@ -108,7 +127,8 @@ Beim Verbinden wird ein `status`-Ereignis gesendet. Danach folgen:
 
 | `type` | Bedeutung |
 | --- | --- |
-| `status` | Laufzeitstatus, etwa einmal pro Sekunde |
+| `status` | Laufzeitstatus, etwa einmal pro Sekunde; enthält den vollständigen Aktivitäts-Ring als Resync |
+| `activity` | Neue RX-/TX-Aktivität und aktuelle Zähler, gebündelt höchstens alle 250 ms; höchstens 100 Einträge pro Event |
 | `learn` | Learn-Sitzung gestartet, erfasst, abgebrochen oder abgelaufen |
 | `config` | Konfiguration wurde angewendet (`generation`) |
 | `backup` | Backup wurde angelegt |
@@ -124,6 +144,22 @@ Beispiel:
   "detents": 0, "elapsed": 0.42, "timed_out": false
 } }
 ```
+
+```json
+{ "type": "activity", "data": {
+  "devices": {
+    "cherry": { "rx": 121, "tx": 0, "last_rx": 1790000000.95, "last_tx": null }
+  },
+  "entries": [
+    { "seq": 211, "ts": 1790000000.95, "direction": "rx",
+      "device": "cherry", "kind": "key",
+      "summary": "ch_pg_plus · value 1 · note 42 · bank 1" }
+  ]
+} }
+```
+
+Clients deduplizieren `entries` über `seq` und begrenzen ihren Log-Stand auf 100
+Zeilen. Ein `status`-Snapshot ersetzt den lokalen Stand vollständig.
 
 Die Oberfläche verbindet sich nach einer Unterbrechung automatisch neu.
 

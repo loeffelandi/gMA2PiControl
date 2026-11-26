@@ -1,10 +1,19 @@
-# ma2pi — Cherry keyboard and ASL encoders for grandMA2 onPC
+# gMA2PiControl — Cherry keyboard and ASL encoders for grandMA2 onPC
 
 `ma2pi` is a small Python 3.13 asyncio daemon that maps a Cherry POS Keyboard
 G86-63400EUADAA and an ASL MK2 E4B3 encoder panel to grandMA2 onPC. The only
 transport to onPC is the **Web Remote WebSocket API** (`ws://<host>:<port>/?ma=1`).
 MIDI is used for controller input and LED output; there is no MIDI,
 OSC, Telnet or Showcockpit path to onPC, and no parameter unlock.
+
+> **Name:** the product is called **gMA2PiControl**. The Python package, the
+> `ma2pi` command and the systemd unit keep their technical name so existing
+> installations keep working.
+>
+> **Design:** the web interface follows the palette and typography of
+> [sustain-vt.de](https://www.sustain-vt.de) — Bebas Neue for headings, DM Sans
+> for text, both under the SIL Open Font License and bundled locally in
+> `web/public/fonts/`.
 
 > Status: the software is implemented and the test suite runs on the
 > development machine and on the Pi. The ASL has been identified as a USB-MIDI
@@ -246,7 +255,8 @@ followed yet; feedback uses the first (bank 1) note binding. A `page =
 "current"` target is requested with `pageIndex = -1`, so the LEDs follow page
 changes on the console. The colour is taken from the `bC`/`bdC` fields of the
 response and mapped to the closest of the 13 MIDIcraft palette colours. Pure
-black counts as "no colour"; the fallback applies.
+black counts as "no colour" for that field; if `bdC` is unusable too, the
+fallback applies.
 
 Polling stops while the Web Remote session is down. After a reconnect and after
 a MIDI device is replugged, all LED states are re-sent. `--dry-run` logs the

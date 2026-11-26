@@ -1,5 +1,5 @@
 [Unit]
-Description=grandMA2 onPC Web Remote bridge for Cherry keyboard and ASL encoders
+Description=gMA2PiControl - grandMA2 onPC Web Remote bridge for Cherry keyboard and ASL encoders
 Documentation=file:/opt/ma2pi/app/README.md
 After=network-online.target
 Wants=network-online.target

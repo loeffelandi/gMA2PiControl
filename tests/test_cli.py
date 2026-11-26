@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from ma2pi import PRODUCT_NAME
 from ma2pi.__main__ import main
 
 
@@ -9,7 +10,7 @@ def test_help_exits_zero(capsys):
     with pytest.raises(SystemExit) as exc:
         main(["--help"])
     assert exc.value.code == 0
-    assert "ma2pi" in capsys.readouterr().out
+    assert PRODUCT_NAME in capsys.readouterr().out
 
 
 def test_check_config_exit_zero(config, capsys):

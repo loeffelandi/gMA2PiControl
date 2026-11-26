@@ -1,6 +1,9 @@
 /** Live status via the `/api/events` WebSocket with automatic reconnect. */
 
 import type {
+  ActivityDevice,
+  ActivityEntry,
+  ActivityInfo,
   LearnResult,
   NetworkLastResult,
   NetworkPending,
@@ -14,13 +17,45 @@ export interface NetworkEventData {
   last_result: NetworkLastResult | null;
 }
 
+export interface ActivityState {
+  devices: Record<string, ActivityDevice>;
+  entries: ActivityEntry[];
+}
+
 export interface StatusState {
   connection: ConnectionState;
   reconnecting: boolean;
   status: StatusInfo | null;
   learn: LearnResult | null;
   network: NetworkEventData | null;
+  activity: ActivityState;
   lastError: string | null;
+}
+
+export const LOG_LIMIT = 100;
+
+const emptyActivity = (): ActivityState => ({ devices: {}, entries: [] });
+
+function mergeSnapshot(incoming: ActivityInfo | undefined): ActivityState {
+  return {
+    devices: { ...(incoming?.devices ?? {}) },
+    entries: [...(incoming?.log ?? [])].slice(-LOG_LIMIT),
+  };
+}
+
+function mergeDelta(
+  current: ActivityState,
+  incoming: Partial<ActivityInfo> & { entries?: ActivityEntry[] },
+): ActivityState {
+  const devices = { ...current.devices, ...(incoming.devices ?? {}) };
+  const seen = new Set(current.entries.map((entry) => entry.seq));
+  const added = (incoming.entries ?? [])
+    .filter((entry) => !seen.has(entry.seq))
+    .sort((a, b) => a.seq - b.seq);
+  const entries = [...current.entries, ...added]
+    .sort((a, b) => a.seq - b.seq)
+    .slice(-LOG_LIMIT);
+  return { devices, entries };
 }
 
 export interface WebSocketLike {
@@ -66,6 +101,7 @@ export class StatusStore {
     status: null,
     learn: null,
     network: null,
+    activity: emptyActivity(),
     lastError: null,
   };
 
@@ -147,7 +183,19 @@ export class StatusStore {
       return;
     }
     if (message.type === 'status' && message.data) {
-      this.patch({ status: message.data as StatusInfo, lastError: null });
+      const info = message.data as StatusInfo;
+      this.patch({
+        status: info,
+        activity: mergeSnapshot(info.activity),
+        lastError: null,
+      });
+    } else if (message.type === 'activity' && message.data) {
+      this.patch({
+        activity: mergeDelta(
+          this.state.activity,
+          message.data as Partial<ActivityInfo> & { entries?: ActivityEntry[] },
+        ),
+      });
     } else if (message.type === 'learn' && message.data) {
       this.patch({ learn: message.data as LearnResult });
     } else if (message.type === 'network' && message.data) {

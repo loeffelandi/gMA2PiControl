@@ -2,13 +2,17 @@
 
 ## 1. Vorab-Verifikation
 
-- [ ] 1.1 Gegen eine echte onPC `playbacks`-Anfragen mit `pageIndex = -1` für
-  einen Block `< 100` und einen Block `>= 100` senden und die Rohantwort
+- [x] 1.1 Gegen eine echte onPC `playbacks`-Anfragen mit `pageIndex = -1` für
+  einen Block `≤ 100` und einen Block `> 100` senden und die Rohantwort
   protokollieren; prüfen, ob `iPage`, `isRun`, `bC`, `itemGroups`,
-  `executorBlocks` und `bottomButtons` wie erwartet erscheinen. Zusätzlich
-  klären: ist `iPage` 1-basiert (wie `page` in der Config) oder 0-basiert, und
-  liefert `executorBlocks` den Executor 100? Ergebnis im Design unter „Risiken"
-  ergänzen. Verifikation: Rohantwort im Log, Feldliste dokumentiert.
+  `executorBlocks`, `bottomButtons` und `combinedItems` wie erwartet
+  erscheinen. Zusätzlich klären: sind `iPage` (Seite) und `iExec` (Executor)
+  0- oder 1-basiert (die Config ist 1-basiert), und liefert `executorBlocks`
+  den Executor 100? Ergebnis im Design unter „Risiken" ergänzen. Verifikation:
+  Rohantwort im Debug-Log, Feldliste dokumentiert.
+  Ergebnis 2026-11-26: `iPage` und `iExec` sind 0-basiert, `isRun` ist `0/1`,
+  `combinedItems = 1`, Typ 3 mit `iExecOff = 100`. Executor 100 kommt in der
+  Live-Config nicht vor und bleibt unbestätigt; die Grenze bleibt `> 100`.
 - [ ] 1.2 Am .ENC die 15 RGB-Noten prüfen: 65–69, 75–79 und 80–84 mit
   Velocity 1, 15 und 21 bespielen und das sichtbare Verhalten notieren.
   Ergebnis als `led_notes`-Liste (`[65,66,67,68,69,75,76,77,78,79,80,81,82,83,84]`)
@@ -70,8 +74,8 @@
   `nearest_color(hex) -> int | None` implementieren. Verifikation:
   `tests/test_feedback.py` prüft exakte Treffer, Näherungen, `None` und
   ungültige Werte.
-- [x] 5.2 `LedState` und `velocity(state, off_state, fallback_color)` gemäß
-  Velocity-Tabelle implementieren. Verifikation: Tabellentest für alle 13
+- [x] 5.2 `ExecutorState` und `led_velocity(state, off_state, fallback_color)`
+  gemäß Velocity-Tabelle implementieren. Verifikation: Tabellentest für alle 13
   Farben in hell/dunkel sowie aus.
 - [x] 5.3 `ExecutorFeedback`-Task: Ziele aus der Config gruppieren, Requests
   planen, Antworten über `itemsType`/Executor-Bereich dem Block zuordnen und

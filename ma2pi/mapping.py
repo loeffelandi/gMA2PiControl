@@ -241,16 +241,6 @@ class MappingEngine:
         if held is None:
             LOGGER.debug("Release ohne Press ignoriert: %s", control)
             return
-        if device and held.device and held.device != device:
-            # The control name is shared between devices; a release from a
-            # different device must not end the hold of the one that pressed.
-            LOGGER.debug(
-                "Release von %s ignoriert, %s wird von %s gehalten",
-                device,
-                control,
-                held.device,
-            )
-            return
         if held.is_local_modifier:
             self.flush_all(now)
             self._notify_modifier(control, False)

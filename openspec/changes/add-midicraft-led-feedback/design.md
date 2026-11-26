@@ -69,9 +69,10 @@ protokolliert; Eingabe läuft unabhängig weiter.
 
 ### D3: LED-Zustand als `(mode, color_index)` und zentrale Velocity-Tabelle
 
-Intern `LedState(on: bool, color: int | None)`. Ein neues Modul `ma2pi/feedback.py`
-hält die Tabelle `mode_base = {off: 0, dark: 1, bright: 15}` und die 13
-Palettennamen in fester Reihenfolge. Velocity = Base + Color-Index.
+Intern `ExecutorState(running: bool, color: int | None)`. Ein neues Modul
+`ma2pi/feedback.py` hält die Tabelle `MODE_BASE = {off: 0, dark: 1, bright: 15}`
+und die 13 Palettennamen in fester Reihenfolge. `led_velocity()` liefert
+Base + Color-Index.
 Alternative: nur 124–127 (Gerätefarbe) senden — verworfen, weil die
 Appearance-Farbe gewünscht ist; bleibt aber als möglicher späterer Modus
 offen, ohne die Tabelle zu ändern.
@@ -107,8 +108,15 @@ Je Page eine Anfrage:
   `itemsCount` auf den 5er-Block aufgerundet (MA gruppiert Executoren zu fünf).
 - Floating-Executoren `> 100` → `itemsType`/`view` 3.
 - `pageIndex = -1` für `"current"`; `iPage` der Antwort ist dann die
-  tatsächliche Page und wird für die Zuordnung verwendet.
-- Enthält eine Page Ziele aus beiden Bereichen (`< 100` und `>= 100`), werden
+  tatsächliche Page und 0-basiert (Config-Page = `iPage + 1`). `iExec` ist
+  ebenfalls 0-basiert (Executor = `iExec + 1`). Beides am 2026-11-26 live gegen
+  die onPC verifiziert.
+- Live-Format (2026-11-26): `isRun` kommt als `0`/`1`-Integer, nicht als
+  Boolean; der Parser akzeptiert beides. Typ 2 liefert `executorBlocks`, Typ 3
+  `bottomButtons` mit `iExecOff = 100`; die Items liegen verschachtelt in
+  `itemGroups[*].items[*][*]`. `combinedItems` ist vorhanden (im Live-Test
+  `1`).
+- Enthält eine Page Ziele aus beiden Bereichen (`≤ 100` und `> 100`), werden
   **zwei** Anfragen pro Zyklus gesendet (Fader- und Button-View); die
   Backpressure gilt je Anfrage.
 - **Backpressure**: pro Page höchstens eine offene Anfrage; nach Timeout
@@ -171,17 +179,14 @@ sichtbare Wirkung ausgeliefert würde und der Live-Test kein Ziel hätte.
 
 ## Risks / Trade-offs
 
-- **`pageIndex = -1` ist für `playbacks`-Requests nicht belegt** → erster
-  Verifikationsschritt gegen eine echte onPC; falls nicht unterstützt, muss die
-  aktuelle Page anders ermittelt werden (z. B. über eine Status-Antwort), sonst
-  ist Feedback nur für feste Pages möglich.
+- **`pageIndex = -1`** → am 2026-11-26 live verifiziert: die Antwort enthält
+  `iPage` 0-basiert und den Zustand der aktiven Master-Page.
 - **Feldnamen `isRun`/`bC`/`itemGroups` können je MA-Version abweichen** →
   Parser tolerant halten (fehlende Felder = unbekannt, kein Absturz) und
-  Rohantwort im Debug-Log ausgeben.
+  Rohantwort im Debug-Log ausgeben. Live: `isRun` als `0/1`-Integer.
 - **Kombinierte Executoren** (`combinedItems`) haben ein `isRun` für mehrere
-  Spalten → derzeit nicht ausgewertet (Task 1.1 prüft das Feld); bis dahin
-  bleiben Ziele auf Zweitspalten dunkel, eine mehrdeutige Zuordnung entsteht
-  nicht.
+  Spalten → im Live-Test nur `combinedItems = 1` beobachtet; Werte > 1 werden
+  nicht ausgewertet, Ziele auf Zweitspalten bleiben dann dunkel.
 - **Floating-Executoren 101–105** kommen über `view = 3`/`bottomButtons` statt
   `executorBlocks` → Parser muss beide Formen kennen; ob `isRun` dort gesetzt
   ist, wird in Task 1.1 geprüft.

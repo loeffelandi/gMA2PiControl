@@ -41,8 +41,8 @@ Ein Geräteprofil SHALL mit `[profiles.<id>.led_feedback]` deklarieren, ob
 Feedback ausgegeben wird und mit welchem Protokoll. Derzeit MUST nur
 `protocol = "midicraft-v2"` gültig sein. Die optionale Liste `led_notes` MUST
 die Noten benennen, die tatsächlich LEDs besitzen; fehlt sie, gelten alle
-Button-Noten des Profils als LED-fähig. Feedback MUST ausschließlich an
-Controls gehen, deren Note im Profil als LED-fähig gilt.
+Profil-Noten, die ein Button-Ziel haben, als LED-fähig. Feedback MUST
+ausschließlich an Controls gehen, deren Note im Profil als LED-fähig gilt.
 
 #### Scenario: Gerät ohne Feedback-Deklaration
 
@@ -89,8 +89,9 @@ LED-fähiges Button-Ziel MUST keine Anfrage gesendet werden.
 ### Requirement: Abfrage der aktuellen Master-Page
 
 Ziele mit `page = "current"` MUST mit `pageIndex = -1` abgefragt werden; die
-tatsächliche Page MUST aus der Antwort (`iPage`) übernommen werden. Ein
-Seitenwechsel auf der MA MUST ohne Konfigurationsänderung wirksam werden.
+tatsächliche Page MUST aus der Antwort (`iPage`, 0-basiert; Config-Page =
+`iPage + 1`) übernommen werden. Ein Seitenwechsel auf der MA MUST ohne
+Konfigurationsänderung wirksam werden.
 
 #### Scenario: Seitenwechsel auf der MA
 

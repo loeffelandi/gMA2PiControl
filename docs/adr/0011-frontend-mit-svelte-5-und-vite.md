@@ -9,6 +9,8 @@
 
 Accepted
 
+Referenced by [23. Produktname gMA2PiControl bei technischem Paketnamen ma2pi](0023-produktname-gma2picontrol-bei-technischem-paketnamen-ma2pi.md)
+
 ## Kontext und Problemstellung
 
 Die Oberfläche braucht Formulare für Zugangsdaten und Mapping, Tabellen für

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
 
   import { ApiError, type ApiClient } from './api';
+  import { PRODUCT_NAME } from './brand';
 
   let {
     api,
@@ -45,7 +46,10 @@
 
 <main class="gate">
   <form class="gate-card" onsubmit={submit}>
-    <h1>ma2pi</h1>
+    <h1>
+      <img src="/favicon.svg" alt="" width="32" height="32" />
+      {PRODUCT_NAME}
+    </h1>
     <p class="muted">Bitte PIN eingeben, um die Oberfläche zu entsperren.</p>
 
     <label for="pin">PIN</label>

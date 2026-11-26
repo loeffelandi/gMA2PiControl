@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
 
   import { ApiClient, type AuthStatus } from './lib/api';
+  import { BRAND_PREFIX, BRAND_SUFFIX } from './lib/brand';
   import AdvancedPage from './lib/AdvancedPage.svelte';
   import BackupsPage from './lib/BackupsPage.svelte';
   import DevicesPage from './lib/DevicesPage.svelte';
@@ -98,7 +99,10 @@
   <PinGate {api} onUnlocked={unlocked} />
 {:else}
   <header class="topbar">
-    <strong>ma2pi</strong>
+    <div class="brand">
+      <img src="/favicon.svg" alt="" width="26" height="26" />
+      <span class="brand-name"><span class="brand-accent">{BRAND_PREFIX}</span>{BRAND_SUFFIX}</span>
+    </div>
     <nav>
       {#each pages as entry (entry.id)}
         <button

@@ -158,8 +158,8 @@ class PlaybackRouter:
         value = float(event.value)
         if target.accelerated:
             value = self._accelerator.apply(event.control, value, self._clock())
-            LOGGER.debug(
-                "Beschleunigung %s raw=%.5f virtuell=%.5f",
+            LOGGER.info(
+                "DEBUGACCEL %s raw=%.5f virtual=%.5f",
                 event.control,
                 float(event.value),
                 value,

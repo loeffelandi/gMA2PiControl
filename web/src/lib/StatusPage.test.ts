@@ -59,6 +59,22 @@ const devices = [
   },
 ];
 
+const activity = {
+  devices: {
+    cherry: { rx: 12, tx: 0, last_rx: 1700000000.5, last_tx: null },
+  },
+  log: [
+    {
+      seq: 11,
+      ts: 1700000000.5,
+      direction: 'rx' as const,
+      device: 'cherry',
+      kind: 'key',
+      summary: 'ch_pg_plus · value 1',
+    },
+  ],
+};
+
 const status = {
   connected: true,
   authenticated: true,
@@ -72,15 +88,16 @@ const status = {
   last_error: null,
   generation: 3,
   busy: false,
+  activity,
 };
 
 describe('StatusPage', () => {
-  it('follows live status changes and shows the reconnect indicator', async () => {
+  it('shows device activity, merges log deltas and follows live status', async () => {
     const store = new StatusStore({
       factory: (url) => new FakeSocket(url),
       reconnectBaseMs: 10,
     });
-    render(StatusPage, {
+    const { container } = render(StatusPage, {
       props: { store, devicesLoader: async () => devices },
     });
 
@@ -101,20 +118,95 @@ describe('StatusPage', () => {
       expect(screen.getByTestId('connection').textContent).toContain('verbunden');
     });
     expect(screen.getByTestId('ma2-state').textContent).toContain('Session 7');
-    expect(screen.getByText('keyname')).toBeTruthy();
     expect(screen.getByText('42')).toBeTruthy();
     expect(screen.getByText('Attribut (rot)')).toBeTruthy();
+    expect(screen.getByText(/RX vom Gerät/)).toBeTruthy();
+    expect(screen.getByText(/12 rx \/ 0 tx/)).toBeTruthy();
+    expect(screen.getByText('ch_pg_plus · value 1')).toBeTruthy();
+
     await waitFor(() => {
-      expect(screen.getByText('cherry')).toBeTruthy();
+      expect(container.querySelector('.device-id')?.textContent).toBe('cherry');
     });
     expect(screen.getByText('erkannt')).toBeTruthy();
 
+    // A delta grows the RX counter and appends exactly one log line.
+    socket.emitMessage({
+      type: 'activity',
+      data: {
+        devices: {
+          cherry: { rx: 13, tx: 0, last_rx: 1700000000.9, last_tx: null },
+        },
+        entries: [
+          {
+            seq: 12,
+            ts: 1700000000.9,
+            direction: 'rx',
+            device: 'cherry',
+            kind: 'key',
+            summary: 'note 70 · velocity 127',
+          },
+        ],
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByText('note 70 · velocity 127')).toBeTruthy();
+    });
+
+    const rxLed = container.querySelector('.device-row .activity-led.rx');
+    await waitFor(() => {
+      expect(rxLed?.className).toContain('pulse');
+    });
+
+    // Resending the same sequence number must not duplicate the line.
+    socket.emitMessage({
+      type: 'activity',
+      data: {
+        devices: {
+          cherry: { rx: 14, tx: 1, last_rx: 1700000001, last_tx: 1700000001 },
+        },
+        entries: [
+          {
+            seq: 12,
+            ts: 1700000000.9,
+            direction: 'rx',
+            device: 'cherry',
+            kind: 'key',
+            summary: 'note 70 · velocity 127',
+          },
+        ],
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getAllByText('note 70 · velocity 127')).toHaveLength(1);
+    });
+
+    // A status snapshot replaces the log and updates the screen mode.
     socket.emitMessage({
       type: 'status',
-      data: { ...status, screen_mode: true, last_frame_types: ['encoder'] },
+      data: {
+        ...status,
+        screen_mode: true,
+        activity: {
+          devices: {
+            cherry: { rx: 20, tx: 3, last_rx: 1700000002, last_tx: 1700000002 },
+          },
+          log: [
+            {
+              seq: 20,
+              ts: 1700000002,
+              direction: 'tx',
+              device: 'cherry',
+              kind: 'led',
+              summary: 'LED color',
+            },
+          ],
+        },
+      },
     });
     await waitFor(() => {
       expect(screen.getByText('Screen (grün)')).toBeTruthy();
+      expect(screen.getByText('LED color')).toBeTruthy();
+      expect(screen.queryByText('note 70 · velocity 127')).toBeNull();
     });
 
     socket.drop();
@@ -123,6 +215,99 @@ describe('StatusPage', () => {
       expect(screen.getByRole('status').textContent).toContain(
         'Verbindung unterbrochen',
       );
+    });
+
+    store.disconnect();
+  });
+
+  it('keeps log entries in sequence order after a delayed delta', async () => {
+    const store = new StatusStore({
+      factory: (url) => new FakeSocket(url),
+      reconnectBaseMs: 10,
+    });
+    const { container } = render(StatusPage, {
+      props: { store, devicesLoader: async () => devices },
+    });
+
+    store.connect();
+    const socket = FakeSocket.last!;
+    socket.emitOpen();
+    socket.emitMessage({
+      type: 'status',
+      data: {
+        ...status,
+        activity: {
+          devices: {
+            cherry: { rx: 1, tx: 0, last_rx: 1700000000, last_tx: null },
+          },
+          log: [
+            {
+              seq: 20,
+              ts: 1700000000,
+              direction: 'rx',
+              device: 'cherry',
+              kind: 'key',
+              summary: 'seq 20',
+            },
+          ],
+        },
+      },
+    });
+    await waitFor(() => expect(screen.getByText('seq 20')).toBeTruthy());
+
+    socket.emitMessage({
+      type: 'activity',
+      data: {
+        devices: {},
+        entries: [
+          {
+            seq: 25,
+            ts: 1700000001,
+            direction: 'rx',
+            device: 'cherry',
+            kind: 'key',
+            summary: 'seq 25',
+          },
+          {
+            seq: 15,
+            ts: 1700000002,
+            direction: 'rx',
+            device: 'cherry',
+            kind: 'key',
+            summary: 'seq 15',
+          },
+        ],
+      },
+    });
+
+    await waitFor(() => {
+      expect(container.querySelectorAll('.log-summary')).toHaveLength(3);
+    });
+    const summaries = Array.from(container.querySelectorAll('.log-summary')).map(
+      (node) => node.textContent?.trim(),
+    );
+    expect(summaries).toEqual(['seq 15', 'seq 20', 'seq 25']);
+
+    store.disconnect();
+  });
+
+  it('shows an empty log hint without activity', async () => {
+    const store = new StatusStore({
+      factory: (url) => new FakeSocket(url),
+      reconnectBaseMs: 10,
+    });
+    render(StatusPage, { props: { store, devicesLoader: async () => devices } });
+
+    store.connect();
+    const socket = FakeSocket.last!;
+    socket.emitOpen();
+    socket.emitMessage({
+      type: 'status',
+      data: { ...status, activity: { devices: {}, log: [] } },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Noch keine Aktivität.')).toBeTruthy();
     });
 
     store.disconnect();
