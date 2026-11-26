@@ -50,6 +50,26 @@ describe('DeviceSurface', () => {
     render(DeviceSurface, { props: { layout, selected: ['fix'] } });
     expect(screen.getByText('Fix').closest('button')!.classList.contains('selected')).toBe(true);
   });
+
+  it('highlights the active learn control and locks editing', async () => {
+    const onToggle = vi.fn();
+    render(DeviceSurface, {
+      props: {
+        layout,
+        activeControl: 'fix',
+        activeKind: 'button',
+        interactive: false,
+        onToggle,
+      },
+    });
+
+    const fix = screen.getByText('Fix').closest('button')!;
+    expect(fix.classList.contains('active')).toBe(true);
+    expect(screen.getByText('● Drücken')).toBeTruthy();
+
+    await fireEvent.click(screen.getByText('Fix'));
+    expect(onToggle).not.toHaveBeenCalled();
+  });
 });
 
 

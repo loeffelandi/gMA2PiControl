@@ -1,7 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  import type { ApiClient, DeviceBank, DeviceEntry } from './api';
+  import type {
+    ApiClient,
+    DeviceBank,
+    DeviceEntry,
+    DeviceLearnStatus,
+  } from './api';
   import AssignDialog from './AssignDialog.svelte';
   import DeviceSurface from './DeviceSurface.svelte';
   import LearnPanel from './LearnPanel.svelte';
@@ -22,6 +27,7 @@
   let dialog = $state<{ control: string; initial: Record<string, any> | null } | null>(null);
   let showLearn = $state(false);
   let learnControl = $state<string | null>(null);
+  let learnStatus = $state<DeviceLearnStatus | null>(null);
   let error = $state<string | null>(null);
   let bankSize = $state(1);
   let channel = $state(1);
@@ -43,6 +49,23 @@
   );
   const bound = $derived(new Set(Object.values(activeBank.notes ?? {})));
   const inventory = $derived(device?.controls.inventory ?? []);
+  const learningHere = $derived(
+    learnStatus?.active === true &&
+      learnStatus.device === device?.name &&
+      learnStatus.bank === bank,
+  );
+  const activeLearn = $derived(learningHere ? learnStatus?.current ?? null : null);
+  const activeLearnKind = $derived(
+    inventory.find((item) => item.id === activeLearn)?.kind ?? null,
+  );
+
+  function learnVerb(kind: string | null): string {
+    if (kind === 'encoder' || kind === 'relative-encoder' || kind === 'poti') {
+      return 'drehen';
+    }
+    if (kind === 'fader') return 'bewegen';
+    return 'drücken';
+  }
 
   async function reload(): Promise<void> {
     error = null;
@@ -508,6 +531,13 @@
           </div>
         {/if}
 
+        {#if activeLearn}
+          <p class="learn-hint" role="status">
+            Jetzt <strong>{activeLearn}</strong> {learnVerb(activeLearnKind)} – das
+            markierte Feld auf der Fläche zeigt die Stelle.
+          </p>
+        {/if}
+
         {#if device.layout}
           <DeviceSurface
             layout={device.layout}
@@ -515,6 +545,9 @@
               inventory.map((item) => [item.id, assignmentFor(item.id) ?? 'frei']),
             )}
             selected={selection}
+            activeControl={activeLearn}
+            activeKind={activeLearnKind}
+            interactive={!learningHere}
             onToggle={toggle}
           />
         {:else}
@@ -524,7 +557,7 @@
             </thead>
             <tbody>
               {#each inventory as item (item.id)}
-                <tr>
+                <tr class:active={item.id === activeLearn}>
                   <td><button type="button" onclick={() => toggle(item.id)}>{item.id}</button></td>
                   <td>{item.kind}</td>
                   <td>{bound.has(item.id) ? 'ja' : 'nein'}</td>
@@ -565,6 +598,7 @@
             {bank}
             control={learnControl}
             onFinished={() => void reload()}
+            onStatus={(next) => (learnStatus = next)}
           />
         {/if}
       {:else}
@@ -615,16 +649,28 @@
   }
 
   .device-list button.active {
-    outline: 2px solid #ffb347;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+    outline: 2px solid var(--accent-hover);
+  }
+
+  .device-list button.active:hover:not(:disabled) {
+    color: var(--on-accent);
+  }
+
+  .device-list button.active span {
+    color: var(--on-accent);
+    opacity: 0.72;
   }
 
   .device-list span {
     font-size: 0.7rem;
-    color: #98a4b3;
+    color: var(--text-muted);
   }
 
   .missing {
-    color: #ff9b8f;
+    color: var(--danger);
   }
 
   .surface-head {
@@ -676,16 +722,16 @@
     inset: 0;
     display: grid;
     place-items: center;
-    background: rgb(0 0 0 / 0.55);
+    background: rgb(10 10 10 / 0.65);
     padding: 1rem;
   }
 
   input,
   select {
     padding: 0.3rem;
-    background: #12161b;
-    border: 1px solid #39424e;
-    border-radius: 0.25rem;
+    background: var(--surface-inset);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
     color: inherit;
   }
 
@@ -698,7 +744,27 @@
   th,
   td {
     padding: 0.3rem 0.4rem;
-    border-bottom: 1px solid #39424e;
+    border-bottom: 1px solid var(--border);
     text-align: left;
+  }
+
+  tr.active {
+    outline: 2px solid #ffd166;
+    outline-offset: -2px;
+    background: rgba(255, 209, 102, 0.12);
+  }
+
+  .learn-hint {
+    margin: 0 0 0.6rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #d4a72c;
+    border-radius: var(--radius);
+    background: rgba(255, 209, 102, 0.12);
+    color: #ffe08a;
+    font-size: 0.85rem;
+  }
+
+  .learn-hint strong {
+    color: #fff3c4;
   }
 </style>

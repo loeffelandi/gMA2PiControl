@@ -9,9 +9,17 @@
     bank: number;
     control?: string | null;
     onFinished?: () => void;
+    onStatus?: (status: DeviceLearnStatus | null) => void;
   }
 
-  let { api, device, bank, control = null, onFinished }: Props = $props();
+  let {
+    api,
+    device,
+    bank,
+    control = null,
+    onFinished,
+    onStatus,
+  }: Props = $props();
   let status = $state<DeviceLearnStatus | null>(null);
   let error = $state<string | null>(null);
   let busy = $state(false);
@@ -20,8 +28,10 @@
   async function refresh(): Promise<void> {
     try {
       status = await api.deviceLearnStatus();
+      onStatus?.(status);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : 'Status nicht verfügbar';
+      onStatus?.(null);
     }
   }
 
@@ -32,6 +42,7 @@
 
   onDestroy(() => {
     if (timer !== null) clearInterval(timer);
+    onStatus?.(null);
     if (activeHere) {
       void api.cancelDeviceLearn().catch(() => {});
     }
@@ -122,14 +133,15 @@
     display: grid;
     gap: 0.5rem;
     padding: 0.75rem;
-    background: #1b2128;
-    border: 1px solid #39424e;
-    border-radius: 0.5rem;
+    background: var(--surface);
+    border: 1px solid var(--accent-dim);
+    border-radius: var(--radius);
   }
 
   h3 {
     margin: 0;
     font-size: 0.9rem;
+    font-weight: 500;
   }
 
   p {
@@ -143,10 +155,10 @@
   }
 
   .error {
-    color: #ff9b8f;
+    color: var(--danger);
   }
 
   .muted {
-    color: #98a4b3;
+    color: var(--text-muted);
   }
 </style>

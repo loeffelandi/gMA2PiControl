@@ -9,7 +9,7 @@ function fakeApi(overrides: Record<string, unknown>) {
     deviceLearnStatus: vi.fn().mockResolvedValue({ active: false }),
     startDeviceLearn: vi.fn(),
     skipDeviceLearn: vi.fn(),
-    cancelDeviceLearn: vi.fn(),
+    cancelDeviceLearn: vi.fn().mockResolvedValue({}),
     finishDeviceLearn: vi.fn(),
     ...overrides,
   } as unknown as ApiClient;
@@ -46,5 +46,31 @@ describe('LearnPanel', () => {
     await waitFor(() => expect(screen.getByText('mc_fader_1')).toBeTruthy());
     await fireEvent.click(screen.getByText('Überspringen'));
     expect(api.skipDeviceLearn).toHaveBeenCalled();
+  });
+
+  it('reports the active status to the parent', async () => {
+    const onStatus = vi.fn();
+    const api = fakeApi({
+      deviceLearnStatus: vi.fn().mockResolvedValue({
+        active: true,
+        device: 'midicraft',
+        bank: 2,
+        channel: 2,
+        current: 'mc_row1_1',
+        total: 2,
+        index: 0,
+        captured: [],
+        paused: false,
+        error: null,
+      }),
+    });
+
+    render(LearnPanel, { props: { api, device: 'midicraft', bank: 2, onStatus } });
+
+    await waitFor(() =>
+      expect(onStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ current: 'mc_row1_1' }),
+      ),
+    );
   });
 });

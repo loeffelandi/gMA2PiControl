@@ -69,7 +69,7 @@ function fakeApi(devices: DeviceEntry[], cfg = config) {
     deviceLearnStatus: vi.fn().mockResolvedValue({ active: false }),
     startDeviceLearn: vi.fn(),
     skipDeviceLearn: vi.fn(),
-    cancelDeviceLearn: vi.fn(),
+    cancelDeviceLearn: vi.fn().mockResolvedValue({}),
     finishDeviceLearn: vi.fn(),
   } as unknown as ApiClient;
 }
@@ -225,5 +225,33 @@ describe('DevicesPage bank offset', () => {
     await fireEvent.click(screen.getByText('F'));
     await fireEvent.click(screen.getByText('Zuweisen'));
     expect((screen.getByLabelText('Executor') as HTMLInputElement).value).toBe('6');
+  });
+});
+
+describe('DevicesPage learn highlight', () => {
+  it('marks the active learn control on the surface', async () => {
+    const api = fakeApi([device]);
+    vi.mocked(api.deviceLearnStatus).mockResolvedValue({
+      active: true,
+      device: 'banktest',
+      bank: 1,
+      channel: 1,
+      current: 'bt_button',
+      total: 2,
+      index: 0,
+      captured: [],
+      paused: false,
+      error: null,
+    });
+
+    render(DevicesPage, { props: { api } });
+    await waitFor(() => expect(screen.getByTestId('device-surface')).toBeTruthy());
+    await fireEvent.click(screen.getByText('Anlernen'));
+
+    await waitFor(() =>
+      expect(screen.getByText(/das markierte Feld/)).toBeTruthy(),
+    );
+    const cell = screen.getByText('B').closest('button')!;
+    expect(cell.classList.contains('active')).toBe(true);
   });
 });
