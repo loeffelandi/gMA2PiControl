@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 
+from ma2pi import frames
 from ma2pi.events import InputEvent
 from ma2pi.ma2_client import DryRunTransport, Ma2Client
 from ma2pi.mapping import MappingEngine
@@ -39,30 +40,6 @@ async def test_dry_run_programming_sequence(config):
     client = Ma2Client(config, transport=transport, dry_run=True)
     engine = MappingEngine(config, client)
     await client.start()
-    client._page.update(
-        {
-            "responseType": "presetTypes",
-            "type": "full",
-            "pre": [
-                {
-                    "i": 1,
-                    "np": "Dimmer",
-                    "s": True,
-                    "fea": [
-                        {
-                            "i": 1,
-                            "np": "Dimmer",
-                            "s": True,
-                            "att": [
-                                {"n": "DIM", "np": "Dim", "s": True},
-                                {"n": "PAN", "np": "Pan", "s": False},
-                            ],
-                        }
-                    ],
-                }
-            ],
-        }
-    )
     try:
         # MA + Fix (Desk Lock), Store hold, Clear hold, Go+, number 1.
         engine.handle(key("ma", 1))
@@ -96,20 +73,8 @@ async def test_dry_run_programming_sequence(config):
             {"requestType": "keyname", "keyname": "GO_PLUS", "value": 0.0, "session": 0, "maxRequests": 0},
             {"requestType": "keyname", "keyname": "1", "value": 1.0, "session": 0, "maxRequests": 0},
             {"requestType": "keyname", "keyname": "1", "value": 0.0, "session": 0, "maxRequests": 0},
-            {
-                "requestType": "encoder",
-                "name": "DIM",
-                "value": 1.0,
-                "session": 0,
-                "maxRequests": 0,
-            },
-            {
-                "requestType": "encoder",
-                "name": "PAN",
-                "value": 1.0,
-                "session": 0,
-                "maxRequests": 0,
-            },
+            frames.lua_encoder_frame(0, 1, 0),
+            frames.lua_encoder_frame(1, 1, 0),
         ]
     finally:
         engine.cleanup(send=False)

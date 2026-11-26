@@ -4,7 +4,7 @@
   import { ApiError, type ApiClient, type DeviceEntry, type LearnResult } from './api';
   import type { StatusStore } from './status';
 
-  type KeyKind = 'hardkey' | 'command' | 'screen_mode' | 'screen' | 'encoder_fine';
+  type KeyKind = 'hardkey' | 'command' | 'screen_mode' | 'screen' | 'encoder_press';
   type EncoderKind = 'slot' | 'attribute';
 
   interface KeyRow {
@@ -46,7 +46,7 @@
     'hardkey',
     'command',
     'screen',
-    'encoder_fine',
+    'encoder_press',
     'screen_mode',
   ];
 
@@ -86,7 +86,7 @@
     if (entry.hardkey != null) return 'hardkey';
     if (entry.command != null) return 'command';
     if (entry.screen != null) return 'screen';
-    if (entry.encoder_fine != null) return 'encoder_fine';
+    if (entry.encoder_press != null) return 'encoder_press';
     return 'screen_mode';
   }
 
@@ -232,7 +232,7 @@
       if (!row.control) continue;
       if (row.kind === 'screen_mode') {
         keys[row.control] = { screen_mode: true };
-      } else if (row.kind === 'screen' || row.kind === 'encoder_fine') {
+      } else if (row.kind === 'screen' || row.kind === 'encoder_press') {
         keys[row.control] = { [row.kind]: Number(row.value) };
       } else {
         keys[row.control] = { [row.kind]: row.value };
@@ -252,13 +252,15 @@
     for (const control of originalModifiers) {
       if (!(control in modifiers)) modifiers[control] = null;
     }
-    const screenEncoders: Record<string, string | null> = {};
+    const screenEncoders: Record<string, number | null> = {};
     for (const row of encoderRows) {
       if (row.kind !== 'slot') continue;
       const slot = Number(row.value);
       if (!Number.isInteger(slot) || slot < 1 || slot > 4) continue;
-      const name = row.screen.trim();
-      if (name) screenEncoders[String(slot)] = name;
+      const number = Number(row.screen);
+      if (row.screen.trim() && Number.isInteger(number)) {
+        screenEncoders[String(slot)] = number;
+      }
     }
     for (const slot of originalScreenSlots) {
       if (!(slot in screenEncoders)) screenEncoders[slot] = null;
@@ -378,7 +380,8 @@
     <p class="muted">
       Ziel = was der Encoder im Attribut-Modus dreht. Screen-Encoder = was
       derselbe Encoder im Screen-Modus dreht (Taste asl_bank oder MA halten).
-      Standard: Encoder 1 → 8, Encoder 2 → 7, Encoder 3 → 6, Encoder 4 → 5.
+      Standard: Encoder 1 → 8, Encoder 2 → 7, Encoder 3 → 6, Encoder 4 → 5
+      (Screen-Encoder 5–10, wie bei ShowCockpit).
     </p>
     <table>
       <thead>
@@ -429,6 +432,8 @@
                   <option value="6">Screen-Encoder 6</option>
                   <option value="7">Screen-Encoder 7</option>
                   <option value="8">Screen-Encoder 8</option>
+                  <option value="9">Screen-Encoder 9</option>
+                  <option value="10">Screen-Encoder 10</option>
                   {#if row.screen && !['5', '6', '7', '8'].includes(row.screen)}
                     <option value={row.screen}>{row.screen}</option>
                   {/if}

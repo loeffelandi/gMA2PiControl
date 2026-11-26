@@ -162,7 +162,7 @@ class KeyMapping:
     hardkey: str | None = None
     command: str | None = None
     screen_mode: bool = False
-    encoder_fine: int | None = None
+    encoder_press: int | None = None
     screen: int | None = None
 
 
@@ -193,6 +193,7 @@ class ResolutionSettings:
     attribute: ResolutionSet = field(default_factory=ResolutionSet)
     fine_modifier: str = "fine"
     ultra_modifier: str = "ultra"
+    cycle_modifier: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,7 +201,7 @@ class MappingSettings:
     modifiers: Mapping[str, ModifierMapping] = field(default_factory=dict)
     keys: Mapping[str, KeyMapping] = field(default_factory=dict)
     encoders: tuple[EncoderMapping, ...] = ()
-    screen_encoders: Mapping[int, str] = field(default_factory=dict)
+    screen_encoders: Mapping[int, int] = field(default_factory=dict)
     acceleration: AccelerationSettings = field(default_factory=AccelerationSettings)
     resolution: ResolutionSettings = field(default_factory=ResolutionSettings)
 
@@ -496,6 +497,15 @@ def _parse_led(raw: Any) -> LedSettings:
             "brightness",
             "brightness_channel",
             "color_channel",
+            "nipple_note",
+            "nipple_idle_color",
+            "nipple_idle_brightness",
+            "nipple_pressed_color",
+            "nipple_pressed_brightness",
+            "fine_note",
+            "fine_color",
+            "fine_idle_brightness",
+            "fine_pressed_brightness",
         },
         path,
     )
@@ -525,6 +535,41 @@ def _parse_led(raw: Any) -> LedSettings:
     if brightness_channel == color_channel:
         raise ConfigError(path, "brightness_channel und color_channel müssen verschieden sein")
 
+    nipple_note = _int(data.get("nipple_note", 11), f"{path}.nipple_note")
+    if not 1 <= nipple_note <= 127:
+        raise ConfigError(f"{path}.nipple_note", "muss zwischen 1 und 127 liegen")
+    nipple: dict[str, int] = {}
+    for key, default in (
+        ("nipple_idle_color", 121),
+        ("nipple_pressed_color", 116),
+    ):
+        try:
+            nipple[key] = parse_color(data.get(key, default))
+        except ValueError as exc:
+            raise ConfigError(f"{path}.{key}", str(exc)) from exc
+    for key, default in (
+        ("nipple_idle_brightness", 25),
+        ("nipple_pressed_brightness", 127),
+    ):
+        value = _int(data.get(key, default), f"{path}.{key}")
+        if not 0 <= value <= 127:
+            raise ConfigError(f"{path}.{key}", "muss zwischen 0 und 127 liegen")
+        nipple[key] = value
+
+    fine_note = _int(data.get("fine_note", 10), f"{path}.fine_note")
+    if not 1 <= fine_note <= 127:
+        raise ConfigError(f"{path}.fine_note", "muss zwischen 1 und 127 liegen")
+    try:
+        fine_color = parse_color(data.get("fine_color", 123))
+    except ValueError as exc:
+        raise ConfigError(f"{path}.fine_color", str(exc)) from exc
+    fine_levels: dict[str, int] = {}
+    for key, default in (("fine_idle_brightness", 25), ("fine_pressed_brightness", 127)):
+        value = _int(data.get(key, default), f"{path}.{key}")
+        if not 0 <= value <= 127:
+            raise ConfigError(f"{path}.{key}", "muss zwischen 0 und 127 liegen")
+        fine_levels[key] = value
+
     return LedSettings(
         enabled=enabled,
         device=device,
@@ -534,6 +579,15 @@ def _parse_led(raw: Any) -> LedSettings:
         brightness=brightness,
         brightness_channel=brightness_channel,
         color_channel=color_channel,
+        nipple_note=nipple_note,
+        nipple_idle_color=nipple["nipple_idle_color"],
+        nipple_idle_brightness=nipple["nipple_idle_brightness"],
+        nipple_pressed_color=nipple["nipple_pressed_color"],
+        nipple_pressed_brightness=nipple["nipple_pressed_brightness"],
+        fine_note=fine_note,
+        fine_color=fine_color,
+        fine_idle_brightness=fine_levels["fine_idle_brightness"],
+        fine_pressed_brightness=fine_levels["fine_pressed_brightness"],
     )
 
 
@@ -834,19 +888,19 @@ def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSe
         item_path = f"{path}.keys.{control}"
         item = _table(entry, item_path)
         _reject_unknown(
-            item, {"hardkey", "command", "screen_mode", "encoder_fine", "screen"}, item_path
+            item, {"hardkey", "command", "screen_mode", "encoder_press", "screen"}, item_path
         )
         if control not in controls:
             raise ConfigError(item_path, f"Control {control!r} kommt in keinem Profil vor")
         kinds = [
             name
-            for name in ("hardkey", "command", "screen_mode", "encoder_fine", "screen")
+            for name in ("hardkey", "command", "screen_mode", "encoder_press", "screen")
             if name in item
         ]
         if len(kinds) != 1:
             raise ConfigError(
                 item_path,
-                "genau eines von hardkey, command, screen_mode, encoder_fine oder screen angeben",
+                "genau eines von hardkey, command, screen_mode, encoder_press oder screen angeben",
             )
         kind = kinds[0]
         if kind == "hardkey":
@@ -866,10 +920,10 @@ def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSe
                 raise ConfigError(f"{item_path}.screen", "muss zwischen 1 und 6 liegen")
             keys[control] = KeyMapping(screen=screen)
         else:
-            slot = _int(item["encoder_fine"], f"{item_path}.encoder_fine")
+            slot = _int(item["encoder_press"], f"{item_path}.encoder_press")
             if not 1 <= slot <= 8:
-                raise ConfigError(f"{item_path}.encoder_fine", "muss zwischen 1 und 8 liegen")
-            keys[control] = KeyMapping(encoder_fine=slot)
+                raise ConfigError(f"{item_path}.encoder_press", "muss zwischen 1 und 8 liegen")
+            keys[control] = KeyMapping(encoder_press=slot)
 
     encoders_raw = data.get("encoders", [])
     if not isinstance(encoders_raw, list):
@@ -902,7 +956,7 @@ def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSe
             encoders.append(EncoderMapping(id=enc_id, attribute=attribute))
 
     screen_raw = _table(data.get("screen_encoders", {}), f"{path}.screen_encoders")
-    screen_encoders: dict[int, str] = {}
+    screen_encoders: dict[int, int] = {}
     for slot_key, name in screen_raw.items():
         slot_path = f"{path}.screen_encoders.{slot_key}"
         try:
@@ -911,7 +965,12 @@ def _parse_mapping(raw: Any, profiles: Mapping[str, ProfileConfig]) -> MappingSe
             raise ConfigError(slot_path, "muss zwischen 1 und 4 liegen") from exc
         if not 1 <= slot <= 4:
             raise ConfigError(slot_path, "muss zwischen 1 und 4 liegen")
-        screen_encoders[slot] = _string(name, slot_path)
+        if isinstance(name, str) and name.strip().isdigit():
+            name = int(name)
+        number = _int(name, slot_path)
+        if not 5 <= number <= 10:
+            raise ConfigError(slot_path, "Screen-Encoder muss zwischen 5 und 10 liegen")
+        screen_encoders[slot] = number
 
     acceleration = _parse_acceleration(data.get("encoder_acceleration"))
     resolution = _parse_resolution(data.get("encoder_resolution"), modifiers)
@@ -981,17 +1040,24 @@ def _parse_resolution(raw: Any, modifiers: Mapping[str, ModifierMapping]) -> Res
     wheel = parse_set(data.get("wheel"), f"{path}.wheel", ResolutionSet(1.0, 0.25, 0.1))
     attribute = parse_set(data.get("attribute"), f"{path}.attribute", ResolutionSet(1.0, 0.1, 0.01))
     mods = _table(data.get("modifiers", {}), f"{path}.modifiers")
-    _reject_unknown(mods, {"fine", "ultra"}, f"{path}.modifiers")
+    _reject_unknown(mods, {"fine", "ultra", "cycle"}, f"{path}.modifiers")
     fine = _string(mods["fine"], f"{path}.modifiers.fine") if "fine" in mods else ""
     ultra = _string(mods["ultra"], f"{path}.modifiers.ultra") if "ultra" in mods else ""
-    for key, name in (("fine", fine), ("ultra", ultra)):
+    cycle = _string(mods["cycle"], f"{path}.modifiers.cycle") if "cycle" in mods else ""
+    for key, name in (("fine", fine), ("ultra", ultra), ("cycle", cycle)):
         if not name:
             continue
         if name not in modifiers:
             raise ConfigError(f"{path}.modifiers.{key}", f"Modifier {name!r} ist nicht definiert")
         if not modifiers[name].local:
             raise ConfigError(f"{path}.modifiers.{key}", f"Modifier {name!r} muss local sein")
-    return ResolutionSettings(wheel=wheel, attribute=attribute, fine_modifier=fine, ultra_modifier=ultra)
+    return ResolutionSettings(
+        wheel=wheel,
+        attribute=attribute,
+        fine_modifier=fine,
+        ultra_modifier=ultra,
+        cycle_modifier=cycle,
+    )
 
 
 def parse_config(raw: Any, source_path: str = "") -> AppConfig:

@@ -39,54 +39,38 @@ Encoder-ID MUST die Konfigurationsvalidierung fehlschlagen lassen.
 
 ### Requirement: Attribut-Fenster folgt der onPC
 
-Das von den Slots adressierte Attribut-Fenster SHALL aus der aktuellen Auswahl
-der onPC abgeleitet werden, nicht aus einem eigenen Bankzähler. Blättert der
-Benutzer in der onPC zum nächsten Attribut-Block, MUST der Daemon das innerhalb
-weniger Sekunden übernehmen. Slots ohne zugehöriges Attribut MUST keine Frames
-erzeugen.
+Die Slot-Encoder SHALL die Hardware-Attribut-Encoder der onPC adressieren; die
+onPC routet diese selbst auf das aktuell gewählte Feature und Attribut-Fenster.
+Der Daemon MUST kein `presetTypes`-Dauer-Polling betreiben; er DARF das
+Attribut-Modell nur beim Verbinden und kurz nach einem Auflösungswechsel lesen,
+um Attributnamen und Auflösung zu bestimmen.
 
 #### Scenario: onPC blättert weiter
 
 - **WHEN** der Benutzer in der onPC von den Attributen 1–4 auf die Attribute 5–8 wechselt
-- **THEN** senden die vier Encoder danach die Attribute 5–8
+- **THEN** senden die vier Encoder weiterhin ihre Hardware-Encoder-Indizes und die onPC legt sie auf die Attribute 5–8
 
 #### Scenario: Weniger Attribute als Slots
 
 - **WHEN** das aktuelle Feature nur zwei Attribute hat
-- **THEN** bleiben die Slots 3 und 4 ohne Wirkung und senden keine Frames
+- **THEN** bleiben die Hardware-Encoder 3 und 4 an der onPC ohne Wirkung; der Daemon sendet ihre Indizes weiter und die onPC ignoriert sie
 
 #### Scenario: Feature-Wechsel
 
 - **WHEN** der Benutzer in der onPC ein anderes Feature wählt
-- **THEN** übernehmen die Encoder das Fenster des neuen Features
-
-### Requirement: Auflösung per Encoder-Klick
-
-Ein Druck auf einen Encoder SHALL dessen Auflösung zyklisch umschalten:
-Normal (0) → Fine (1) → Ultra (2) → Normal (0). Die Auflösung MUST pro Encoder
-gespeichert und als eigener `encoder`-Frame mit `resolution` an die onPC
-gesendet werden. Sie MUST nur nachfolgende Deltas betreffen.
-
-#### Scenario: Drei Klicks
-
-- **WHEN** ein Encoder dreimal hintereinander gedrückt wird
-- **THEN** werden nacheinander `resolution` 1, 2 und 0 gesendet
-
-#### Scenario: Auflösung gilt ab dem nächsten Detent
-
-- **WHEN** die Auflösung geändert wird, während noch Deltas ausstehen
-- **THEN** wird der ausstehende Delta verworfen und erst der nächste Detent mit der neuen Auflösung gesendet
+- **THEN** adressieren die Encoder ohne Zutun des Daemons das Fenster des neuen Features; es findet kein Dauer-Polling statt
 
 ### Requirement: Screen-Modus per Taste
 
 Eine konfigurierte Taste SHALL zwischen Attribut- und Screen-Encodern
-umschalten. Im Screen-Modus MUST jeder Slot auf den in
-`mapping.screen_encoders` hinterlegten Namen zeigen.
+umschalten. Im Screen-Modus MUST jeder Slot auf die in
+`mapping.screen_encoders` hinterlegte Screen-Encoder-Nummer (5–10) zeigen und
+den entsprechenden Hardware-Encoder-Index (Nummer − 1) adressieren.
 
 #### Scenario: Umschalten mit konfigurierten Screen-Encodern
 
 - **WHEN** `mapping.screen_encoders` die Slots 1–4 belegt und die Taste gedrückt wird
-- **THEN** senden die Encoder danach die Screen-Encoder-Namen und der Status meldet `screen_mode: true`
+- **THEN** senden die Encoder danach die Screen-Encoder-Indizes und der Status meldet `screen_mode: true`
 
 #### Scenario: Umschalten ohne Konfiguration
 
@@ -96,7 +80,7 @@ umschalten. Im Screen-Modus MUST jeder Slot auf den in
 #### Scenario: Zurück in den Attribut-Modus
 
 - **WHEN** die Taste im Screen-Modus erneut gedrückt wird
-- **THEN** folgen die Encoder wieder dem Attribut-Fenster der onPC
+- **THEN** adressieren die Encoder wieder die Hardware-Attribut-Encoder der onPC
 
 ### Requirement: LED-Anzeige des Encoder-Modus
 
@@ -163,28 +147,6 @@ und ein von Null verschiedener Input darf nie Delta 0 erzeugen.
 - **WHEN** schnell gegen den Uhrzeigersinn gedreht wird
 - **THEN** sind alle gesendeten Deltas negativ
 
-### Requirement: Nativer Encoder-Frame
-
-Der Encoder-Transport SHALL ausschließlich der native Web-Remote-Frame sein. Pro
-Flush MUST genau ein Frame `{"requestType": "encoder", "name": <Attribut>,
-"value": <Delta>}` entstehen. Auflösungswechsel MUST als eigener Frame ohne
-`value` gesendet werden. CMD-Wrapper für Encoder werden nicht verwendet.
-
-#### Scenario: Attribut-Delta
-
-- **WHEN** ein akkumulierter Delta für `DIM` anliegt
-- **THEN** wird genau ein Frame mit `name: "DIM"` und dem Delta als `value` gesendet
-
-#### Scenario: Auflösungswechsel
-
-- **WHEN** die Auflösung für `DIM` auf Fine wechselt
-- **THEN** wird ein Frame mit `name: "DIM"` und `resolution: 1`, aber ohne `value` gesendet
-
-#### Scenario: Dry-Run
-
-- **WHEN** der Daemon im Dry-Run läuft
-- **THEN** werden die nativen Encoder-Frames protokolliert, ohne dass eine Verbindung geöffnet wird
-
 ### Requirement: Rate-Limiting und Lockup-Schutz
 
 Encoder-Ausgaben SHALL dem globalen Rate-Limiter unterliegen. Bei Sättigung MUST
@@ -207,62 +169,46 @@ Verwerfen geloggt werden.
 - **WHEN** die Drehung endet und noch ein akkumulierter Delta offen ist
 - **THEN** wird dieser Delta nach dem nächsten freien Limit-Slot gesendet
 
-### Requirement: Auflösung im Screen-Modus
-
-Im Screen-Modus MUST ein Encoder-Klick den Auflösungsframe auf den in
-`mapping.screen_encoders` hinterlegten Namen des Slots beziehen. Ist für den
-Slot kein Name konfiguriert, MUST kein Frame gesendet und eine Warnung
-protokolliert werden; der Attribut-Name der aktuellen onPC-Page darf dabei
-nicht verwendet werden.
-
-#### Scenario: Auflösung mit Screen-Encoder-Namen
-
-- **WHEN** der Screen-Modus aktiv ist, Slot 2 auf `screen2` zeigt und Encoder 2 gedrückt wird
-- **THEN** wird ein `encoder`-Frame mit `name: "screen2"` und der nächsten Auflösungsstufe gesendet
-
-#### Scenario: Auflösung ohne Screen-Encoder-Namen
-
-- **WHEN** der Screen-Modus aktiv ist und für den gedrückten Slot kein `screen_encoders`-Name konfiguriert ist
-- **THEN** wird kein `encoder`-Frame gesendet und eine Warnung nennt den fehlenden Slot
-
-#### Scenario: Auflösung im Attribut-Modus bleibt unverändert
-
-- **WHEN** der Attribut-Modus aktiv ist und ein Encoder gedrückt wird
-- **THEN** bezieht sich der Auflösungsframe weiterhin auf das Attribut der aktuellen Page
-
 ### Requirement: Standardzuordnung der Screen-Encoder
 
 Die mitgelieferte Konfiguration SHALL die onPC-Screen-Encoder 5–8 in umgekehrter
-Reihenfolge auf die physischen Slots 1–4 legen: Slot 1 → `"8"`, Slot 2 → `"7"`,
-Slot 3 → `"6"`, Slot 4 → `"5"`.
+Reihenfolge auf die physischen Slots 1–4 legen: Slot 1 → `8`, Slot 2 → `7`,
+Slot 3 → `6`, Slot 4 → `5`. `mapping.screen_encoders` MUST ausschließlich
+Nummern im Bereich 5–10 akzeptieren; andere Werte MUST die Validierung
+fehlschlagen lassen.
 
 #### Scenario: Standardbelegung im Screen-Modus
 
 - **WHEN** der Daemon mit der mitgelieferten `config.toml` läuft und der Screen-Modus aktiv ist
-- **THEN** sendet Slot 1 Frames an `"8"`, Slot 2 an `"7"`, Slot 3 an `"6"` und Slot 4 an `"5"`
+- **THEN** sendet Slot 1 den Index für Screen-Encoder 8, Slot 2 für 7, Slot 3 für 6 und Slot 4 für 5
+
+#### Scenario: Ungültige Screen-Encoder-Nummer
+
+- **WHEN** `mapping.screen_encoders` einen Wert außerhalb von 5–10 oder einen nicht-numerischen Wert enthält
+- **THEN** bricht die Konfigurationsvalidierung mit einer Meldung ab, die den gültigen Bereich nennt
 
 #### Scenario: Anpassung im UI
 
-- **WHEN** ein Screen-Encoder-Name im UI geändert wird
-- **THEN** verwendet der Screen-Modus den geänderten Namen für diesen Slot
+- **WHEN** eine Screen-Encoder-Nummer im UI geändert wird
+- **THEN** verwendet der Screen-Modus die geänderte Nummer für diesen Slot
 
 ### Requirement: Temporärer Screen-Modus per MA
 
 Solange die MA-Taste gehalten wird, MUST jeder Slot-Encoder die Screen-Encoder
 aus `mapping.screen_encoders` adressieren, auch wenn der globale Screen-Modus
-ausgeschaltet ist. Beim Loslassen MUST der nächste Detent wieder das
-Attribut-Fenster adressieren; ein Moduswechsel zwischen zwei Detents MUST zwei
-getrennte Frames erzeugen.
+ausgeschaltet ist. Beim Loslassen MUST der nächste Detent wieder die
+Hardware-Attribut-Encoder adressieren; ein Moduswechsel zwischen zwei Detents
+MUST zwei getrennte Frames erzeugen.
 
 #### Scenario: MA + Encoder
 
 - **WHEN** MA gehalten und Slot 1 um einen Detent gedreht wird
-- **THEN** wird ein `encoder`-Frame mit dem Screen-Encoder-Namen für Slot 1 (Standard `"8"`) gesendet
+- **THEN** wird ein canbus-Encoder-Frame mit dem Index für die Slot 1 zugeordnete Screen-Encoder-Nummer (Standard `8`) gesendet
 
 #### Scenario: Loslassen
 
 - **WHEN** MA losgelassen und Slot 1 erneut gedreht wird
-- **THEN** folgt der Frame wieder dem Attribut der onPC-Page
+- **THEN** adressiert der Frame wieder den Hardware-Attribut-Encoder der onPC
 
 #### Scenario: Wechsel zwischen Detents
 
@@ -279,3 +225,150 @@ Modus auswerten, sondern den Hardkey wie jede andere Taste senden.
 
 - **WHEN** die rechte ASL-Taste gedrückt und wieder losgelassen wird
 - **THEN** sendet der Daemon einen `NIPPLE`-Press und einen `NIPPLE`-Release an die onPC
+
+### Requirement: Encoder-Transport über canbus
+
+Slot-Encoder SHALL ihre Deltas als Command-Frame
+`LUA 'gma.canbus.encoder(<Index>, <Schritte>, nil)'` senden. Der Index ist die
+Ziel-Nummer − 1: im Attribut-Modus Slot − 1 (0–3), im Screen-Modus die
+konfigurierte Screen-Encoder-Nummer − 1 (4–9). Feste Attribut-Encoder
+(`attribute`) SHALL weiterhin den nativen `encoder`-Request mit Namen nutzen.
+Ist im Screen-Modus für einen Slot keine Nummer konfiguriert, MUST kein Frame
+gesendet und eine Warnung protokolliert werden.
+
+#### Scenario: Attribut-Delta
+
+- **WHEN** im Attribut-Modus ein akkumulierter Delta für Slot 1 anliegt
+- **THEN** wird genau ein Command-Frame `LUA 'gma.canbus.encoder(0, <Schritte>, nil)'` gesendet
+
+#### Scenario: Screen-Delta
+
+- **WHEN** im Screen-Modus Slot 2 auf Screen-Encoder 7 zeigt und ein Delta anliegt
+- **THEN** wird genau ein Command-Frame `LUA 'gma.canbus.encoder(6, <Schritte>, nil)'` gesendet
+
+#### Scenario: Screen-Modus ohne Nummer
+
+- **WHEN** im Screen-Modus für einen Slot keine Screen-Encoder-Nummer konfiguriert ist
+- **THEN** wird kein Frame gesendet und eine Warnung nennt den fehlenden Slot
+
+#### Scenario: Festes Attribut bleibt nativ
+
+- **WHEN** ein Encoder auf das feste Attribut `PAN` gemappt ist
+- **THEN** wird weiterhin ein nativer `encoder`-Frame mit `name: "PAN"` gesendet
+
+#### Scenario: Dry-Run
+
+- **WHEN** der Daemon im Dry-Run läuft
+- **THEN** werden die canbus-Encoder-Frames protokolliert, ohne dass eine Verbindung geöffnet wird
+
+### Requirement: Ganzzahlige Schritte mit Rest-Vortrag
+
+canbus-Encoder-Frames SHALL ganzzahlige Schritte senden. Der akkumulierte
+Float-Delta eines Slots MUST ganzzahlig gesendet und der verbleibende Rest für
+diesen Slot vorgetragen werden, sodass auch langsame Drehungen unter einem
+vollen Schritt langfristig keinen Detent verlieren. Das Vorzeichen MUST
+erhalten bleiben; ein Flush ohne ganzen Schritt MUST keinen Frame erzeugen.
+
+#### Scenario: Langsame Drehung unter einem Schritt
+
+- **WHEN** durch Beschleunigungskurve oder Auflösung ein Delta von weniger als einem ganzen Schritt aufläuft
+- **THEN** wird zunächst kein Frame gesendet und der Rest bleibt erhalten, bis sich mindestens ein ganzer Schritt ergibt
+
+#### Scenario: Rest wird vorgetragen
+
+- **WHEN** mehrere Flushes jeweils einen Rest hinterlassen
+- **THEN** summieren sich die Reste und ergeben schließlich einen ganzzahligen Frame, ohne dass Detents verloren gehen
+
+#### Scenario: Vorzeichen bleibt erhalten
+
+- **WHEN** gegen den Uhrzeigersinn gedreht wird
+- **THEN** sind alle gesendeten Schritte negativ
+
+### Requirement: Encoder-Klick über canbus
+
+Ein Druck auf einen Slot-Encoder SHALL als `LUA 'gma.canbus.encoder(<Index>, 0, true)'`
+und beim Loslassen als `(<Index>, 0, false)` an die onPC gehen. Der Release MUST
+denselben Index wie der Press verwenden. Die Zuordnung erfolgt per
+`encoder_press = <slot>`; `asl_click_1..4` liegen standardmäßig auf Slot 1–4.
+
+#### Scenario: Klick im Attribut-Modus
+
+- **WHEN** Encoder 2 gedrückt und losgelassen wird
+- **THEN** werden `gma.canbus.encoder(1, 0, true)` und danach `gma.canbus.encoder(1, 0, false)` gesendet
+
+#### Scenario: Klick mit MA
+
+- **WHEN** MA gehalten und Encoder 2 gedrückt wird
+- **THEN** wird `gma.canbus.encoder(6, 0, true)` (Standard: Screen-Encoder 7) gesendet und der Release verwendet ebenfalls Index 6
+
+#### Scenario: Release nach Moduswechsel
+
+- **WHEN** Encoder 1 im Attribut-Modus gedrückt und MA vor dem Loslassen betätigt wird
+- **THEN** sendet der Release weiterhin Index 0
+
+### Requirement: Auflösung per Taste 2 und Encoder-Klick
+
+Solange der lokale Modifier `asl_button_2` gehalten wird, SHALL ein Encoder-Klick
+die Auflösung des Attributs des Slots in der onPC zyklisch umschalten (Normal →
+Fine → Ultra → Normal) und keinen Encoder-Druck senden. Die Umschaltung MUST per
+nativem `encoder`-Frame mit `name` und `resolution` erfolgen; der Daemon skaliert
+Deltas nicht selbst. Für Screen-Encoder (Screen-Modus oder MA gehalten) MUST
+nichts gesendet und eine Warnung protokolliert werden.
+
+#### Scenario: Auflösung durchschalten
+
+- **WHEN** `asl_button_2` gehalten und Encoder 1 dreimal geklickt wird
+- **THEN** werden nacheinander `resolution` 1, 2 und 0 für das Attribut von Slot 1 gesendet, und kein Klick erzeugt einen Encoder-Druck-Frame
+
+#### Scenario: Fine skaliert
+
+- **WHEN** die onPC Fine für das Attribut meldet und der Slot gedreht wird
+- **THEN** ändert sich der Wert pro Schritt entsprechend kleiner, ohne dass der Daemon die Schritte skaliert
+
+#### Scenario: Klick ohne Taste 2
+
+- **WHEN** `asl_button_2` nicht gehalten wird und ein Encoder geklickt wird
+- **THEN** wird der Encoder-Druck an die onPC gesendet und die Auflösung ändert sich nicht
+
+### Requirement: NIPPLE-LED
+
+Die rechte ASL-Taste (Note 11) SHALL standardmäßig leicht orange leuchten
+(Farbindex 121, Helligkeit 25) und solange sie gedrückt wird heller
+(Farbindex 116, Helligkeit 127). Farbe und Helligkeit MUST in `[led]`
+konfigurierbar sein. Fehlt das MIDI-Gerät, MUST der Daemon normal weiterlaufen.
+
+#### Scenario: Ruhezustand
+
+- **WHEN** der Daemon die LED-Ausgabe geöffnet hat
+- **THEN** leuchtet die rechte ASL-Taste mit Idle-Farbe und Idle-Helligkeit
+
+#### Scenario: Taste gedrückt
+
+- **WHEN** die rechte ASL-Taste gedrückt wird
+- **THEN** wechselt ihre LED auf Farbe und Helligkeit des gedrückten Zustands
+
+#### Scenario: Taste losgelassen
+
+- **WHEN** die rechte ASL-Taste losgelassen wird
+- **THEN** kehrt die LED auf den Ruhezustand zurück
+
+### Requirement: LED der Fine-Taste
+
+Die mittlere ASL-Taste (Note 10) SHALL im Ruhezustand gedimmt (Farbindex 123,
+Helligkeit 25) und solange sie als Fine-Modifier gehalten wird hell
+(Helligkeit 127) leuchten. Farbe und Helligkeiten MUST in `[led]` konfigurierbar sein.
+
+#### Scenario: Ruhezustand
+
+- **WHEN** die LED-Ausgabe geöffnet ist
+- **THEN** leuchtet die mittlere ASL-Taste mit Ruhefarbe und Ruhehelligkeit
+
+#### Scenario: Taste gehalten
+
+- **WHEN** die mittlere ASL-Taste gedrückt wird
+- **THEN** wechselt ihre LED auf die helle Stufe
+
+#### Scenario: Taste losgelassen
+
+- **WHEN** die mittlere ASL-Taste losgelassen wird
+- **THEN** kehrt die LED auf die gedimmte Stufe zurück

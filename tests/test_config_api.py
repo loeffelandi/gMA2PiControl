@@ -170,8 +170,8 @@ async def test_put_sets_and_removes_screen_encoders(tmp_path):
             json={
                 "mapping": {
                     "screen_encoders": {
-                        "1": "screen1",
-                        "2": "screen2",
+                        "1": 5,
+                        "2": 6,
                         "3": None,
                         "4": None,
                     }
@@ -181,8 +181,8 @@ async def test_put_sets_and_removes_screen_encoders(tmp_path):
         )
         assert response.status == 200
         assert store.config.mapping.screen_encoders == {
-            1: "screen1",
-            2: "screen2",
+            1: 5,
+            2: 6,
         }
 
         response = await client.put(
@@ -191,9 +191,9 @@ async def test_put_sets_and_removes_screen_encoders(tmp_path):
             headers=headers,
         )
         assert response.status == 200
-        assert store.config.mapping.screen_encoders == {1: "screen1"}
+        assert store.config.mapping.screen_encoders == {1: 5}
         body = await (await client.get("/api/config")).json()
-        assert body["mapping"]["screen_encoders"] == {"1": "screen1"}
+        assert body["mapping"]["screen_encoders"] == {"1": 5}
     finally:
         await client.close()
 

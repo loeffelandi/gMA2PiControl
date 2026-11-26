@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Protocol
 
 from . import hardkeys
-from .actions import EncoderAttribute, EncoderSlot, ToggleFine
+from .actions import EncoderAttribute, EncoderSlot
 from .config import (
     AppConfig,
     EncoderMapping,
@@ -47,7 +47,8 @@ class ActionSink(Protocol):
     def encoder_slot(self, slot: int, delta: float, screen: bool = False) -> None: ...
     def encoder_attribute(self, name: str, value: float) -> None: ...
     def toggle_screen_mode(self) -> None: ...
-    def toggle_fine(self, slot: int) -> None: ...
+    def encoder_press(self, slot: int, pressed: bool, screen: bool = False) -> None: ...
+    def encoder_resolution(self, slot: int, screen: bool = False) -> None: ...
     def screen_shortcut(self, screen: int) -> None: ...
 
 
@@ -92,6 +93,8 @@ class MappingEngine:
         self._held: dict[str, HeldKey] = {}
         self._order = 0
         self._pending_hold: dict[str, float] = {}
+        self._press_targets: dict[str, tuple[int, bool]] = {}
+        self.modifier_hook: Callable[[str, bool], None] | None = None
         self._encoders: dict[int, EncoderState] = {}
         self._stop = asyncio.Event()
         self._frozen = False
@@ -148,6 +151,7 @@ class MappingEngine:
                 control, device, None, is_command=False, is_local_modifier=True
             )
             LOGGER.debug("lokaler Modifier %s gedrückt", control)
+            self._notify_modifier(control, True)
             return
 
         if modifier is not None:
@@ -174,9 +178,19 @@ class MappingEngine:
             self._add_held(control, device, None, True, False)
             self.sink.toggle_screen_mode()
             return
-        if key.encoder_fine is not None:
+        if key.encoder_press is not None:
+            cycle = self.config.mapping.resolution.cycle_modifier
+            if cycle and cycle in self._held:
+                self.flush_all(now)
+                self._add_held(control, device, None, True, False)
+                self.sink.encoder_resolution(
+                    key.encoder_press, self._screen_encoder_requested()
+                )
+                return
+            screen = self._screen_encoder_requested()
             self._add_held(control, device, None, True, False)
-            self.sink.toggle_fine(key.encoder_fine)
+            self._press_targets[control] = (key.encoder_press, screen)
+            self.sink.encoder_press(key.encoder_press, True, screen)
             return
         if key.screen is not None:
             self._add_held(control, device, None, True, False)
@@ -200,10 +214,21 @@ class MappingEngine:
             return
         if held.is_local_modifier:
             self.flush_all(now)
+            self._notify_modifier(control, False)
         if held.keyname is not None:
             self._emit_release(control, held.keyname)
+        target = self._press_targets.pop(control, None)
+        if target is not None:
+            self.sink.encoder_press(target[0], False, target[1])
         self._held.pop(control, None)
         self._pending_hold.pop(control, None)
+
+    def _notify_modifier(self, control: str, pressed: bool) -> None:
+        if self.modifier_hook is not None:
+            try:
+                self.modifier_hook(control, pressed)
+            except Exception as exc:  # LED feedback must never break input
+                LOGGER.debug("Modifier-Hook fehlgeschlagen: %s", exc)
 
     def _add_held(
         self,
@@ -242,6 +267,9 @@ class MappingEngine:
         for held in keys:
             if send and held.keyname is not None:
                 self._emit_release(held.control, held.keyname)
+            target = self._press_targets.pop(held.control, None)
+            if send and target is not None:
+                self.sink.encoder_press(target[0], False, target[1])
             self._held.pop(held.control, None)
             self._pending_hold.pop(held.control, None)
         if keys:
@@ -252,6 +280,10 @@ class MappingEngine:
         for held in keys:
             if send and held.keyname is not None:
                 self._emit_release(held.control, held.keyname)
+        if send:
+            for slot, screen in self._press_targets.values():
+                self.sink.encoder_press(slot, False, screen)
+        self._press_targets.clear()
         if keys:
             LOGGER.info("%d gehaltene Taste(n) freigegeben", len(keys))
         self._held.clear()
@@ -266,6 +298,7 @@ class MappingEngine:
             LOGGER.warning(
                 "Session verloren: %d gehaltene Taste(n) lokal verworfen", len(self._held)
             )
+        self._press_targets.clear()
         self._held.clear()
         self._order = 0
         self._pending_hold.clear()
@@ -355,10 +388,10 @@ class MappingEngine:
             state.detent_times.popleft()
         multiplier = self._acceleration_multiplier(len(state.detent_times))
         if state.is_slot:
-            state.pending += delta * multiplier
+            resolution = 1.0
         else:
             _, resolution = self._resolution_modifier(state)
-            state.pending += delta * multiplier * resolution
+        state.pending += delta * multiplier * resolution
         state.first_feed = now if state.first_feed is None else state.first_feed
         state.last_feed = now
 

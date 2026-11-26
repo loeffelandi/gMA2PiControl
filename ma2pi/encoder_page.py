@@ -109,6 +109,13 @@ class EncoderPage:
         att = self._at(slot)
         return str(att["n"]) if att is not None else None
 
+    def resolution_for(self, slot: int) -> int:
+        att = self._at(slot)
+        if att is None:
+            return 0
+        value = att.get("encoder_resolution", 0)
+        return value if value in (0, 1, 2) else 0
+
     def label_for(self, slot: int) -> str | None:
         att = self._at(slot)
         if att is None:

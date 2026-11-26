@@ -45,13 +45,43 @@ def test_led_output_writes_frames(tmp_path):
 
     red = note_on(1, 9, 127) + note_on(2, 9, 48)
     green = note_on(1, 9, 127) + note_on(2, 9, 8)
+    nipple_idle = note_on(1, 11, 25) + note_on(2, 11, 121)
+    fine_idle = note_on(1, 10, 25) + note_on(2, 10, 123)
     # Colour updates never send the release frame; only close does.
     assert path.read_bytes() == (
         ENABLE
         + ENABLE + red
         + ENABLE + green
+        + ENABLE + nipple_idle
+        + ENABLE + fine_idle
         + DISABLE
     )
+
+
+def test_fine_led_idle_and_pressed(tmp_path):
+    path = tmp_path / "led.mid"
+    path.touch()
+    led = LedOutput(path, LedSettings())
+    led.open()
+    led.set_fine(True)
+    led.set_fine(False)
+    led.close()
+    pressed = note_on(1, 10, 127) + note_on(2, 10, 123)
+    idle = note_on(1, 10, 25) + note_on(2, 10, 123)
+    assert path.read_bytes() == ENABLE + pressed + ENABLE + idle + DISABLE
+
+
+def test_nipple_led_idle_and_pressed(tmp_path):
+    path = tmp_path / "led.mid"
+    path.touch()
+    led = LedOutput(path, LedSettings())
+    led.open()
+    led.set_nipple(True)
+    led.set_nipple(False)
+    led.close()
+    pressed = note_on(1, 11, 127) + note_on(2, 11, 116)
+    idle = note_on(1, 11, 25) + note_on(2, 11, 121)
+    assert path.read_bytes() == ENABLE + pressed + ENABLE + idle + DISABLE
 
 
 def test_led_output_writes_are_optional(tmp_path):

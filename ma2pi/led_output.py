@@ -68,6 +68,15 @@ class LedSettings:
     brightness: int = 127
     brightness_channel: int = 1
     color_channel: int = 2
+    nipple_note: int = 11
+    nipple_idle_color: int = 121
+    nipple_idle_brightness: int = 25
+    nipple_pressed_color: int = 116
+    nipple_pressed_brightness: int = 127
+    fine_note: int = 10
+    fine_color: int = 123
+    fine_idle_brightness: int = 25
+    fine_pressed_brightness: int = 127
 
 
 class LedOutput:
@@ -141,7 +150,30 @@ class LedOutput:
             + note_on(self.settings.color_channel, note, index)
         )
 
+    def set_button(self, note: int, color: int, brightness: int) -> None:
+        """Set one button LED independently of the mode LED."""
+
+        self._write(
+            ENABLE
+            + note_on(self.settings.brightness_channel, note, brightness)
+            + note_on(self.settings.color_channel, note, color)
+        )
+
+    def set_nipple(self, pressed: bool) -> None:
+        cfg = self.settings
+        if pressed:
+            self.set_button(cfg.nipple_note, cfg.nipple_pressed_color, cfg.nipple_pressed_brightness)
+        else:
+            self.set_button(cfg.nipple_note, cfg.nipple_idle_color, cfg.nipple_idle_brightness)
+
+    def set_fine(self, pressed: bool) -> None:
+        cfg = self.settings
+        brightness = cfg.fine_pressed_brightness if pressed else cfg.fine_idle_brightness
+        self.set_button(cfg.fine_note, cfg.fine_color, brightness)
+
     def apply_mode(self, screen_mode: bool) -> None:
         self.set_color(
             self.settings.screen_color if screen_mode else self.settings.attribute_color
         )
+        self.set_nipple(False)
+        self.set_fine(False)

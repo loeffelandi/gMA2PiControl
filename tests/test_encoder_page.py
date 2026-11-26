@@ -154,3 +154,34 @@ def test_feature_change_uses_new_selection():
     )
     assert instance.bank == 1
     assert instance.name_for(1) == "PAN"
+
+
+def test_resolution_for_reads_encoder_resolution():
+    page = EncoderPage()
+    page.update(
+        {
+            "responseType": "presetTypes",
+            "type": "full",
+            "pre": [
+                {
+                    "i": 1,
+                    "np": "Dimmer",
+                    "s": True,
+                    "fea": [
+                        {
+                            "i": 1,
+                            "np": "Dimmer",
+                            "s": True,
+                            "att": [
+                                {"n": "DIM", "np": "Dim", "s": True, "encoder_resolution": 2},
+                                {"n": "CURVE", "np": "Curve", "s": False},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    assert page.resolution_for(1) == 2
+    assert page.resolution_for(2) == 0
+    assert page.resolution_for(4) == 0

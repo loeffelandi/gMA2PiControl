@@ -29,19 +29,19 @@ from .actions import (
     EncoderSlot,
     Press,
     Release,
-    ToggleFine,
+    EncoderPress,
+    EncoderResolution,
     encoder_key,
     is_encoder,
     merge_encoder,
 )
 from .config import AppConfig, Ma2Settings
-from .encoder_page import WINDOW, EncoderPage
+from .encoder_page import EncoderPage
 from .logging_setup import log_frame
 
 LOGGER = logging.getLogger("ma2pi.client")
 
 #: Resolution values the onPC accepts on an ``encoder`` request.
-RESOLUTION_NAMES = {0: "Normal", 1: "Fine", 2: "Ultra"}
 
 
 def encode_frame(payload: dict[str, Any]) -> str:
@@ -452,13 +452,11 @@ class Ma2Client:
         self._backpressure_task: asyncio.Task[None] | None = None
         self._connection_lost_callbacks: list[Callable[[], None]] = []
         self._page = EncoderPage()
+        self._page_task: asyncio.Task[None] | None = None
         self._screen_mode = False
         self._led = None
         self._screen_helper = ScreenHelper(config.screen_helper)
-        self._fine: dict[int, int] = {}
-        self._page_task: asyncio.Task[None] | None = None
-        self._page_poll_task: asyncio.Task[None] | None = None
-        self._page_signature: tuple[int, tuple[str | None, ...]] | None = None
+        self._rest: dict[tuple[str, int], float] = {}
         self.frames_sent = 0
         self.by_type: Counter[str] = Counter()
         self.last_frame_types: deque[str] = deque(maxlen=50)
@@ -523,8 +521,11 @@ class Ma2Client:
 
         self._led = led
 
-    def toggle_fine(self, slot: int) -> None:
-        self._submit(ToggleFine(slot))
+    def encoder_press(self, slot: int, pressed: bool, screen: bool = False) -> None:
+        self._submit(EncoderPress(slot, pressed, screen=screen))
+
+    def encoder_resolution(self, slot: int, screen: bool = False) -> None:
+        self._submit(EncoderResolution(slot, screen=screen))
 
     def screen_shortcut(self, screen: int) -> None:
         """Select an onPC screen via the PC-keyboard helper (not the WebSocket)."""
@@ -583,7 +584,7 @@ class Ma2Client:
         self._stop_sender = True
         for task in (
             self._keepalive_task,
-            self._page_poll_task,
+            self._page_task,
             self._backpressure_task,
             self._session_task,
             self._sender_task,
@@ -592,7 +593,7 @@ class Ma2Client:
                 task.cancel()
         for task in (
             self._keepalive_task,
-            self._page_poll_task,
+            self._page_task,
             self._backpressure_task,
             self._session_task,
             self._sender_task,
@@ -636,9 +637,6 @@ class Ma2Client:
             try:
                 await self.connect_once()
                 attempt = 0
-                self._page_poll_task = asyncio.create_task(
-                    self._page_poll_loop(self._session or 0), name="ma2pi-page-poll"
-                )
                 await self._read_loop()
                 reason = "Verbindung vom Server beendet"
             except LoginError as exc:
@@ -700,39 +698,8 @@ class Ma2Client:
     async def _read_loop(self) -> None:
         while not self._shutting_down:
             message = await self._recv_json(None)
-            if self._page.update(message):
-                self._log_page_if_changed()
-            else:
+            if not self._page.update(message):
                 LOGGER.debug("rx message type=%s", frames.frame_type(message))
-
-    def _log_page_if_changed(self) -> None:
-        labels = tuple(self._page.label_for(slot) for slot in range(1, WINDOW + 1))
-        signature = (self._page.bank, labels)
-        if signature == self._page_signature:
-            return
-        self._page_signature = signature
-        LOGGER.info("Encoder-Seite: Bank %d %s", self._page.bank, list(labels))
-
-    async def _page_poll_loop(self, session: int) -> None:
-        """Poll the encoder page so external selection changes are noticed."""
-
-        interval = self.config.ma2.page_refresh_interval
-        try:
-            while not self._shutting_down and self._authenticated:
-                await self._sleep(interval)
-                if (
-                    self._shutting_down
-                    or not self._authenticated
-                    or self._session != session
-                ):
-                    break
-                await self._send_raw(
-                    frames.preset_types_frame("full", session), "encoderPage"
-                )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            LOGGER.warning("Encoder-Seiten-Polling fehlgeschlagen: %s", exc)
 
     async def _recv_json(self, timeout: float | None) -> dict[str, Any]:
         return await _read_json(self._transport, timeout)
@@ -760,12 +727,7 @@ class Ma2Client:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._keepalive_task
             self._keepalive_task = None
-        if self._page_poll_task is not None:
-            self._page_poll_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await self._page_poll_task
-            self._page_poll_task = None
-        self._page_signature = None
+        self._rest.clear()
         self._queue.clear()
         if was_connected:
             LOGGER.warning("Session beendet: %s", reason)
@@ -847,28 +809,24 @@ class Ma2Client:
             return None
         return frames.lua_hardkey_frame(entry.code, pressed, session, hold)
 
-    def _encoder_target(self, slot: int, *, screen: bool = False) -> str | None:
-        """Resolve the encoder name a slot addresses in the active mode.
+    def _encoder_index(self, slot: int, *, screen: bool = False) -> int | None:
+        """Resolve the hardware encoder index (number - 1) a slot addresses.
 
-        Attribute mode follows the onPC page; screen mode uses the configured
-        screen-encoder names.  ``screen`` forces the screen target for one
-        action (MA held while turning) without changing the global mode.  Both
-        deltas and resolution frames must use the same target, otherwise a
-        click would change the wrong encoder.
+        Attribute mode uses the four attribute encoders (0-3) and the onPC
+        routes them to the current feature.  Screen mode, or ``screen`` forced
+        for one action (MA held), uses the configured screen encoder 5-10.
         """
 
         if screen or self._screen_mode:
-            name = self.config.mapping.screen_encoders.get(slot)
-            if name is None:
+            number = self.config.mapping.screen_encoders.get(slot)
+            if number is None:
                 LOGGER.warning(
                     "Screen-Modus aktiv, aber kein screen_encoders.%d konfiguriert",
                     slot,
                 )
-            return name
-        name = self._page.name_for(slot)
-        if name is None:
-            LOGGER.debug("Encoder-Slot %d noch unbekannt", slot)
-        return name
+                return None
+            return number - 1
+        return slot - 1
 
     async def _dispatch(self, action: Action) -> None:
         assert self._session is not None
@@ -892,11 +850,46 @@ class Ma2Client:
             frame = frames.encoder_attribute_frame(action.name, action.value, session)
             kind = "encoderAttribute"
         elif isinstance(action, EncoderSlot):
-            name = self._encoder_target(action.slot, screen=action.screen)
-            if name is None:
+            index = self._encoder_index(action.slot, screen=action.screen)
+            if index is None:
                 return
-            frame = frames.encoder_attribute_frame(name, action.delta, session)
-            kind = "encoderAttribute"
+            key = ("screen" if action.screen or self._screen_mode else "slot", action.slot)
+            total = self._rest.get(key, 0.0) + action.delta
+            steps = int(total)
+            self._rest[key] = total - steps
+            if steps == 0:
+                return
+            frame = frames.lua_encoder_frame(index, steps, session)
+            kind = "encoderCanbus"
+        elif isinstance(action, EncoderResolution):
+            if action.screen or self._screen_mode:
+                LOGGER.warning(
+                    "Screen-Encoder haben keine Auflösung; Slot %d wird nicht umgeschaltet",
+                    action.slot,
+                )
+                return
+            name = self._page.name_for(action.slot)
+            if name is None:
+                LOGGER.warning(
+                    "Encoder-Slot %d: kein Attribut bekannt, Auflösung nicht umgeschaltet",
+                    action.slot,
+                )
+                return
+            level = (self._page.resolution_for(action.slot) + 1) % 3
+            frame = frames.encoder_resolution_frame(name, level, session)
+            kind = "encoderResolution"
+            LOGGER.info(
+                "Encoder-Slot %d %s Auflösung: %s",
+                action.slot,
+                name,
+                ("Normal", "Fine", "Ultra")[level],
+            )
+        elif isinstance(action, EncoderPress):
+            index = self._encoder_index(action.slot, screen=action.screen)
+            if index is None:
+                return
+            frame = frames.lua_encoder_press_frame(index, action.pressed, session)
+            kind = "encoderPress"
         elif isinstance(action, ToggleScreenMode):
             if not self._screen_mode and not self.config.mapping.screen_encoders:
                 LOGGER.warning(
@@ -911,29 +904,19 @@ class Ma2Client:
             if self._led is not None:
                 self._led.apply_mode(self._screen_mode)
             return
-        elif isinstance(action, ToggleFine):
-            name = self._encoder_target(action.slot)
-            if name is None:
-                return
-            resolution = (self._fine.get(action.slot, 0) + 1) % 3
-            self._fine[action.slot] = resolution
-            frame = frames.encoder_resolution_frame(name, resolution, session)
-            kind = "encoderResolution"
-            LOGGER.info(
-                "Encoder %d %s: %s",
-                action.slot,
-                name,
-                RESOLUTION_NAMES[resolution],
-            )
         else:  # pragma: no cover - exhaustive
             raise TypeError(f"unbekannte Aktion {action!r}")
 
         await self._send_raw(frame, kind)
-        if kind in ("hardkeyPress", "hardkeyRelease"):
+        if kind == "encoderResolution":
             self._schedule_page_refresh()
+        if kind in ("hardkeyPress", "hardkeyRelease") and self._led is not None:
+            if isinstance(action, (Press, Release)) and action.keyname == hardkeys.resolve("NIPPLE"):
+                with contextlib.suppress(Exception):
+                    self._led.set_nipple(kind == "hardkeyPress")
 
     def _schedule_page_refresh(self) -> None:
-        """Re-read the encoder page after a selection change (debounced)."""
+        """Re-read the attribute model once, shortly after a resolution change."""
 
         if self.dry_run or self._shutting_down or not self._authenticated:
             return
@@ -944,7 +927,7 @@ class Ma2Client:
         )
 
     async def _refresh_page(self) -> None:
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.3)
         if not self._authenticated or self._shutting_down or self._session is None:
             return
         with contextlib.suppress(Exception):

@@ -63,7 +63,7 @@ const config = {
       { id: 4, slot: 4 },
     ],
     modifiers: { ma: { hardkey: 'MA' } },
-    screen_encoders: { '1': '8', '2': '7', '3': '6', '4': '5' },
+    screen_encoders: { '1': 5, '2': 6, '3': 7, '4': 8 },
   },
 };
 
@@ -131,16 +131,16 @@ describe('MappingPage', () => {
     const targets = screen.getAllByTestId(
       'screen-encoder-target',
     ) as HTMLSelectElement[];
-    expect(targets[0].value).toBe('8');
-    expect(targets[3].value).toBe('5');
-    await fireEvent.change(targets[0], { target: { value: '5' } });
+    expect(targets[0].value).toBe('5');
+    expect(targets[3].value).toBe('8');
+    await fireEvent.change(targets[0], { target: { value: '9' } });
     await fireEvent.change(targets[3], { target: { value: '' } });
     await fireEvent.click(screen.getByText('Speichern'));
 
     await waitFor(() => {
       expect(api.updateConfig).toHaveBeenCalledWith({
         mapping: expect.objectContaining({
-          screen_encoders: { '1': '5', '2': '7', '3': '6', '4': null },
+          screen_encoders: { '1': 9, '2': 6, '3': 7, '4': null },
         }),
       });
     });

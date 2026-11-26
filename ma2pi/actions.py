@@ -64,10 +64,28 @@ class ToggleScreenMode:
 
 
 @dataclass(frozen=True, slots=True)
-class ToggleFine:
-    """Toggle fine resolution for one encoder slot."""
+class EncoderResolution:
+    """Cycle the onPC resolution of the attribute behind a slot.
+
+    ``screen`` marks a screen-encoder target (MA held or screen mode); screen
+    encoders have no attribute name and therefore no resolution.
+    """
 
     slot: int
+    screen: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class EncoderPress:
+    """Press or release one of the four physical encoders.
+
+    ``screen`` is fixed when the press happens so the release addresses the
+    same hardware encoder even if MA changes in between.
+    """
+
+    slot: int
+    pressed: bool
+    screen: bool = False
 
 
 Action = Union[
@@ -77,7 +95,8 @@ Action = Union[
     EncoderSlot,
     EncoderAttribute,
     ToggleScreenMode,
-    ToggleFine,
+    EncoderPress,
+    EncoderResolution,
 ]
 
 EncoderAction = Union[EncoderSlot, EncoderAttribute]

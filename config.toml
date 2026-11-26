@@ -12,7 +12,7 @@ hardkey_transport = "lua"                     # lua = Command-Line sichtbar, nat
 hardkey_hold_threshold = 0.5                  # Sekunden halten, bevor eine Taste als "gehalten" gilt
 hardkey_press_value = 1.0                     # value 1 = Taste gedrückt
 hardkey_release_value = 0.0                   # value 0 = Taste losgelassen
-page_refresh_interval = 1.0                   # Encoder-Seite pollen (Sekunden)
+page_refresh_interval = 1.0                   # veraltet, ohne Wirkung (kein presetTypes-Polling mehr)
 
 # Screen-Tasten laufen über einen Keystroke-Helper auf dem onPC-PC (nicht über
 # Web Remote): Insert an -> Ctrl+Alt+F1..F6 -> Insert aus. Der Helper lauscht
@@ -164,6 +164,15 @@ enabled = true                # Modus-LED an der ASL-Taste
 note = 9                      # Taste 1 (Noten 9-11 = Tasten 1-3)
 attribute_color = "red"       # Attribut-Modus
 screen_color = "green"        # Screen-Modus
+nipple_note = 11              # rechte ASL-Taste (NIPPLE)
+nipple_idle_color = 121       # leicht orange
+nipple_idle_brightness = 25
+nipple_pressed_color = 116    # heller beim Drücken
+nipple_pressed_brightness = 127
+fine_note = 10                # mittlere ASL-Taste (Fine-Modifier)
+fine_color = 123
+fine_idle_brightness = 25
+fine_pressed_brightness = 127
 
 [web]
 bind = "0.0.0.0"            # LAN-Zugriff; Änderung erst nach Dienstneustart
@@ -347,6 +356,8 @@ direction = 1
 # Logo-Taste wirkt als MA-Modifier (MA + andere Taste, z. B. MA + Encoder
 # schaltet vorübergehend auf die Screen-Encoder).
 ma = { hardkey = "MA" }
+# ASL-Taste 2 halten: Encoder-Klick wechselt die Auflösung in der onPC.
+asl_button_2 = { local = true }
 
 [mapping.keys]
 # Seite/Tasten ohne Web-Remote-Namen, aber mit Canbus-Code.
@@ -468,12 +479,12 @@ next = { hardkey = "Next" }
 please_big = { hardkey = "Please" }
 down = { hardkey = "DOWN" }
 
-# ASL: Encoder-Click schaltet Fine für genau diesen Encoder
-# (Normal -> Fine -> Ultra -> Normal).
-asl_click_1 = { encoder_fine = 1 }
-asl_click_2 = { encoder_fine = 2 }
-asl_click_3 = { encoder_fine = 3 }
-asl_click_4 = { encoder_fine = 4 }
+# ASL: Encoder-Klick = echter Encoder-Druck der onPC (wie ShowCockpit); mit
+# MA gehalten trifft er den Screen-Encoder des Slots.
+asl_click_1 = { encoder_press = 1 }
+asl_click_2 = { encoder_press = 2 }
+asl_click_3 = { encoder_press = 3 }
+asl_click_4 = { encoder_press = 4 }
 # ASL-Taste 1 schaltet zwischen Attribut- und Screen-Encodern um. Im
 # Attribut-Modus folgen die Encoder dem Fenster, das die onPC anzeigt.
 # Zusätzlich schaltet MA halten (Cherry-Logo) die Encoder vorübergehend auf
@@ -482,16 +493,15 @@ asl_bank = { screen_mode = true }
 # Rechte ASL-Taste sendet den NIPPLE-Hardkey der onPC.
 asl_button_3 = { hardkey = "NIPPLE" }
 
-# Namen der Screen-Encoder, die im Screen-Modus auf Slot 1-4 gelegt werden.
-# Die onPC nummeriert ihre Screen-Encoder 5-8; sie liegen umgekehrt auf den
-# physischen Encodern: Slot 1 -> 8, Slot 2 -> 7, Slot 3 -> 6, Slot 4 -> 5.
+# Screen-Encoder-Nummern (5-10), die im Screen-Modus auf Slot 1-4 gelegt
+# werden: Slot 1 -> 8, Slot 2 -> 7, Slot 3 -> 6, Slot 4 -> 5.
 # Im Web-UI als Spalte "Screen-Encoder" pro physischem Encoder bearbeitbar;
 # "— keiner —" entfernt den Slot.
 [mapping.screen_encoders]
-1 = "8"
-2 = "7"
-3 = "6"
-4 = "5"
+1 = 8
+2 = 7
+3 = 6
+4 = 5
 
 [[mapping.encoders]]
 id = 1
@@ -514,7 +524,12 @@ curve = "linear"          # none | linear | exponential
 window = 0.10
 max_multiplier = 4.0
 
-# Nur für Encoder mit festem Attributnamen (siehe mapping.encoders.attribute).
+# ASL-Taste 2 halten + Encoder-Klick = Auflösung des Slots
+# Normal -> Fine -> Ultra -> Normal (in der onPC umgeschaltet, nicht fuer Screen-Encoder).
+[mapping.encoder_resolution.modifiers]
+cycle = "asl_button_2"
+
+# Faktoren für feste Attribut-Encoder und für Slot-Encoder mit Fine gehalten.
 [mapping.encoder_resolution.attribute]
 normal = 1.0
 fine = 0.1

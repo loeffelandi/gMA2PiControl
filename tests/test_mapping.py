@@ -29,8 +29,11 @@ class Sink:
     def toggle_screen_mode(self) -> None:
         self.actions.append(("screen_mode",))
 
-    def toggle_fine(self, slot: int) -> None:
-        self.actions.append(("fine", slot))
+    def encoder_press(self, slot: int, pressed: bool, screen: bool = False) -> None:
+        self.actions.append(("press_enc", slot, pressed, screen))
+
+    def encoder_resolution(self, slot: int, screen: bool = False) -> None:
+        self.actions.append(("resolution", slot, screen))
 
     def screen_shortcut(self, screen: int) -> None:
         self.actions.append(("screen", screen))
@@ -240,10 +243,64 @@ def test_each_slot_is_separate(engine, sink):
     assert ("slot", 4, pytest.approx(-1.0)) in sink.actions
 
 
-def test_encoder_click_toggles_fine(engine, sink):
+def test_encoder_click_sends_press_and_release(engine, sink):
     engine.handle(key("asl_click_1", 1))
     engine.handle(key("asl_click_1", 0))
-    assert sink.actions == [("fine", 1)]
+    assert sink.actions == [
+        ("press_enc", 1, True, False),
+        ("press_enc", 1, False, False),
+    ]
+
+
+def test_encoder_click_with_ma_targets_screen_and_release_matches(engine, sink):
+    engine.handle(key("ma", 1))
+    engine.handle(key("asl_click_2", 1))
+    engine.handle(key("ma", 0))
+    engine.handle(key("asl_click_2", 0))
+    clicks = [a for a in sink.actions if a[0] == "press_enc"]
+    assert clicks == [
+        ("press_enc", 2, True, True),
+        ("press_enc", 2, False, True),
+    ]
+
+
+def test_middle_button_click_requests_resolution_cycle(engine, sink):
+    engine.handle(key("asl_button_2", 1, "asl"))
+    engine.handle(key("asl_click_3", 1, "asl"))
+    engine.handle(key("asl_click_3", 0, "asl"))
+    engine.handle(key("asl_button_2", 0, "asl"))
+    assert sink.actions == [("resolution", 3, False)]
+
+
+def test_middle_button_click_with_ma_marks_screen(engine, sink):
+    engine.handle(key("ma", 1))
+    engine.handle(key("asl_button_2", 1, "asl"))
+    engine.handle(key("asl_click_1", 1, "asl"))
+    engine.handle(key("asl_click_1", 0, "asl"))
+    assert ("resolution", 1, True) in sink.actions
+    assert not any(a[0] == "press_enc" for a in sink.actions)
+
+
+def test_slot_delta_is_not_scaled_locally(engine, sink):
+    engine.handle(key("asl_button_2", 1, "asl"))
+    for _ in range(10):
+        engine.handle(encoder(1, 1), now=0.0)
+    engine.flush_all(0.05)
+    assert ("slot", 1, pytest.approx(10.0)) in sink.actions
+
+
+def test_middle_button_notifies_modifier_hook(engine, sink):
+    calls = []
+    engine.modifier_hook = lambda control, pressed: calls.append((control, pressed))
+    engine.handle(key("asl_button_2", 1, "asl"))
+    engine.handle(key("asl_button_2", 0, "asl"))
+    assert calls == [("asl_button_2", True), ("asl_button_2", False)]
+
+
+def test_click_without_middle_button_sends_press(engine, sink):
+    engine.handle(key("asl_click_1", 1, "asl"))
+    engine.handle(key("asl_click_1", 0, "asl"))
+    assert [a[0] for a in sink.actions] == ["press_enc", "press_enc"]
 
 
 def test_screen_mode_key_toggles(engine, sink):
@@ -380,8 +437,11 @@ class HoldSink:
     def toggle_screen_mode(self) -> None:
         self.actions.append(("screen_mode",))
 
-    def toggle_fine(self, slot: int) -> None:
-        self.actions.append(("fine", slot))
+    def encoder_press(self, slot: int, pressed: bool, screen: bool = False) -> None:
+        self.actions.append(("press_enc", slot, pressed, screen))
+
+    def encoder_resolution(self, slot: int, screen: bool = False) -> None:
+        self.actions.append(("resolution", slot, screen))
 
 
 def _hold_engine(make_config, sink, now):

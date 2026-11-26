@@ -67,9 +67,9 @@ async def test_end_to_end_input_to_recorded_frames(config):
         encoders = [
             frame
             for frame in server.frames
-            if frame.get("requestType") == "encoder" and frame.get("name") == "DIM"
+            if "gma.canbus.encoder(0," in str(frame.get("command"))
         ]
-        assert encoders and float(encoders[-1]["value"]) > 0
+        assert encoders and _canbus_steps(encoders[-1]) > 0
     finally:
         engine.cleanup(send=False)
         await client.shutdown()
@@ -160,11 +160,16 @@ class FakeClock:
         self.now += seconds
 
 
+def _canbus_steps(frame) -> int:
+    inner = str(frame["command"]).split("gma.canbus.encoder(", 1)[1].split(")", 1)[0]
+    return int(inner.split(",")[1])
+
+
 def _wheel_ticks(frames) -> float:
     total = 0.0
     for frame in frames:
-        if frame.get("requestType") == "encoder" and frame.get("name") == "DIM":
-            total += float(frame.get("value", 0))
+        if "gma.canbus.encoder(0," in str(frame.get("command")):
+            total += _canbus_steps(frame)
     return total
 
 
@@ -187,7 +192,6 @@ async def test_encoder_stress_against_mock_server(config):
     try:
         await client.connect_once()
         assert client.authenticated
-        client._page.update(server.preset_types)
         if client._keepalive_task is not None:
             client._keepalive_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -208,7 +212,7 @@ async def test_encoder_stress_against_mock_server(config):
         wheel_frames = [
             frame
             for frame in server.frames
-            if frame.get("requestType") == "encoder" and frame.get("name") == "DIM"
+            if "gma.canbus.encoder(0," in str(frame.get("command"))
         ]
         assert _wheel_ticks(server.frames) == pytest.approx(1000.0)
         assert len(wheel_frames) <= 40 * 10 + 10

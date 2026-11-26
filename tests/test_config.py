@@ -144,7 +144,7 @@ def test_resolution_modifier_must_be_defined(make_config):
 def test_screen_mode_key(make_config):
     config = make_config()
     assert config.mapping.keys["asl_bank"].screen_mode is True
-    assert config.mapping.keys["asl_click_1"].encoder_fine == 1
+    assert config.mapping.keys["asl_click_1"].encoder_press == 1
 
 
 def test_screen_mode_rejects_non_bool(make_config):
@@ -159,15 +159,15 @@ def test_screen_mode_rejects_non_bool(make_config):
 def test_screen_encoders_parsed(make_config):
     config = make_config(
         lambda data: data["mapping"].__setitem__(
-            "screen_encoders", {"1": "screen1", "4": "screen4"}
+            "screen_encoders", {"1": 5, "4": "8"}
         )
     )
-    assert config.mapping.screen_encoders == {1: "screen1", 4: "screen4"}
+    assert config.mapping.screen_encoders == {1: 5, 4: 8}
 
 
 def test_screen_encoders_default_order(make_config):
     config = make_config()
-    assert config.mapping.screen_encoders == {1: "8", 2: "7", 3: "6", 4: "5"}
+    assert config.mapping.screen_encoders == {1: 8, 2: 7, 3: 6, 4: 5}
 
 
 def test_rightmost_asl_button_is_nipple(make_config):
@@ -179,8 +179,23 @@ def test_rightmost_asl_button_is_nipple(make_config):
 def test_screen_encoder_slot_out_of_range(make_config):
     with pytest.raises(ConfigError, match="zwischen 1 und 4"):
         make_config(
-            lambda data: data["mapping"].__setitem__("screen_encoders", {"5": "x"})
+            lambda data: data["mapping"].__setitem__("screen_encoders", {"5": 5})
         )
+
+
+def test_screen_encoder_number_out_of_range(make_config):
+    with pytest.raises(ConfigError, match="zwischen 5 und 10"):
+        make_config(
+            lambda data: data["mapping"].__setitem__("screen_encoders", {"1": 11})
+        )
+
+
+def test_nipple_led_defaults(make_config):
+    led = make_config().led
+    assert (led.nipple_note, led.nipple_idle_color, led.nipple_idle_brightness) == (11, 121, 25)
+    assert (led.nipple_pressed_color, led.nipple_pressed_brightness) == (116, 127)
+    assert (led.fine_note, led.fine_color) == (10, 123)
+    assert (led.fine_idle_brightness, led.fine_pressed_brightness) == (25, 127)
 
 
 def test_screen_shortcut_key(make_config):

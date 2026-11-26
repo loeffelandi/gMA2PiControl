@@ -14,7 +14,8 @@ from ma2pi.actions import (
     EncoderSlot,
     Press,
     Release,
-    ToggleFine,
+    EncoderPress,
+    EncoderResolution,
     merge_encoder,
 )
 from ma2pi.events import InputEvent
@@ -349,35 +350,18 @@ async def test_sender_orders_control_before_encoder(small_config):
     feed_handshake(transport)
     client = _client(small_config, transport)
     await client.connect_once()
-    client._page.update(
-        {
-            "responseType": "presetTypes",
-            "type": "full",
-            "pre": [
-                {
-                    "i": 1,
-                    "np": "Dimmer",
-                    "s": True,
-                    "fea": [
-                        {
-                            "i": 1,
-                            "np": "Dimmer",
-                            "s": True,
-                            "att": [{"n": "DIM", "np": "Dim", "s": True}],
-                        }
-                    ],
-                }
-            ],
-        }
-    )
     client._sender_task = asyncio.create_task(client._sender_loop())
     client._queue.put(EncoderSlot(1, 4))
     client._queue.put(Release("FIXTURE"))
     await wait_until(
-        lambda: any(f.get("requestType") == "encoder" for f in transport.sent)
+        lambda: any("canbus.encoder" in str(f.get("command")) for f in transport.sent)
     )
-    names = [f.get("requestType") for f in transport.sent if f.get("requestType") in {"keyname", "encoder"}]
-    assert names == ["keyname", "encoder"]
+    kinds = [
+        "keyname" if f.get("requestType") == "keyname" else "encoder"
+        for f in transport.sent
+        if f.get("requestType") == "keyname" or "canbus.encoder" in str(f.get("command"))
+    ]
+    assert kinds == ["keyname", "encoder"]
     await client.shutdown()
 
 
@@ -410,166 +394,6 @@ async def test_encoder_frame_uses_attribute_name(small_config):
     assert frame["name"] == "PAN"
     assert frame["value"] == pytest.approx(0.1)
     await client.shutdown()
-
-
-async def test_slot_encoder_uses_console_page(small_config):
-    transport = MockTransport()
-    feed_handshake(transport)
-    client = _client(small_config, transport)
-    await client.connect_once()
-    client._page.update(
-        {
-            "responseType": "presetTypes",
-            "type": "full",
-            "pre": [
-                {
-                    "i": 2,
-                    "np": "Position",
-                    "s": True,
-                    "fea": [
-                        {
-                            "i": 1,
-                            "np": "Position",
-                            "s": True,
-                            "att": [
-                                {"n": "PAN", "np": "Pan", "s": True},
-                                {"n": "TILT", "np": "Tilt", "s": False},
-                            ],
-                        }
-                    ],
-                }
-            ],
-        }
-    )
-    client._sender_task = asyncio.create_task(client._sender_loop())
-    client.encoder_slot(2, 3.0)
-    await wait_until(
-        lambda: any(f.get("requestType") == "encoder" for f in transport.sent)
-    )
-    frame = [f for f in transport.sent if f.get("requestType") == "encoder"][-1]
-    assert frame["name"] == "TILT"
-    assert frame["value"] == pytest.approx(3.0)
-    await client.shutdown()
-
-
-async def test_slot_encoder_ignored_without_page(small_config):
-    transport = MockTransport()
-    feed_handshake(transport)
-    client = _client(small_config, transport)
-    await client.connect_once()
-    client._sender_task = asyncio.create_task(client._sender_loop())
-    client.encoder_slot(1, 1.0)
-    await asyncio.sleep(0.05)
-    assert all(frame.get("requestType") != "encoder" for frame in transport.sent)
-    await client.shutdown()
-
-
-async def test_fine_toggle_sends_resolution_frame(small_config):
-    transport = MockTransport()
-    feed_handshake(transport)
-    client = _client(small_config, transport)
-    await client.connect_once()
-    client._page.update(
-        {
-            "responseType": "presetTypes",
-            "type": "full",
-            "pre": [
-                {
-                    "i": 1,
-                    "np": "Dimmer",
-                    "s": True,
-                    "fea": [
-                        {
-                            "i": 1,
-                            "np": "Dimmer",
-                            "s": True,
-                            "att": [{"n": "DIM", "np": "Dim", "s": True}],
-                        }
-                    ],
-                }
-            ],
-        }
-    )
-    client._sender_task = asyncio.create_task(client._sender_loop())
-    client.toggle_fine(1)
-    await wait_until(
-        lambda: any("resolution" in f for f in transport.sent)
-    )
-    assert [f for f in transport.sent if f.get("resolution")][-1] == {
-        "requestType": "encoder",
-        "name": "DIM",
-        "resolution": 1,
-        "session": 1,
-        "maxRequests": 0,
-    }
-    client.toggle_fine(1)
-    await wait_until(
-        lambda: [f["resolution"] for f in transport.sent if "resolution" in f][-1] == 2
-    )
-    assert [f for f in transport.sent if "resolution" in f][-1]["resolution"] == 2
-    client.toggle_fine(1)
-    await wait_until(
-        lambda: [f["resolution"] for f in transport.sent if "resolution" in f][-1] == 0
-    )
-    assert [f for f in transport.sent if "resolution" in f][-1]["resolution"] == 0
-    await client.shutdown()
-
-
-async def test_fine_toggle_uses_screen_encoder_name(make_config):
-    cfg = make_config(
-        lambda data: data["mapping"].__setitem__(
-            "screen_encoders", {"1": "screen1"}
-        )
-    )
-    transport = MockTransport()
-    client = Ma2Client(cfg, transport=transport)
-    client._session = 4
-    client._authenticated = True
-    client._screen_mode = True
-    await client._dispatch(ToggleFine(1))
-    assert transport.sent == [frames.encoder_resolution_frame("screen1", 1, 4)]
-
-
-async def test_fine_toggle_screen_mode_without_name_warns(make_config, caplog):
-    cfg = make_config(lambda data: data["mapping"].pop("screen_encoders"))
-    transport = MockTransport()
-    client = Ma2Client(cfg, transport=transport)
-    client._session = 4
-    client._authenticated = True
-    client._screen_mode = True
-    with caplog.at_level("WARNING"):
-        await client._dispatch(ToggleFine(1))
-    assert transport.sent == []
-    assert "screen_encoders.1" in caplog.text
-
-
-async def test_slot_delta_uses_screen_encoder_name(make_config):
-    cfg = make_config(
-        lambda data: data["mapping"].__setitem__(
-            "screen_encoders", {"2": "screen2"}
-        )
-    )
-    transport = MockTransport()
-    client = Ma2Client(cfg, transport=transport)
-    client._session = 4
-    client._authenticated = True
-    client._screen_mode = True
-    await client._dispatch(EncoderSlot(2, 1.5))
-    assert transport.sent == [frames.encoder_attribute_frame("screen2", 1.5, 4)]
-
-
-async def test_slot_delta_can_force_screen_encoder(make_config):
-    cfg = make_config(
-        lambda data: data["mapping"].__setitem__(
-            "screen_encoders", {"2": "screen2"}
-        )
-    )
-    transport = MockTransport()
-    client = Ma2Client(cfg, transport=transport)
-    client._session = 4
-    client._authenticated = True
-    await client._dispatch(EncoderSlot(2, 1.5, screen=True))
-    assert transport.sent == [frames.encoder_attribute_frame("screen2", 1.5, 4)]
 
 
 def test_backoff_login_failure_uses_long_delay(small_config):
@@ -765,3 +589,159 @@ async def test_native_canbus_only_key_is_dropped(make_config, caplog):
         await client._dispatch(Press("CHANNEL"))
     assert transport.sent == []
     assert "keinen Web-Remote-Keyname" in caplog.text
+
+
+def _canbus_client(make_config, screen=None):
+    def mutate(data):
+        if screen is not None:
+            data["mapping"]["screen_encoders"] = screen
+
+    cfg = make_config(mutate)
+    transport = MockTransport()
+    client = Ma2Client(cfg, transport=transport)
+    client._session = 4
+    client._authenticated = True
+    return client, transport
+
+
+async def test_slot_delta_is_canbus_attribute_index(make_config):
+    client, transport = _canbus_client(make_config)
+    await client._dispatch(EncoderSlot(2, 3.0))
+    assert transport.sent == [frames.lua_encoder_frame(1, 3, 4)]
+    assert transport.sent[0]["command"] == "LUA 'gma.canbus.encoder(1,3,nil)'"
+
+
+async def test_slot_delta_screen_mode_uses_screen_index(make_config):
+    client, transport = _canbus_client(make_config, {"2": 6})
+    client._screen_mode = True
+    await client._dispatch(EncoderSlot(2, -2.0))
+    assert transport.sent == [frames.lua_encoder_frame(5, -2, 4)]
+
+
+async def test_slot_delta_can_force_screen_encoder(make_config):
+    client, transport = _canbus_client(make_config, {"2": 6})
+    await client._dispatch(EncoderSlot(2, 1.0, screen=True))
+    assert transport.sent == [frames.lua_encoder_frame(5, 1, 4)]
+
+
+async def test_screen_mode_without_number_warns(make_config, caplog):
+    cfg = make_config(lambda data: data["mapping"].pop("screen_encoders"))
+    transport = MockTransport()
+    client = Ma2Client(cfg, transport=transport)
+    client._session = 4
+    client._authenticated = True
+    client._screen_mode = True
+    with caplog.at_level("WARNING"):
+        await client._dispatch(EncoderSlot(1, 1.0))
+    assert transport.sent == []
+    assert "screen_encoders.1" in caplog.text
+
+
+async def test_fractional_delta_carries_remainder(make_config):
+    client, transport = _canbus_client(make_config)
+    await client._dispatch(EncoderSlot(1, 0.4))
+    await client._dispatch(EncoderSlot(1, 0.4))
+    assert transport.sent == []
+    await client._dispatch(EncoderSlot(1, 0.4))
+    assert transport.sent == [frames.lua_encoder_frame(0, 1, 4)]
+    await client._dispatch(EncoderSlot(1, -2.5))
+    assert transport.sent[-1] == frames.lua_encoder_frame(0, -2, 4)
+
+
+async def test_encoder_press_and_release_use_same_index(make_config):
+    client, transport = _canbus_client(make_config, {"2": 6})
+    await client._dispatch(EncoderPress(2, True, screen=True))
+    client._screen_mode = False
+    await client._dispatch(EncoderPress(2, False, screen=True))
+    assert [f["command"] for f in transport.sent] == [
+        "LUA 'gma.canbus.encoder(5,0,true)'",
+        "LUA 'gma.canbus.encoder(5,0,false)'",
+    ]
+
+
+async def test_encoder_press_attribute_index(make_config):
+    client, transport = _canbus_client(make_config)
+    await client._dispatch(EncoderPress(1, True))
+    await client._dispatch(EncoderPress(1, False))
+    assert [f["command"] for f in transport.sent] == [
+        "LUA 'gma.canbus.encoder(0,0,true)'",
+        "LUA 'gma.canbus.encoder(0,0,false)'",
+    ]
+
+
+async def test_nipple_hardkey_drives_led(make_config):
+    class Led:
+        def __init__(self):
+            self.calls = []
+
+        def set_nipple(self, pressed):
+            self.calls.append(pressed)
+
+    client, transport = _canbus_client(make_config)
+    client._led = Led()
+    await client._dispatch(Press("NIPPLE"))
+    await client._dispatch(Release("NIPPLE"))
+    assert client._led.calls == [True, False]
+
+
+def _load_page(client, resolution=0):
+    client._page.update(
+        {
+            "responseType": "presetTypes",
+            "type": "full",
+            "pre": [
+                {
+                    "i": 1,
+                    "np": "Dimmer",
+                    "s": True,
+                    "fea": [
+                        {
+                            "i": 1,
+                            "np": "Dimmer",
+                            "s": True,
+                            "att": [
+                                {
+                                    "n": "DIM",
+                                    "np": "Dim",
+                                    "s": True,
+                                    "encoder_resolution": resolution,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
+async def test_resolution_action_cycles_onpc_resolution(make_config):
+    client, transport = _canbus_client(make_config)
+    _load_page(client, 0)
+    await client._dispatch(EncoderResolution(1))
+    assert transport.sent == [frames.encoder_resolution_frame("DIM", 1, 4)]
+    _load_page(client, 1)
+    await client._dispatch(EncoderResolution(1))
+    assert transport.sent[-1] == frames.encoder_resolution_frame("DIM", 2, 4)
+    _load_page(client, 2)
+    await client._dispatch(EncoderResolution(1))
+    assert transport.sent[-1] == frames.encoder_resolution_frame("DIM", 0, 4)
+
+
+async def test_resolution_action_is_ignored_for_screen_encoders(make_config, caplog):
+    client, transport = _canbus_client(make_config)
+    _load_page(client, 0)
+    with caplog.at_level("WARNING"):
+        await client._dispatch(EncoderResolution(1, screen=True))
+        client._screen_mode = True
+        await client._dispatch(EncoderResolution(1))
+    assert transport.sent == []
+    assert "keine Auflösung" in caplog.text
+
+
+async def test_resolution_action_without_attribute_warns(make_config, caplog):
+    client, transport = _canbus_client(make_config)
+    with caplog.at_level("WARNING"):
+        await client._dispatch(EncoderResolution(1))
+    assert transport.sent == []
+    assert "kein Attribut" in caplog.text

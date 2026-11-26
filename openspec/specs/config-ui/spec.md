@@ -62,9 +62,9 @@ die laufende Session nicht unterbrechen.
 Die Oberfläche SHALL erkannte Geräte und deren logische Controls anzeigen und
 das Bearbeiten von Tasten-, Modifier- und Encoder-Mappings ermöglichen. Pro
 physischem Encoder MUST zusätzlich das Attribut-Ziel und der Screen-Encoder
-(5–8 oder „keiner“) wählbar sein. Vor dem Speichern MUST die Konfiguration mit
-denselben Regeln wie der Daemon validiert werden; ungültige Ziele werden mit
-Feldbezug abgelehnt.
+als Nummer (5–10 oder „keiner“) wählbar sein. Vor dem Speichern MUST die
+Konfiguration mit denselben Regeln wie der Daemon validiert werden; ungültige
+Ziele werden mit Feldbezug abgelehnt.
 
 #### Scenario: Erkannte Geräte werden angezeigt
 
@@ -83,8 +83,8 @@ Feldbezug abgelehnt.
 
 #### Scenario: Screen-Encoder-Namen bearbeiten
 
-- **WHEN** im Mapping-Editor pro physischem Encoder ein Screen-Encoder ausgewählt und gespeichert wird
-- **THEN** enthält `mapping.screen_encoders` für den zugeordneten Slot genau diesen Namen und der Screen-Modus verwendet ihn
+- **WHEN** im Mapping-Editor pro physischem Encoder ein Screen-Encoder (Nummer 5–10) ausgewählt und gespeichert wird
+- **THEN** enthält `mapping.screen_encoders` für den zugeordneten Slot genau diese Nummer und der Screen-Modus adressiert den entsprechenden Hardware-Encoder
 
 #### Scenario: Screen-Encoder-Slot leeren
 

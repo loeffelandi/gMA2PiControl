@@ -217,6 +217,14 @@ open, because opening and closing it per message resets the LEDs.
 Verified colour indices: `green` = 8, `red` = 48, `white` = 127; any index
 0–127 can be configured directly.
 
+The mode LED on `note` is red in attribute mode and green in screen mode. The
+rightmost ASL button (`nipple_note`, 11) glows soft orange while idle
+(`nipple_idle_color = 121`, `nipple_idle_brightness = 25`) and brighter while the
+`NIPPLE` hardkey is pressed (`nipple_pressed_color = 116`,
+`nipple_pressed_brightness = 127`). The middle ASL button (`fine_note`, 10) uses
+`fine_color = 123` at `fine_idle_brightness = 25` and `fine_pressed_brightness = 127`
+while held. Colours are palette indices (0–127).
+
 ### `[devices.<name>]`
 
 | Key | Type | Meaning |
@@ -306,12 +314,12 @@ second MA modifier.
 ### `[mapping.keys.<control>]`
 
 One of `hardkey = "<name>"`, `command = "<MA2 command>"`, `screen_mode = true`
-or `encoder_fine = <slot>`, never more than one.
+or `encoder_press = <slot>`, never more than one.
 
 * A command is sent exactly once on key-down and never on key-up; the string is
   passed through unchanged, including semicolons.
 * `screen_mode = true` toggles the encoders between attribute and screen mode.
-* `encoder_fine = <slot>` cycles that encoder Normal → Fine → Ultra → Normal.
+* `encoder_press = <slot>` sends the real hardware encoder press (`gma.canbus.encoder(<index>, 0, true/false)`); the onPC applies its own resolution handling. Holding MA targets the screen encoder of that slot.
 
 ### `[[mapping.encoders]]`
 
@@ -321,31 +329,31 @@ or `encoder_fine = <slot>`, never more than one.
 | `slot` | int | Attribute slot 1–4 on the encoder page, exclusive with `attribute`. |
 | `attribute` | string | Fixed attribute name, exclusive with `slot`. |
 
-A `slot` encoder follows the window the onPC shows: when you scroll the attribute
-bank in the UI, the physical encoders move with it.
+A `slot` encoder drives hardware encoder 1–4 of the onPC (`gma.canbus.encoder(0..3, …)`);
+the onPC itself routes it to the current feature, so no page polling is needed.
 
 In the web UI the Encoder table has a **Screen-Encoder** column per physical
-encoder. Choose `Screen 5`…`Screen 8` there to define what that encoder turns in
+encoder. Choose `Screen-Encoder 5`…`10` there to define what that encoder turns in
 screen mode; `— keiner —` removes the target for its slot.
 
 ### `[mapping.screen_encoders]`
 
-Names for the onPC screen encoders, mapped onto the physical slots 1–4. The
-onPC numbers its screen encoders 5–8; the shipped configuration maps them in
-reverse order so the physical order stays natural:
+Numbers (5–10) of the onPC screen encoders, mapped onto the physical slots
+1–4. They are sent as `gma.canbus.encoder(<number − 1>, …)`, exactly like
+ShowCockpit. The shipped configuration maps them in reverse order to match the
+wiring:
 
 | Slot | onPC encoder |
 | --- | --- |
-| 1 | `"8"` |
-| 2 | `"7"` |
-| 3 | `"6"` |
-| 4 | `"5"` |
+| 1 | `8` |
+| 2 | `7` |
+| 3 | `6` |
+| 4 | `5` |
 
 While the section is missing, pressing the `screen_mode` key logs a warning and
 leaves the encoders in attribute mode. The same targets are edited per physical
 encoder in the web UI (Encoder table → *Screen-Encoder*); `— keiner —` removes
-that slot from the section. If a specific onPC version names the encoders
-differently, adjust the values there.
+that slot from the section.
 
 ### `[mapping.encoder_acceleration]`
 
@@ -357,10 +365,14 @@ differently, adjust the values there.
 
 ### `[mapping.encoder_resolution.attribute]`
 
-`normal`, `fine`, `ultra` floats `> 0` (defaults `1.0`, `0.1`, `0.01`). Only used
-by encoders with a fixed `attribute`, because slot encoders send the resolution
-to the onPC instead of scaling the delta. `[mapping.encoder_resolution.modifiers]`
-optionally names local `fine`/`ultra` modifier controls.
+`normal`, `fine`, `ultra` floats `> 0` (defaults `1.0`, `0.1`, `0.01`). Used by
+encoders with a fixed `attribute` and by slot encoders. For slot encoders the
+level is switched in the onPC: while the local modifier named in
+`[mapping.encoder_resolution.modifiers] cycle` (shipped: `asl_button_2`) is held,
+an encoder click cycles the attribute behind that slot Normal → Fine → Ultra →
+Normal (native `encoder` frame with `resolution`) instead of sending the encoder
+press. The daemon reads the attribute model once on connect and shortly after
+each change; screen encoders have no resolution and only log a warning.
 
 ## Web-Oberfläche
 
@@ -409,6 +421,11 @@ ist im Netz `192.168.178.0/24` gültig, sofern sie nicht bereits belegt ist. Ein
 Client braucht für den Zugriff eine Adresse aus diesem Subnetz; in einem
 anderen Netz ist die Notfall-Adresse ohne Client-Umkonfiguration nicht
 erreichbar. Einen manuellen Notfall-Knopf gibt es nicht.
+
+Unterstützt wird genau eine kabelgebundene IPv4-Schnittstelle. WLAN, IPv6,
+VLAN, Bonding und mehrere gleichzeitig verwaltete Schnittstellen sind für die
+Netzwerkseite nicht enthalten. Die Netzwerkeinstellungen stehen ausschließlich
+bei NetworkManager und nicht in `config.toml`.
 
 #### Rettungs-WLAN
 
@@ -587,36 +604,29 @@ group `audio` and mode `0660`.
 
 ## Encoder protocol notes
 
-Die Encoder sprechen ausschließlich das native Web-Remote-Format:
+Slot-Encoder sprechen wie ShowCockpit die Hardware-Encoder der onPC an
+(per Mitschnitt verifiziert):
 
 ```json
-{"requestType": "encoder", "name": "PAN", "value": 7.18}
-{"requestType": "encoder", "name": "PAN", "resolution": 1}
+{"requestType": "command", "command": "LUA 'gma.canbus.encoder(0,1,nil)'"}
+{"requestType": "command", "command": "LUA 'gma.canbus.encoder(0,0,true)'"}
 ```
 
-* `name` ist das Attribut, das die onPC gerade anzeigt (`DIM`, `PAN`, `TILT`,
-  `SHUTTER`, `COLORRGB1`, …).
-* `value` ist ein relatives Delta; `resolution` (0 = Normal, 1 = Fine,
-  2 = Ultra) kommt als eigener Frame ohne `value`.
-* Die vier Encoder folgen dem Attribut-Fenster der onPC. Blätterst du dort
-  weiter, wandern sie mit – ein lokaler Bankzähler existiert nicht.
-* Ein Klick auf einen Encoder zyklisiert Normal → Fine → Ultra → Normal.
+* Index = Encoder-Nummer − 1: Attribut-Encoder 1–4 → 0–3, Screen-Encoder 5–10 → 4–9.
+* Die zweite Zahl sind ganzzahlige Schritte; Reste unter einem Schritt werden
+  pro Slot vorgetragen. `(n,0,true)`/`(n,0,false)` ist der Encoder-Druck.
+* Die onPC routet die Encoder 0–3 selbst auf das aktuelle Feature/Fenster; es
+  gibt kein `presetTypes`-Dauer-Polling und keinen lokalen Bankzähler; die Seite wird
+  nur beim Verbinden und kurz nach einem Auflösungswechsel gelesen.
+* Ein Klick sendet den Encoder-Druck der onPC. Ist `asl_button_2` gehalten,
+  schaltet der Klick stattdessen die Auflösung des Attributs in der onPC um
+  (`encoder`-Frame mit `resolution`); Screen-Encoder haben keine Auflösung.
+* Feste Attribut-Encoder (`attribute`) nutzen weiter den nativen
+  `{"requestType": "encoder", "name": "PAN", "value": …}`-Request.
 * Die Taste `screen_mode` schaltet auf die Screen-Encoder aus
-  `[mapping.screen_encoders]`. Die onPC nummeriert sie 5–8; die
-  Standardbelegung legt sie umgekehrt auf die Slots: Slot 1 → 8, Slot 2 → 7,
-  Slot 3 → 6, Slot 4 → 5.
-* MA halten (Cherry-Logo) und dabei einen Encoder drehen adressiert
-  vorübergehend dieselben Screen-Encoder. Beim Loslassen folgt der nächste
-  Detent wieder dem Attribut-Fenster.
-
-### Screen-Encoder-Namen
-
-Die onPC führt ihre Screen-Encoder als 5–8. Die mitgelieferte Konfiguration legt
-sie umgekehrt auf die physischen Slots. Eine abweichende onPC-Version kann andere
-`name`-Werte erwarten; dann im Web-UI in der Encoder-Tabelle pro physischem
-Encoder die Spalte *Screen-Encoder* anpassen. Ein Mitschnitt (DevTools → Network
-→ `?ma=1` → Messages, dann am Pult Screen-Encoder drehen) zeigt die tatsächlich
-gesendeten Werte.
+  `[mapping.screen_encoders]` (Standard: Slot 1 → 8 … Slot 4 → 5).
+* MA halten (Cherry-Logo) und dabei einen Encoder drehen oder drücken
+  adressiert vorübergehend dieselben Screen-Encoder.
 
 Die ASL-LEDs werden bereits über das verifizierte MIDI-Protokoll angesteuert
 (siehe `[led]`).
@@ -685,7 +695,7 @@ sudo groupdel ma2pi
 | onPC not reachable | The daemon stays alive and reconnects with exponential backoff; check `journalctl`. |
 | Frames visible in dry-run but nothing happens | Check the exact `keyname` spelling (log at `DEBUG`) and that Web Remote accepts commands. |
 | Encoder direction reversed | Set `direction = -1` in the profile encoder entry. |
-| Encoder moves too far | Click the encoder to switch to Fine/Ultra, or lower `mapping.encoder_resolution.attribute`. |
+| Encoder moves too far | Hold ASL button 2 and click the encoder to cycle Fine/Ultra in the onPC, or lower `mapping.encoder_resolution.attribute`. |
 | **Netzwerk** zeigt „nicht verfügbar“ | `nmcli` installiert, `systemctl status NetworkManager`, Polkit-Regel unter `/etc/polkit-1/rules.d/` vorhanden; Log mit `journalctl -u ma2pi`. |
 | Keine kabelgebundene Schnittstelle | `nmcli device status`; nur `type ethernet` wird verwaltet, WLAN und virtuelle Geräte nicht. |
 | Bestätigung nach IP-Wechsel schlägt fehl | Neue Ziel-URL öffnen, dort PIN erneut eingeben; das alte Cookie gilt nur für die alte Adresse. Nach 180 s rollt der Pi automatisch zurück. |

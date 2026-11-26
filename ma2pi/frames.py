@@ -61,6 +61,23 @@ def lua_hardkey_frame(
     )
 
 
+def lua_encoder_frame(index: int, steps: int, session: int) -> dict[str, Any]:
+    """Turn a hardware encoder through the onPC command line.
+
+    ``index`` is the encoder number minus one (0-3 attribute encoders, 4-9
+    screen encoders), matching what ShowCockpit sends.
+    """
+
+    return command_frame(f"LUA 'gma.canbus.encoder({index},{steps},nil)'", session)
+
+
+def lua_encoder_press_frame(index: int, pressed: bool, session: int) -> dict[str, Any]:
+    """Press or release a hardware encoder (the onPC cycles its resolution)."""
+
+    flag = "true" if pressed else "false"
+    return command_frame(f"LUA 'gma.canbus.encoder({index},0,{flag})'", session)
+
+
 def keyname_frame(
     keyname: str,
     pressed: bool,
