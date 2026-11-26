@@ -30,6 +30,7 @@
   let gateway = $state('');
   let dns = $state('');
   let dialogOpen = $state(false);
+  let emergencyConfirm = $state(false);
   let targetUrl = $state<string | null>(null);
   let now = $state(Date.now());
 
@@ -208,6 +209,25 @@
     }
   }
 
+  async function emergency(): Promise<void> {
+    emergencyConfirm = false;
+    busy = true;
+    error = null;
+    try {
+      const next = await api.emergencyNetwork();
+      status = next;
+      pending = next.pending;
+      lastResult = next.last_result;
+      message = null;
+      initialized = false;
+      applyForm(next);
+    } catch (value) {
+      error = errorText(value);
+    } finally {
+      busy = false;
+    }
+  }
+
   const remaining = $derived.by(() => {
     if (!pending?.deadline) return null;
     const seconds = Math.max(
@@ -304,6 +324,8 @@
             Netzwerkkonfiguration gespeichert.
           {:else if lastResult.status === 'rolled_back'}
             Änderung zurückgerollt{lastResult.detail ? `: ${lastResult.detail}` : '.'}
+          {:else if lastResult.status === 'fallback'}
+            Notfall-Adresse 192.168.178.254/24 ist aktiv{lastResult.detail ? `: ${lastResult.detail}` : '.'}
           {:else}
             Netzwerkänderung fehlgeschlagen{lastResult.detail ? `: ${lastResult.detail}` : '.'}
           {/if}
@@ -352,6 +374,9 @@
               disabled={busy || !canRollback}
             >
               Zurückrollen
+            </button>
+            <button type="button" onclick={() => (emergencyConfirm = true)} disabled={busy}>
+              Notfall-IP …
             </button>
           </div>
           <p class="hint">
@@ -430,6 +455,9 @@
           <div class="actions">
             <button type="button" onclick={preview} disabled={busy}>Vorschau</button>
             <button type="button" onclick={openDialog} disabled={busy}>Anwenden …</button>
+            <button type="button" onclick={() => (emergencyConfirm = true)} disabled={busy}>
+              Notfall-IP …
+            </button>
           </div>
         </form>
       {/if}
@@ -450,12 +478,34 @@
     {/if}
   {/if}
 
+  {#if emergencyConfirm}
+    <div class="network-dialog" role="dialog" aria-modal="true" aria-labelledby="network-emergency-title">
+      <h2 id="network-emergency-title">Notfall-Adresse aktivieren?</h2>
+      <p>
+        Die Schnittstelle erhält <strong>192.168.178.254/24</strong>, ohne
+        Gateway und ohne DNS. Eine offene Änderung wird dabei beendet.
+      </p>
+      <p>
+        Der Client braucht für den Zugriff eine Adresse aus
+        <code>192.168.178.0/24</code>. Die Adresse muss im Netz frei sein.
+      </p>
+      <div class="actions">
+        <button type="button" onclick={emergency} disabled={busy}>
+          Ja, Notfall-IP aktivieren
+        </button>
+        <button type="button" onclick={() => (emergencyConfirm = false)} disabled={busy}>
+          Abbrechen
+        </button>
+      </div>
+    </div>
+  {/if}
+
   {#if dialogOpen}
     <div class="network-dialog" role="dialog" aria-modal="true" aria-labelledby="network-dialog-title">
       <h2 id="network-dialog-title">Netzwerkkonfiguration anwenden?</h2>
       <p>
-        Die neue Konfiguration wird zunächst nur vorübergehend aktiviert. Die
-        Verbindung kann dabei getrennt werden.
+        Die neue Konfiguration wird sofort aktiviert; ein Neustart ist nicht
+        nötig. Die Verbindung kann dabei getrennt werden.
       </p>
       {#if targetUrl}
         <p>

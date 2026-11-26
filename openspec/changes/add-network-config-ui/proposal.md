@@ -22,7 +22,11 @@ Rückkehr zur alten Adresse, wenn die neue Konfiguration nicht erreichbar ist.
 - Zwei-Phasen-Apply mit Bestätigungsfenster: Die neue Konfiguration wird
   zunächst nur temporär aktiviert. Meldet sich die Oberfläche nicht innerhalb
   von 180 Sekunden über die neue Adresse zurück, wird automatisch die vorherige
-  Konfiguration wiederhergestellt.
+  Konfiguration wiederhergestellt. Ein Dienst- oder Pi-Neustart ist dafür nicht
+  nötig.
+- **Notfall-Adresse**: Schlägt auch die Wiederherstellung fehl, setzt der
+  Daemon `192.168.178.254/24` ohne Gateway und DNS. Kurze
+  Verbindungsunterbrechungen lösen keinen sofortigen Rollback aus.
 - Vor dem Anwenden: strikte Validierung von IPv4-Adresse, Subnetzmaske,
   Gateway und DNS sowie die NetworkManager-Validierung; ungültige oder
   widersprüchliche Eingaben werden mit Feldbezug abgelehnt.

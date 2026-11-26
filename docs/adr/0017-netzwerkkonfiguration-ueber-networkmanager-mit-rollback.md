@@ -54,6 +54,10 @@ Das Anwenden ist zweiphasig:
 5. Beim Dienststart wird eine unterbrochene Phase zurückgerollt, ein noch
    gültiges Bestätigungsfenster fortgesetzt und ein abgelaufenes Fenster
    zurückgerollt.
+6. Schlägt die Wiederherstellung fehl, wird die Notfall-Adresse
+   `192.168.178.254/24` ohne Gateway und DNS gesetzt. Kurze
+   Verbindungsabbrüche lösen keinen sofortigen Rollback aus; Auslöser ist nur
+   das erfolglose Bestätigungsfenster oder ein ausdrücklicher Notfallbefehl.
 
 Der Benutzer `ma2pi` erhält eine eng begrenzte Polkit-Regel für
 `org.freedesktop.NetworkManager.settings.modify.system` und
@@ -70,6 +74,8 @@ unverändert; `AF_UNIX` ist für den System-Bus bereits erlaubt.
 * Schlecht, weil die Polkit-Regel dem Benutzer `ma2pi` NetworkManager-Änderungen für alle Profile erlaubt; die Einschränkung auf eine Schnittstelle liegt im Daemon.
 * Schlecht, weil die Oberfläche nach einem Adresswechsel neu geladen und die PIN erneut eingegeben werden muss.
 * Schlecht, weil ein ARP-Konflikt mit einem anderen Host nicht erkannt wird.
+* Schlecht, weil die Notfall-Adresse nur im Subnetz `192.168.178.0/24` ohne Client-Umkonfiguration erreichbar ist.
+* Gut, weil kein Dienst- oder Pi-Neustart für eine IP-Änderung nötig ist.
 
 ### Bestätigung
 

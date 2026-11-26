@@ -221,6 +221,30 @@ Ist die Datei beschädigt oder nicht lesbar, nimmt der Daemon keine automatische
 Netzwerkänderung vor. Der Fehler wird geloggt und über `GET /api/network`
 gemeldet; die aktive Konfiguration bleibt unangetastet.
 
+### Notfall-Adresse und Erkennung
+
+Ein sofortiger Rollback bei jeder unterbrochenen Verbindung wäre falsch: Der
+Browser kann kurzzeitig neu verbinden, DHCP kann neu verhandeln, oder der
+Benutzer öffnet die neue Adresse erst nach einigen Sekunden. Deshalb ist der
+einzige automatische Auslöser das **erfolglose Bestätigungsfenster** von 180
+Sekunden. Einzelne verlorene Pakete, ein WebSocket-Reconnect oder ein kurzer
+HTTP-Abbruch lösen nichts aus.
+
+Schlägt das Wiederherstellen der vorherigen Konfiguration fehl, wird als letzte
+Stufe die Standard-Notfall-Adresse `192.168.178.254` mit Maske
+`255.255.255.0`, ohne Gateway und ohne DNS angewendet und dauerhaft gespeichert.
+Das ist eine gültige Host-Adresse im Netz `192.168.178.0/24`; sie darf nicht
+bereits von einem anderen Gerät oder dem Router verwendet werden. Ein Client
+muss für den Notzugriff eine Adresse aus `192.168.178.0/24` haben. Liegt das
+normale Netz in einem anderen Subnetz, ist die Notfall-Adresse nur mit
+entsprechender Client-Konfiguration erreichbar; das wird in der Oberfläche und
+im README erklärt.
+
+Die Notfall-Adresse kann zusätzlich über einen ausdrücklichen Notfallbefehl
+gesetzt werden (`POST /api/network/emergency`). Der Befehl beendet eine offene
+Änderung, wendet die Notfall-Konfiguration an und speichert sie. Er ist wie alle
+schreibenden Aufrufe PIN- und JSON-geschützt.
+
 ### Profilwahl und Rollback
 
 Es wird das aktive Profil der gewählten Schnittstelle geändert. Ist keines
@@ -248,6 +272,7 @@ und der Fehler ist sichtbar; ein erneuter Start versucht den Rollback erneut.
 | PUT | `/api/network` | Kandidat validieren, Pending anlegen und temporär aktivieren; `202` |
 | POST | `/api/network/confirm` | Offene Änderung dauerhaft speichern |
 | POST | `/api/network/rollback` | Offene Änderung vorzeitig zurückrollen |
+| POST | `/api/network/emergency` | Notfall-Adresse `192.168.178.254/24` anwenden |
 
 Alle Pfade liegen unter dem bestehenden PIN-Schutz. Schreibende Aufrufe
 verlangen `Content-Type: application/json` und `X-Ma2pi-Request: 1`; die
@@ -289,6 +314,10 @@ Neue Seite **Netzwerk** in der bestehenden Navigation. Sie zeigt:
   „Ich bin verbunden – bestätigen“ und „Zurückrollen“. Die Seite pollt den
   Status, solange eine Änderung läuft, und verbindet sich über die bestehende
   WebSocket-Logik neu.
+* Im Fehlerfall und im normalen Formular eine ausdrücklich bestätigte
+  „Notfall-IP aktivieren“-Aktion mit dem Hinweis auf `192.168.178.254/24`.
+* Kein Neustart-Popup und kein Neustartzwang: Die Änderung wird live angewendet;
+  der Dialog erklärt die Trennung, die Ziel-URL und das Bestätigungsfenster.
 * Bei nicht verfügbarem Backend eine schreibgeschützte Ansicht mit
   Fehlerhinweis; die zuletzt geladenen Werte bleiben sichtbar.
 
@@ -363,6 +392,12 @@ deshalb bleibt die Warnung vor jedem Apply sichtbar.
   diese Adresse.
 * **Kein ARP-Konfliktcheck** → dokumentiert; die lokale Belegungsprüfung
   verhindert nur Doppelbelegung auf dem Pi selbst.
+* **Notfall-Adresse `192.168.178.254` ist im falschen Subnetz nicht erreichbar**
+  → bewusst als letzte Rettung dokumentiert; der Client braucht eine Adresse aus
+  `192.168.178.0/24`, und die Adresse muss frei sein.
+* **Kurzer Verbindungsverlust wird als Aussperrung missverstanden** → kein
+  sofortiger Rollback; nur das erfolglose 180-s-Bestätigungsfenster oder der
+  ausdrückliche Notfallbefehl lösen eine Änderung aus.
 * **IPv6-only-Netze** → nicht unterstützt; die Oberfläche und die API arbeiten
   ausschließlich mit IPv4.
 

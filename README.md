@@ -393,13 +393,23 @@ bearbeitet. Die Subnetzmaske wird in Punktnotation eingegeben (z. B.
 dann, dass keine Standardroute bzw. kein DNS-Server gesetzt ist.
 
 Vor dem Anwenden prüft der Daemon Adresse, Maske, Gateway, DNS und die lokale
-Doppelbelegung. Danach wird die neue Konfiguration zunächst **nur temporär**
-aktiviert. Die Verbindung kann dabei abbrechen. Die Oberfläche nennt die
-Ziel-URL und verlangt, dass du sie öffnest und dich dort erneut mit der PIN
-anmeldest; erst diese neue Sitzung bestätigt die Änderung. Wird nicht innerhalb
-von 180 Sekunden bestätigt, stellt der Daemon automatisch die vorherige
-Konfiguration wieder her. Der Pending-Zustand liegt unter
+Doppelbelegung. Danach wird die neue Konfiguration **sofort** aktiviert – ein
+Dienst- oder Pi-Neustart ist dafür nicht nötig. Die Verbindung kann dabei
+abbrechen. Die Oberfläche nennt die Ziel-URL und verlangt, dass du sie öffnest
+und dich dort erneut mit der PIN anmeldest; erst diese neue Sitzung bestätigt
+die Änderung. Wird nicht innerhalb von 180 Sekunden bestätigt, stellt der Daemon
+automatisch die vorherige Konfiguration wieder her. Kurze
+Verbindungsabbrüche oder ein WebSocket-Reconnect lösen keinen sofortigen
+Rollback aus. Der Pending-Zustand liegt unter
 `/var/lib/ma2pi/network-pending.json` und überlebt einen Dienstneustart.
+
+Schlägt auch die Wiederherstellung der vorherigen Konfiguration fehl, setzt der
+Daemon die **Notfall-Adresse `192.168.178.254/24`** ohne Gateway und DNS. Sie
+ist im Netz `192.168.178.0/24` gültig, sofern sie nicht bereits belegt ist. Ein
+Client braucht für den Zugriff eine Adresse aus diesem Subnetz; in einem
+anderen Netz ist die Notfall-Adresse ohne Client-Umkonfiguration nicht
+erreichbar. Dieselbe Adresse kann auf der Netzwerkseite über **Notfall-IP …**
+ausdrücklich aktiviert werden; das beendet eine offene Änderung.
 
 Unterstützt wird genau eine kabelgebundene IPv4-Schnittstelle. WLAN, IPv6,
 VLAN, Bonding und mehrere gleichzeitig verwaltete Schnittstellen sind nicht
@@ -660,6 +670,7 @@ sudo groupdel ma2pi
 | **Netzwerk** zeigt „nicht verfügbar“ | `nmcli` installiert, `systemctl status NetworkManager`, Polkit-Regel unter `/etc/polkit-1/rules.d/` vorhanden; Log mit `journalctl -u ma2pi`. |
 | Keine kabelgebundene Schnittstelle | `nmcli device status`; nur `type ethernet` wird verwaltet, WLAN und virtuelle Geräte nicht. |
 | Bestätigung nach IP-Wechsel schlägt fehl | Neue Ziel-URL öffnen, dort PIN erneut eingeben; das alte Cookie gilt nur für die alte Adresse. Nach 180 s rollt der Pi automatisch zurück. |
+| Auch die alte IP ist nicht erreichbar | Der Daemon setzt `192.168.178.254/24` ohne Gateway/DNS. Client auf `192.168.178.x` stellen und die Adresse im Browser öffnen; die Notfall-IP darf nicht bereits belegt sein. |
 | Netzwerkänderung bleibt hängen | `/var/lib/ma2pi/network-pending.json` prüfen; ein abgelaufener oder unterbrochener Zustand wird beim Dienststart zurückgerollt. |
 
 ## Open hardware acceptance

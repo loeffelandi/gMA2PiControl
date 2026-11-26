@@ -45,6 +45,8 @@
 - [ ] 6.4 Rollback auf dem Pi: Änderung ohne Bestätigung starten, 180 s warten, alte Adresse erneut öffnen und den Status prüfen. Verifikation: Die alte Adresse ist erreichbar, die offene Änderung ist entfernt und `last_result` beschreibt den Rollback.
 - [ ] 6.5 Sicherheits- und Härtungsabnahme: PIN-Pflicht, JSON-/Header-Pflicht, keine Geheimnisse in Antworten/Logs, fehlende Polkit-Berechtigung führt zu keiner Teiländerung, Dienst läuft weiter als `ma2pi`. Verifikation: Tests und ein Lauf auf dem Pi protokollieren die Ergebnisse.
 - [x] 6.6 Vollständige Suite (`pytest`, `npm run check`, `npm run build`, `openspec validate --strict`) ausführen und das Ergebnis dokumentieren. Verifikation: Alle Tests und die strikte OpenSpec-Validierung sind grün.
+- [x] 6.7 Notfall-Adresse implementieren: bei fehlgeschlagenem Rollback `192.168.178.254/24` ohne Gateway/DNS anwenden und als `last_result` melden; `POST /api/network/emergency` und eine bestätigte UI-Aktion ergänzen. Verifikation: Tests decken fehlgeschlagenen Rollback, manuellen Notfallbefehl und den Unterschied zu einem kurzen Verbindungsabbruch ab.
+- [x] 6.8 Notfall-Verhalten in README, API-Referenz und ADR-0017 dokumentieren; erklären, dass kein Neustart nötig ist und `192.168.178.254` nur im Subnetz `192.168.178.0/24` ohne Client-Umkonfiguration erreichbar ist. Verifikation: Dokumentation und UI-Warnung nennen dieselbe Adresse, Maske und Einschränkung.
 
 ## Workflow follow-up
 

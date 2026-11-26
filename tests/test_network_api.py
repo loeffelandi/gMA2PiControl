@@ -31,6 +31,7 @@ class FakeBackend:
         self.addresses: dict[str, str] = {}
         self.persisted: list[Candidate] = []
         self.restored: list[RawIPv4] = []
+        self.fail_restore = False
 
     async def available(self) -> bool:
         return True
@@ -65,6 +66,8 @@ class FakeBackend:
     async def restore(
         self, raw: RawIPv4, profile: ProfileInfo, *, persist: bool = False
     ) -> None:
+        if self.fail_restore:
+            raise NetworkError("Rollback-Profil nicht verfügbar")
         self.restored.append(raw)
 
 
@@ -409,6 +412,47 @@ async def test_network_rollback_endpoint(config, tmp_path):
         assert rolled.status == 200
         assert (await rolled.json())["pending"] is None
         assert backend.restored
+    finally:
+        await client.close()
+
+
+async def test_emergency_endpoint(config, tmp_path):
+    backend = FakeBackend()
+    service = _service(tmp_path, backend)
+    client = await _client(config, service)
+    try:
+        response = await client.post("/api/network/emergency", json={}, headers=HEADERS)
+        assert response.status == 200
+        body = await response.json()
+        assert body["last_result"]["status"] == "fallback"
+        assert body["current"]["address"] == "192.168.178.254"
+        assert body["pending"] is None
+    finally:
+        await client.close()
+
+
+async def test_failed_rollback_uses_emergency_endpoint_result(config, tmp_path):
+    backend = FakeBackend()
+    backend.fail_restore = True
+    service = _service(tmp_path, backend)
+    client = await _client(config, service)
+    try:
+        applied = await client.put(
+            "/api/network",
+            json={
+                "mode": "static",
+                "address": "192.168.10.60",
+                "subnet_mask": "255.255.255.0",
+            },
+            headers=HEADERS,
+        )
+        assert applied.status == 202
+        await _wait_pending(service)
+        rolled = await client.post("/api/network/rollback", json={}, headers=HEADERS)
+        assert rolled.status == 200
+        body = await rolled.json()
+        assert body["last_result"]["status"] == "fallback"
+        assert body["current"]["address"] == "192.168.178.254"
     finally:
         await client.close()
 

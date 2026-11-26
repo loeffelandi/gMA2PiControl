@@ -311,7 +311,8 @@ JSON und `X-Ma2pi-Request: 1`; die PIN-Sperre gilt auch hier.
 `available` ist `false`, wenn NetworkManager oder `nmcli` fehlt. `can_manage`
 ist `false`, wenn keine kabelgebundene Schnittstelle gefunden wurde oder das
 Profil nicht unterstützt wird. `self_connection` ist `true`, wenn die verwaltete
-Adresse die aktuelle Browser-Verbindung trägt.
+Adresse die aktuelle Browser-Verbindung trägt. `last_result.status` ist
+`confirmed`, `rolled_back`, `failed` oder `fallback`.
 
 Eine offene Änderung erscheint unter `pending`:
 
@@ -388,6 +389,22 @@ Antwort ist der neue Status wie bei `GET /api/network`. Ohne offene Änderung
 
 Stellt die vorherige IPv4-Konfiguration sofort wieder her. Antwort ist der neue
 Status. Ohne offene Änderung `409 no_pending`.
+
+### `POST /api/network/emergency`
+
+```json
+{}
+```
+
+Aktiviert die Notfall-Adresse `192.168.178.254/24` ohne Gateway und DNS,
+speichert sie und beendet eine offene Änderung. Der Client benötigt für den
+Zugriff eine Adresse aus `192.168.178.0/24`; die Adresse muss frei sein. Antwort
+ist der neue Status mit `last_result.status = "fallback"`.
+
+Kurze Verbindungsabbrüche lösen keinen Rollback aus. Der automatische Rollback
+greift erst, wenn das 180-Sekunden-Bestätigungsfenster erfolglos abläuft;
+schlägt auch die Wiederherstellung der vorherigen Konfiguration fehl, wird die
+Notfall-Adresse angewendet.
 
 ### Netzwerk-Fehlercodes
 

@@ -91,7 +91,7 @@ export interface NetworkPending extends NetworkCandidate {
 }
 
 export interface NetworkLastResult {
-  status: 'confirmed' | 'rolled_back' | 'failed';
+  status: 'confirmed' | 'rolled_back' | 'failed' | 'fallback';
   at: string | null;
   detail: string | null;
 }
@@ -265,6 +265,10 @@ export class ApiClient {
 
   rollbackNetwork(): Promise<NetworkStatus> {
     return this.request<NetworkStatus>('POST', '/api/network/rollback', {});
+  }
+
+  emergencyNetwork(): Promise<NetworkStatus> {
+    return this.request<NetworkStatus>('POST', '/api/network/emergency', {});
   }
 
   authStatus(): Promise<AuthStatus> {

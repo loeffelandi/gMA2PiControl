@@ -407,6 +407,7 @@ class FakeBackend:
         self.persisted: list[Candidate] = []
         self.restored: list[RawIPv4] = []
         self.fail_stage = False
+        self.fail_restore = False
         self.assign_on_stage = True
 
     async def available(self) -> bool:
@@ -454,6 +455,8 @@ class FakeBackend:
     async def restore(
         self, raw: RawIPv4, profile: ProfileInfo, *, persist: bool = False
     ) -> None:
+        if self.fail_restore:
+            raise NetworkError("Rollback-Profil nicht verfügbar")
         self.restored.append(raw)
 
 
@@ -650,6 +653,36 @@ async def test_late_confirm_rolls_back(tmp_path):
         await service.confirm()
     assert service.pending is None
     assert backend.restored
+
+
+async def test_failed_rollback_falls_back_to_emergency_address(tmp_path):
+    backend = FakeBackend()
+    backend.fail_restore = True
+    service = _service(tmp_path, backend)
+    await service.apply(
+        {
+            "mode": "static",
+            "address": "192.168.10.50",
+            "subnet_mask": "255.255.255.0",
+        }
+    )
+    await _wait_phase(service, "awaiting_confirmation")
+    status = await service.rollback()
+    assert status["pending"] is None
+    assert status["last_result"]["status"] == "fallback"
+    assert backend.staged[-1].address == "192.168.178.254"
+    assert backend.staged[-1].subnet_mask == "255.255.255.0"
+    assert backend.persisted[-1].address == "192.168.178.254"
+
+
+async def test_manual_emergency_address(tmp_path):
+    backend = FakeBackend()
+    service = _service(tmp_path, backend)
+    status = await service.emergency()
+    assert status["pending"] is None
+    assert status["last_result"]["status"] == "fallback"
+    assert status["current"]["address"] == "192.168.178.254"
+    assert backend.persisted[-1].address == "192.168.178.254"
 
 
 async def test_manual_rollback(tmp_path):

@@ -121,6 +121,16 @@ describe('ApiClient', () => {
     expect(init.method).toBe('POST');
     expect(JSON.parse(String(init.body))).toEqual(candidate);
     expect((init.headers as Record<string, string>)[REQUEST_HEADER]).toBe('1');
+
+    fetchImpl.mockResolvedValue(response({ ...status, mode: 'fallback' }));
+    await client.emergencyNetwork();
+    const [emergencyPath, emergencyInit] = fetchImpl.mock.calls[2] as [
+      string,
+      RequestInit,
+    ];
+    expect(emergencyPath).toBe('/api/network/emergency');
+    expect(emergencyInit.method).toBe('POST');
+    expect(JSON.parse(String(emergencyInit.body))).toEqual({});
   });
 
   it('exposes the field of a network validation error', async () => {

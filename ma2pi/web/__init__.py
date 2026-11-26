@@ -511,6 +511,15 @@ def create_app(
         except Exception as exc:
             return _network_error(exc)
 
+    async def emergency_network(request: web.Request) -> web.Response:
+        service = request.app.get(NETWORK_KEY)
+        if service is None:
+            return _json_error(503, "network_unavailable", "Netzwerkverwaltung nicht aktiv")
+        try:
+            return web.json_response(await service.emergency(local_ip=_local_ip(request)))
+        except Exception as exc:
+            return _network_error(exc)
+
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/version", version)
     app.router.add_get("/api/auth/status", auth_status)
@@ -533,6 +542,7 @@ def create_app(
     app.router.add_put("/api/network", apply_network)
     app.router.add_post("/api/network/confirm", confirm_network)
     app.router.add_post("/api/network/rollback", rollback_network)
+    app.router.add_post("/api/network/emergency", emergency_network)
 
     _mount_static(app, dist)
     return app

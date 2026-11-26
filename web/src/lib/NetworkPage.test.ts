@@ -76,6 +76,21 @@ function fakeApi(initial: NetworkStatus = status()) {
         },
       }),
     ),
+    emergencyNetwork: vi.fn(async () =>
+      status({
+        current: {
+          address: '192.168.178.254',
+          subnet_mask: '255.255.255.0',
+          gateway: null,
+          dns: [],
+        },
+        last_result: {
+          status: 'fallback',
+          at: new Date().toISOString(),
+          detail: 'Notfall-Adresse 192.168.178.254/24 aktiv',
+        },
+      }),
+    ),
   } as unknown as ApiClient;
 }
 
@@ -231,6 +246,24 @@ describe('NetworkPage', () => {
       expect(api.rollbackNetwork).toHaveBeenCalled();
     });
     expect(screen.getByText(/zurückgerollt/)).toBeTruthy();
+  });
+
+  it('requires confirmation before activating the emergency address', async () => {
+    const api = fakeApi();
+    render(NetworkPage, { props: { api } });
+
+    await waitFor(() => {
+      expect(screen.getByText('192.168.10.50')).toBeTruthy();
+    });
+    await fireEvent.click(screen.getByText('Notfall-IP …'));
+    expect(screen.getByRole('dialog').textContent).toContain('192.168.178.254/24');
+    expect(api.emergencyNetwork).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByText('Ja, Notfall-IP aktivieren'));
+    await waitFor(() => {
+      expect(api.emergencyNetwork).toHaveBeenCalled();
+    });
+    expect(screen.getByText(/Notfall-Adresse 192.168.178.254\/24 ist aktiv/)).toBeTruthy();
   });
 
   it('warns when the change affects the current browser connection', async () => {

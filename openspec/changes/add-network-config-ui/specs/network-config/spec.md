@@ -172,6 +172,30 @@ und die offene Änderung entfernt sein.
 - **WHEN** die vorherige Konfiguration nicht wieder aktiviert werden kann
 - **THEN** bleibt die offene Änderung mit einem sichtbaren Fehler bestehen und der Daemon protokolliert den Zustand, ohne ihn als erfolgreich zu melden
 
+### Requirement: Notfall-Adresse bei fehlgeschlagenem Rollback
+
+Kann die vorherige Konfiguration nicht wiederhergestellt werden, SHALL der
+Daemon die Standard-Notfall-Adresse `192.168.178.254` mit Maske
+`255.255.255.0` ohne Gateway und DNS anwenden. Kurze
+Verbindungsunterbrechungen MUST NOT einen sofortigen Rollback auslösen; ein
+Rollback erfolgt erst nach dem erfolglosen Bestätigungsfenster oder durch einen
+ausdrücklichen Notfallbefehl.
+
+#### Scenario: Rollback schlägt fehl
+
+- **WHEN** die vorherige Konfiguration nach Ablauf des Bestätigungsfensters nicht wieder aktiviert werden kann
+- **THEN** setzt der Daemon die Notfall-Adresse `192.168.178.254/24` ohne Gateway und DNS und meldet dies als letztes Ergebnis
+
+#### Scenario: Kurze Unterbrechung
+
+- **WHEN** die Verbindung nach dem Anwenden kurzzeitig abbricht, aber innerhalb des Bestätigungsfensters wieder bestätigt wird
+- **THEN** bleibt die neue Konfiguration aktiv und es findet kein Rollback statt
+
+#### Scenario: Manueller Notfallbefehl
+
+- **WHEN** der Benutzer die Notfall-Adresse ausdrücklich aktiviert
+- **THEN** wird `192.168.178.254/24` angewendet und eine offene Änderung beendet
+
 ### Requirement: Neustart während der offenen Änderung
 
 Der Pending-Zustand SHALL atomar unter `/var/lib/ma2pi/` gespeichert werden und

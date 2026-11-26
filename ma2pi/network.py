@@ -31,6 +31,8 @@ CONFIRM_TIMEOUT = 180.0
 ACTIVATION_TIMEOUT = 20.0
 ACTIVATION_DELAY = 0.1
 POLL_INTERVAL = 0.25
+FALLBACK_ADDRESS = "192.168.178.254"
+FALLBACK_SUBNET_MASK = "255.255.255.0"
 PHASES = frozenset(
     {"activating", "awaiting_confirmation", "confirmed", "rolling_back", "failed"}
 )
@@ -412,6 +414,17 @@ class LastResult:
 
     def to_api(self) -> dict[str, Any]:
         return {"status": self.status, "at": _iso(self.at), "detail": self.detail}
+
+
+def fallback_candidate() -> Candidate:
+    """Last-resort static address when even the previous config fails."""
+    return Candidate(
+        mode="static",
+        address=FALLBACK_ADDRESS,
+        subnet_mask=FALLBACK_SUBNET_MASK,
+        gateway=None,
+        dns=(),
+    )
 
 
 @dataclass(frozen=True)
@@ -1286,6 +1299,65 @@ class NetworkService:
             await self._rollback_locked(pending, "Manueller Rollback")
         return await self.status(local_ip=local_ip)
 
+    async def _apply_fallback_locked(
+        self, pending: PendingChange, profile: ProfileInfo, detail: str
+    ) -> None:
+        """Apply the documented emergency address after a failed rollback."""
+        candidate = fallback_candidate()
+        await self._backend.stage(candidate, profile)
+        temporary = False
+        try:
+            await self._backend.persist(candidate, profile)
+        except Exception as exc:
+            temporary = True
+            LOGGER.error("Notfall-Adresse nur temporär aktiv: %s", exc)
+        suffix = " (nur vorübergehend)" if temporary else ""
+        self._cancel_timer()
+        with contextlib.suppress(OSError):
+            self._store.clear()
+        self._pending = None
+        self._last_result = LastResult(
+            "fallback",
+            self._clock(),
+            f"{detail}; Notfall-Adresse {FALLBACK_ADDRESS}/24 aktiv{suffix}",
+        )
+        LOGGER.warning(
+            "Notfall-Adresse %s/24 aktiv (%s)", FALLBACK_ADDRESS, detail
+        )
+        self._emit()
+
+    async def emergency(self, *, local_ip: str | None = None) -> dict[str, Any]:
+        """Apply the emergency address explicitly, ending any open change."""
+        async with self._lock:
+            info, profile, _ = await self._backend.discover()
+            if info is None:
+                raise NetworkValidationError(
+                    "interface", "keine kabelgebundene Schnittstelle gefunden"
+                )
+            if profile is None:
+                profile = await self._backend.create_profile(info.name)
+            candidate = fallback_candidate()
+            await self._backend.stage(candidate, profile)
+            temporary = False
+            try:
+                await self._backend.persist(candidate, profile)
+            except Exception as exc:
+                temporary = True
+                LOGGER.error("Notfall-Adresse nur temporär aktiv: %s", exc)
+            suffix = " (nur vorübergehend)" if temporary else ""
+            self._cancel_timer()
+            with contextlib.suppress(OSError):
+                self._store.clear()
+            self._pending = None
+            self._last_result = LastResult(
+                "fallback",
+                self._clock(),
+                f"Notfall-Adresse {FALLBACK_ADDRESS}/24 aktiv{suffix}",
+            )
+            LOGGER.warning("Notfall-Adresse %s/24 manuell aktiviert", FALLBACK_ADDRESS)
+            self._emit()
+        return await self.status(local_ip=local_ip)
+
     async def _rollback_locked(
         self,
         pending: PendingChange,
@@ -1312,14 +1384,26 @@ class NetworkService:
         try:
             await self._backend.restore(pending.previous, profile, persist=persist)
         except Exception as exc:
-            pending.phase = "failed"
-            pending.error = str(exc)
-            with contextlib.suppress(OSError):
-                self._store.save(pending)
-            self._pending = pending
-            self._last_result = LastResult("failed", self._clock(), str(exc))
-            self._emit()
-            raise NetworkError(f"Rollback fehlgeschlagen: {exc}") from exc
+            try:
+                await self._apply_fallback_locked(
+                    pending, profile, f"Rollback fehlgeschlagen: {exc}"
+                )
+            except Exception as fallback_exc:
+                pending.phase = "failed"
+                pending.error = str(fallback_exc)
+                with contextlib.suppress(OSError):
+                    self._store.save(pending)
+                self._pending = pending
+                self._last_result = LastResult(
+                    "failed",
+                    self._clock(),
+                    f"Rollback fehlgeschlagen: {exc}; Notfall-IP fehlgeschlagen: {fallback_exc}",
+                )
+                self._emit()
+                raise NetworkError(
+                    f"Rollback und Notfall-IP fehlgeschlagen: {exc}; {fallback_exc}"
+                ) from fallback_exc
+            return
         self._cancel_timer()
         with contextlib.suppress(OSError):
             self._store.clear()
