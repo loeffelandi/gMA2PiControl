@@ -22,6 +22,7 @@
     lastError: null,
   });
   let devices = $state<DeviceEntry[]>([]);
+  let detectedDevices = $derived(devices.filter((device) => device.detected !== null));
   let devicesError = $state<string | null>(null);
   let pulses = $state<Record<string, boolean>>({});
   let logEl = $state<HTMLOListElement | null>(null);
@@ -205,8 +206,8 @@
 
     {#if devicesError}
       <p class="monitor-empty error">{devicesError}</p>
-    {:else if devices.length}
-      {#each devices as device (device.name)}
+    {:else if detectedDevices.length}
+      {#each detectedDevices as device (device.name)}
         {@const counts = countsFor(device.name)}
         <div class="device-row">
           <span class="activity-leds" aria-hidden="true">
@@ -234,7 +235,7 @@
         </div>
       {/each}
     {:else}
-      <p class="monitor-empty muted">Keine Geräte gemeldet.</p>
+      <p class="monitor-empty muted">Keine Geräte erkannt.</p>
     {/if}
   </div>
 
