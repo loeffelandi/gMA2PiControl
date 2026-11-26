@@ -65,7 +65,7 @@ abgeschlossen; Task 8.4 (Tests auf Pi und Entwicklungsrechner) mit 219 grünen T
 | MIDI-Tasten und Encoder-Rastungen | `MidiManager._normalise`; `test_normalise_button`, `test_normalise_encoder`, `test_normalise_unknown_note_logged_once`. |
 | MIDI-Hotplug und Rechtefehler | `MidiManager.reconcile`; `test_midi_manager_hotplug`, `test_midi_permission_error_keeps_daemon_running`, `test_missing_midi_device_warns_once`; auf dem Pi öffnet `--dump-input` beide Geräte ohne Root. |
 | ASL-Hardware verifizieren | Task 3.7 abgeschlossen: geführter Mitschnitt vom 2026-11-25 ordnet Noten 1–4 den Encodern (Velocity `127` = rechts, `1` = links), Noten 5–8 den Encoder-Clicks und Noten 9–11 den Tasten zu. `--dump-input` auf dem Pi liefert `encoder.1..4 ±1` sowie `key fine`/`asl_click_1` mit `1/0`. |
-| Cherry-Hardware verifizieren | Teilnachweis 2026-11-26: Auf dem Pi existiert nur **ein** Cherry-Interface (`event4`, Cherry SPOS 046a:0038, 148 Tasten); `select_devices` öffnet genau dieses, keine Doppel-Events aus weiteren Interfaces möglich. Profil korrigiert (X13 = KEY_EQUAL, X-Reihe). **Offen:** geführter Per-Taste-Capture (`--dump-input`), dass jede Taste genau ein Press/Release-Paar erzeugt und der Scancode der gedruckten Taste entspricht (Task 3.8). |
+| Cherry-Hardware verifizieren | Verifiziert 2026-11-26 (Task 3.8): einziges Interface `event4` (Cherry SPOS 046a:0038); geführter Capture über alle 123 Tasten (`docs/cherry-capture-2026-11-26.log`) – jede Taste genau 1 Press + 1 Release, keine Doppel-Events, keine fehlende/unerwartete Taste; Control-Reihenfolge identisch zur Profil-Belegung der gedruckten Tasten (X13 = schwarze Leertaste, MA = Logo-Taste). |
 
 ## Deployment und Abschluss
 

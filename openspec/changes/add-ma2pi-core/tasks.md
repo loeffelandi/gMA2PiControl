@@ -35,7 +35,7 @@
 - [x] 3.6 Fehlende Geräteberechtigung als eindeutigen Fehler mit udev-Hinweis und Backoff behandeln; Test prüft Meldung und dass der Daemon weiterläuft.
 - [x] 3.7a ASL als USB-MIDI-Gerät (`04d8:e817`, `/dev/snd/midiC3D0`) erkennen, MIDI-Backend mit inkrementellem Notenparser und Profilfeldern `notes`/`midi_encoders` implementieren; Tests decken Parser, Tasten, Encoder, Hotplug und Rechtefehler ab.
 - [x] 3.7 Geführten ASL-Capture auf dem Pi durchführen: jede Taste und jede Encoder-Richtung genau einer Note zuordnen und das Profil damit bestätigen; verifizieren, dass alle vier Encoder saubere Detents liefern. Ergebnis: Noten 1–4 = Encoder 1–4 (Velocity `127` = rechts, `1` = links), Noten 5–8 = Encoder-Clicks, Noten 9–11 = Tasten; `--dump-input` liefert `encoder.1..4 ±1` und `key fine`/`asl_click_1` mit `1/0`.
-- [ ] 3.8 Cherry G86-63400 auf dem Pi verifizieren: nur das Keyboard-Interface wird geöffnet, jede Taste erzeugt genau ein Paar, keine Doppel-Events aus weiteren Interfaces; Scancodes den gedruckten Tasten zuordnen.
+- [x] 3.8 Cherry G86-63400 auf dem Pi verifizieren: nur das Keyboard-Interface wird geöffnet, jede Taste erzeugt genau ein Paar, keine Doppel-Events aus weiteren Interfaces; Scancodes den gedruckten Tasten zuordnen. Verifiziert 2026-11-26 per geführtrem Capture (`docs/cherry-capture-2026-11-26.log`): einziges Interface `event4` (Cherry SPOS 046a:0038); alle 123 Tasten erzeugen genau 1 Press + 1 Release, keine fehlende/unerwartete Taste; Reihenfolge der Controls identisch zur Profil-Belegung (gedruckte Tasten), X13 = beschriftungslose schwarze Taste, MA = Logo-Taste.
 
 ## 4. Mapping-Engine
 
