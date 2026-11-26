@@ -147,16 +147,20 @@ def playbacks_user_input_button(
     pressed: bool,
     released: bool,
     session: int,
+    cmdline: str = "",
 ) -> dict[str, Any]:
     """Press or release an executor button.
 
     ``page`` is a 1-based page number or ``"current"`` for the active master
     page.  ``executor`` and ``button`` are 1-based; the Web Remote expects
-    0-based indices, and ``"current"`` is sent as ``-1``.
+    0-based indices, and ``"current"`` is sent as ``-1``.  ``cmdline`` is the
+    session's command line text: the console combines it with the press, so
+    ``"Store"`` stores onto the executor instead of firing it.
     """
 
     return {
         "requestType": "playbacks_userInput",
+        "cmdline": cmdline,
         "execIndex": executor - 1,
         "pageIndex": _page_index(page),
         "buttonId": button - 1,

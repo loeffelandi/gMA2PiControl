@@ -132,6 +132,7 @@ def test_frame_builders_exact():
     }
     assert frames.playbacks_user_input_button(2, 7, 3, True, False, 4) == {
         "requestType": "playbacks_userInput",
+        "cmdline": "",
         "execIndex": 6,
         "pageIndex": 1,
         "buttonId": 2,
@@ -878,6 +879,31 @@ async def test_read_loop_routes_playbacks(make_config):
         with contextlib.suppress(asyncio.CancelledError):
             await task
     assert received == payload
+
+
+async def test_playback_button_carries_the_echoed_command_line(make_config):
+    cfg = _lua_config(make_config)
+    transport = MockTransport()
+    client = Ma2Client(cfg, transport=transport)
+    client._session = 4
+    client._authenticated = True
+    await transport.incoming.put(json.dumps({"text": "Store", "realtime": False}))
+    task = asyncio.create_task(client._read_loop())
+    try:
+        for _ in range(100):
+            if client._cmdline_text == "Store":
+                break
+            await asyncio.sleep(0.01)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    await client._dispatch(PlaybackButton("current", 101, 1, True, released=False))
+
+    assert transport.sent[-1] == frames.playbacks_user_input_button(
+        "current", 101, 1, True, False, 4, cmdline="Store"
+    )
 
 
 async def test_playback_queue_keeps_newest(make_config):

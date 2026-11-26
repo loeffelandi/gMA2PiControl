@@ -501,6 +501,7 @@ class Ma2Client:
         self._page_task: asyncio.Task[None] | None = None
         self._screen_mode = False
         self._ma_held = False
+        self._cmdline_text = ""
         self._led = None
         self._screen_helper = ScreenHelper(config.screen_helper)
         self._rest: dict[tuple[str, int], float] = {}
@@ -811,6 +812,10 @@ class Ma2Client:
             if message.get("responseType") == "playbacks":
                 self._deliver_playbacks(message)
                 continue
+            text = message.get("text")
+            if isinstance(text, str):
+                # The console echoes the session's command line after every key.
+                self._cmdline_text = text
             if self._page.update(message):
                 self._page_updated.set()
             else:
@@ -862,6 +867,7 @@ class Ma2Client:
                 await self._transport.close()
         self._page = EncoderPage()
         self._page_updated.clear()
+        self._cmdline_text = ""
         self._rest.clear()
         self._queue.clear()
         while True:
@@ -1000,6 +1006,7 @@ class Ma2Client:
                 action.pressed,
                 action.released,
                 session,
+                cmdline=self._cmdline_text,
             )
             kind = "playbackButton"
         elif isinstance(action, PlaybackFader):
