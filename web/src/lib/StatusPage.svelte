@@ -22,7 +22,12 @@
     lastError: null,
   });
   let devices = $state<DeviceEntry[]>([]);
-  let detectedDevices = $derived(devices.filter((device) => device.detected !== null));
+  let detectedDevices = $derived(
+    devices.filter((device) => {
+      const presence = snapshot.status?.presence?.[device.name];
+      return presence ? presence.seen : device.detected !== null;
+    }),
+  );
   let devicesError = $state<string | null>(null);
   let pulses = $state<Record<string, boolean>>({});
   let logEl = $state<HTMLOListElement | null>(null);
@@ -209,6 +214,8 @@
     {:else if detectedDevices.length}
       {#each detectedDevices as device (device.name)}
         {@const counts = countsFor(device.name)}
+        {@const presence = snapshot.status?.presence?.[device.name]}
+        {@const connected = presence ? presence.connected : device.detected !== null}
         <div class="device-row">
           <span class="activity-leds" aria-hidden="true">
             {#key counts.rx}
@@ -229,8 +236,12 @@
             {device.backend} · {device.vendor_product} · {device.profile}
             <span class="device-counts">{counts.rx} rx / {counts.tx} tx</span>
           </span>
-          <span class="device-state" class:ok={device.detected}>
-            {device.detected ? 'erkannt' : 'nicht erkannt'}
+          <span
+            class="device-state"
+            class:ok={connected}
+            class:lost={!connected}
+          >
+            {connected ? 'erkannt' : 'verbindung verloren'}
           </span>
         </div>
       {/each}

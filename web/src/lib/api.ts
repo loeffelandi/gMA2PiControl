@@ -64,6 +64,12 @@ export interface ActivityInfo {
   log: ActivityEntry[];
 }
 
+export interface DevicePresence {
+  connected: boolean;
+  path: string | null;
+  seen: boolean;
+}
+
 export interface StatusInfo {
   connected: boolean;
   authenticated: boolean;
@@ -78,6 +84,7 @@ export interface StatusInfo {
   generation: number;
   busy: boolean;
   activity?: ActivityInfo;
+  presence?: Record<string, DevicePresence>;
 }
 
 export type NetworkMode = 'dhcp' | 'static';

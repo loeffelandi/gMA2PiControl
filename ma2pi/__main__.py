@@ -151,6 +151,7 @@ def _status_snapshot(
     client: Ma2Client,
     store: ConfigStore | None = None,
     activity: ActivityTracker | None = None,
+    presence: dict[str, dict] | None = None,
 ) -> dict:
     """Runtime status for the UI; never contains credentials."""
     snapshot = {
@@ -171,8 +172,31 @@ def _status_snapshot(
             if activity is not None
             else {"devices": {}, "log": []}
         ),
+        "presence": presence if presence is not None else {},
     }
     return snapshot
+
+
+def _device_presence(
+    config: AppConfig,
+    seen: set[str],
+    hid: HidManager,
+    midi: MidiManager,
+) -> dict[str, dict]:
+    """Per configured device: currently connected and seen since start."""
+
+    open_paths = {**hid.open_devices, **midi.open_devices}
+    presence: dict[str, dict] = {}
+    for name in config.devices:
+        connected = name in open_paths
+        if connected:
+            seen.add(name)
+        presence[name] = {
+            "connected": connected,
+            "path": open_paths.get(name),
+            "seen": name in seen,
+        }
+    return presence
 
 
 def _activity_event(activity: ActivityTracker) -> dict | None:
@@ -317,11 +341,20 @@ async def _start_web(
     learn: LearnManager,
     device_learn: DeviceLearnManager | None = None,
     activity: ActivityTracker | None = None,
+    hid: HidManager | None = None,
+    midi: MidiManager | None = None,
 ):
     """Start the embedded UI; return ``(runner, broadcast_task, bus)`` or ``None``."""
     from aiohttp import web as aiohttp_web
 
     from .web import BUS_KEY, create_app
+
+    seen_devices: set[str] = set()
+
+    def presence() -> dict[str, dict]:
+        if hid is None or midi is None:
+            return {}
+        return _device_presence(store.config, seen_devices, hid, midi)
 
     paths = _config_paths(config)
     network = NetworkService(
@@ -336,7 +369,7 @@ async def _start_web(
     )
     app = create_app(
         config,
-        status_provider=lambda: _status_snapshot(client, store, activity),
+        status_provider=lambda: _status_snapshot(client, store, activity, presence()),
         config_store=store,
         learn_manager=learn,
         device_learn_manager=device_learn,
@@ -378,7 +411,7 @@ async def _start_web(
             tick += 1
             if tick % 4 == 0 and bus.subscriber_count:
                 bus.publish(
-                    {"type": "status", "data": _status_snapshot(client, store, activity)}
+                    {"type": "status", "data": _status_snapshot(client, store, activity, presence())}
                 )
 
     task = asyncio.create_task(broadcast(), name="ma2pi-web-status")
@@ -453,7 +486,7 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
     engine.modifier_hook = _modifier_led
     engine.screen_modifier_hook = client.set_screen_modifier
     web_service = await _start_web(
-        config, client, store, learn, device_learn, activity
+        config, client, store, learn, device_learn, activity, hid, midi
     )
     bus = web_service[2] if web_service is not None else None
     encoder_task = asyncio.create_task(engine.run_encoder_loop(), name="ma2pi-encoder")

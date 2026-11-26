@@ -403,6 +403,10 @@ h2 {
   color: var(--success);
 }
 
+.device-state.lost {
+  color: var(--warning);
+}
+
 .activity-leds {
   display: flex;
   gap: 0.25rem;
