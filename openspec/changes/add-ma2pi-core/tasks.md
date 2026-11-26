@@ -72,7 +72,7 @@
 
 - [x] 7.1 `tests/mock_ma2.py` um konfigurierbare Fehlerfälle (falsches Passwort, Trennung, Verzögerung) erweitern und einen End-to-End-Test von Fake-Input über Mapping bis zu aufgezeichneten Frames bauen.
 - [x] 7.2 Dry-Run mit der Beispielkonfiguration end-to-end ausführen und die erwartete Frame-Folge für einen typischen Programmiervorgang dokumentieren.
-- [ ] 7.3 Hardware-Smoke-Test durchführen: MA+Fix → Desk Lock, Store halten → Store Options, Clear halten → ClearAll, Go+/Go−, Number-Block; Ergebnis protokollieren.
+- [x] 7.3 Hardware-Smoke-Test durchführen: MA+Fix → Desk Lock, Store halten → Store Options, Clear halten → ClearAll, Go+/Go−, Number-Block; Ergebnis protokollieren. Bestanden 2026-11-26 (Benutzer bestätigt alle fünf Punkte onPC-seitig); Frame-Nachweis in `docs/hardware-smoke-2026-11-26.log` (MA 68 mit Hold, Fix 41, Store 59 mit Hold, Clear 105 mit Hold, Go 10/11, Ziffern + Please 106).
 - [ ] 7.4 Hardware-Stresstest durchführen: vier Encoder gleichzeitig schnell drehen plus Hardkey-Spam über zehn Minuten; onPC bleibt bedienbar, kein Release geht verloren.
 - [ ] 7.5 Reconnect-Abnahme: onPC neu starten und Keyboard/ASL im Betrieb trennen und wieder anstecken; keine hängenden Modifier, kein Daemon-Neustart nötig.
 - [x] 7.6 ADR-Status anhand der Nachweise aktualisieren: 0001, 0003, 0004, 0005, 0007 auf Accepted bei bestandener Prüfung; 0002 auf Accepted oder dokumentierten CMD-Fallback; 0006 auf Accepted bei grüner Validierung. Erledigt 2026-11-26: 0002, 0003, 0004, 0005, 0006, 0007 auf Accepted (mit Verifikations-Nachweis); 0001 auf Superseded by 0016 korrigiert; 0014/0016 bereits Accepted.
