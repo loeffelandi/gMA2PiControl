@@ -56,12 +56,13 @@
   herauslösen (Backpressure, Timeout, Block-Zuordnung), `ExecutorFeedback` behält
   LED-Logik, Outbox und Pump. Verifizieren: alle Tests in
   `tests/test_feedback.py` laufen unverändert grün.
-- [x] 4.2 Blöcke als Vereinigung aus LED-Button-Zielen und allen Playback-Zielen
-  bilden (nur bei `combined_executors = "auto"`), Intervall je nach
-  Feedback-Zustand wählen, Antworten an `topology.update` und, bei aktivem
-  Feedback, an die LED-Anwendung geben. Verifizieren: Tests prüfen (a) Feedback
-  aus + `auto` pollt mit `topology_interval_ms`, (b) `off` pollt gar nicht,
-  (c) Feedback an + `auto` erzeugt keine zweite Anfrage je Bereich.
+- [x] 4.2 LED-Blöcke und Topologie-Blöcke (nur Floating-Buttons, nur bei
+  `combined_executors = "auto"`) als getrennte Anfragen mit eigenem Takt führen,
+  Antworten an die LED-Anwendung bzw. an `topology.update` geben. Verifizieren:
+  Tests prüfen (a) Feedback aus + `auto` pollt mit `topology_interval_ms`,
+  (b) `off` pollt gar nicht, (c) Feedback an + `auto` fragt den Topologie-Block
+  nur im Topologie-Takt ab, (d) Fader und Executoren unter 101 werden nicht
+  abgefragt.
 - [x] 4.3 Topologie bei Konfigurationstausch und `on_connection_lost` verwerfen,
   jede neue Antwort ersetzt den Eintrag (auch für `current`), und in
   `ma2pi/__main__.py` verdrahten. Verifizieren: Tests für beide Auslöser und für

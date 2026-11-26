@@ -102,18 +102,24 @@ braucht und der Router sonst Antworten parsen müsste.
 Heute konsumiert `ExecutorFeedback._request_block` die Queue. Ein zweiter
 Konsument würde Antworten stehlen. Deshalb wird die Request-Schleife
 (`step`, `_request_block`, `_belongs_to_block`, Backpressure, Timeouts) als
-`PlaybackPoller` herausgelöst. Er hält die Blöcke als Vereinigung aus:
+`PlaybackPoller` herausgelöst. Er führt zwei Arten von Anfragen mit eigenem
+Takt:
 
-- LED-Button-Ziele (`build_feedback_targets`, nur bei aktivem Feedback) und
-- allen Playback-Zielen (Button und Fader), wenn `combined_executors = "auto"`.
+- LED-Blöcke (`build_feedback_targets`, nur bei aktivem Feedback) im Takt
+  `feedback.interval_ms`; die Antworten gehen an `feedback.apply(snapshot, block)`.
+- Topologie-Blöcke aus allen Floating-Button-Zielen (Executor ab 101), wenn
+  `combined_executors = "auto"`, im Takt `topology_interval_ms` (Default 2000);
+  die Antworten gehen an `topology.update(...)` und die Diagnose.
 
-Je beantworteter Anfrage ruft der Poller `topology.update(...)` und, falls
-Feedback aktiv ist, `feedback.apply(snapshot, block)`. `ExecutorFeedback` behält
-LED-Logik, Outbox und Pump unverändert.
+`ExecutorFeedback` behält LED-Logik, Outbox und Pump unverändert. Die Breite
+einer Show ändert sich nur beim Editieren; 2 s bei einem Block je Bereich ist
+für die onPC vernachlässigbar.
 
-Intervall: `feedback.interval_ms`, wenn Feedback aktiv ist, sonst
-`topology_interval_ms` (Default 2000). Die Breite einer Show ändert sich nur
-beim Editieren; 2 s bei einem Block je Bereich ist für die onPC vernachlässigbar.
+Live-Befund nach dem ersten Deploy: Die ursprüngliche Vereinigung beider
+Blockarten lief im LED-Takt von 250 ms und erzeugte mit der Live-Config Blöcke
+über 85 Fader- und 80 Floating-Executoren, sechs bis acht Anfragen pro Sekunde.
+Fader-Ziele werden nie umgeleitet, die Topologie braucht sie nicht; deshalb
+fragt sie nur noch Floating-Buttons ab und hat ihren eigenen Takt.
 
 Alternative: Antwort bei Bedarf einmal pro Tastendruck abfragen (lazy) —
 verworfen, weil der erste Druck dann 50–200 ms warten müsste oder wirkungslos

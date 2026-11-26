@@ -173,13 +173,15 @@ async def test_off_does_not_poll(make_config):
     assert client.requests == []
 
 
-async def test_feedback_and_topology_share_one_request_per_block(make_config):
+async def test_led_and_topology_are_separate_requests_with_own_clocks(make_config):
+    clock = [0.0]
+
     def mutate(data):
         data["profiles"]["midicraft-enc"]["led_feedback"]["enabled"] = True
         data["mapping"]["playbacks"] = {
-            "mc_row1_1": {"page": "current", "executor": 1, "kind": "button", "button": 1},
-            "mc_encoder_1": {"page": "current", "executor": 3, "kind": "fader"},
+            "mc_row1_1": {"page": 2, "executor": 114, "kind": "button", "button": 1},
         }
+        data["mapping"]["topology_interval_ms"] = 2000
 
     cfg = make_config(mutate)
     client = FakeClient(answer_from({}))
@@ -189,30 +191,34 @@ async def test_feedback_and_topology_share_one_request_per_block(make_config):
         {"open_devices": {}, "send": lambda self, device, data: True},
     )()
     feedback = ExecutorFeedback(cfg, client, midi, timeout=0.05)
+    feedback._poller._clock = lambda: clock[0]
 
     await feedback.step()
+    first = list(client.requests)
+    clock[0] = 0.25
+    await feedback.step()
+    second = client.requests[len(first):]
+    clock[0] = 2.25
+    await feedback.step()
+    third = client.requests[len(first) + len(second):]
 
-    # One request per (page, region), even though two consumers want it.
-    assert len(client.requests) == len(set(client.requests))
-    assert [r for r in client.requests if r[0] == "current" and r[3] == 2] == [
-        ("current", 0, 5, 2, 2)
-    ]
+    # LED block every LED cycle; the topology block only every topology interval.
+    assert len(first) == 2 and len(second) == 1 and len(third) == 2
     assert feedback._poller.interval() == pytest.approx(cfg.feedback.interval_ms / 1000)
 
 
-async def test_feedback_blocks_are_united_with_playback_targets(make_config):
+async def test_topology_polls_only_floating_buttons(make_config):
     cfg = targets_config(
         make_config,
         {
-            "mc_click_1": {"page": 2, "executor": 3, "kind": "button", "button": 1},
-            "mc_click_2": {"page": 2, "executor": 13, "kind": "fader"},
+            "mc_click_1": {"page": 2, "executor": 103, "kind": "button", "button": 1},
+            "mc_click_2": {"page": 2, "executor": 3, "kind": "button", "button": 1},
+            "mc_click_3": {"page": 2, "executor": 13, "kind": "fader"},
         },
     )
     poller = PlaybackPoller(cfg, FakeClient(), ExecutorTopology())
 
-    blocks = poller.blocks()
-
-    assert blocks[(2, 0)] == RequestBlock(2, 0, 15, 2, 2)
+    assert poller.blocks() == {(2, 100): RequestBlock(2, 100, 5, 3, 3)}
 
 
 async def test_new_answer_replaces_the_topology(make_config):
@@ -220,12 +226,16 @@ async def test_new_answer_replaces_the_topology(make_config):
     topology = ExecutorTopology()
     answers = {(2, 3): fixture("page2_button.json")}
     client = FakeClient(answer_from(answers))
-    poller = PlaybackPoller(cfg, client, topology, timeout=0.05)
+    clock = [0.0]
+    poller = PlaybackPoller(
+        cfg, client, topology, timeout=0.05, clock=lambda: clock[0]
+    )
     await poller.step()
     assert topology.resolve(2, 115).covered is True
 
     # The wide executor was shrunk on the console: the next answer lists 115.
     answers[(2, 3)] = payload(2, 3, range(101, 121))
+    clock[0] = 5.0
     await poller.step()
 
     assert topology.resolve(2, 115).covered is False

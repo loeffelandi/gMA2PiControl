@@ -5,6 +5,10 @@ answers.  Two readers of ``client.playback_responses`` would steal each other's
 messages, so this poller is the single consumer: per cycle it requests one
 block per ``(page, region)``, feeds the topology, diagnoses missing targets and
 hands the answer to the LED feedback when that is active.
+
+LED blocks and topology blocks are separate requests with separate clocks: the
+LEDs need a fast, small poll, the topology only changes when somebody rewires
+the show and needs a slow poll of the floating buttons the controls address.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ from .feedback import (
     parse_playbacks,
     resolve_playback_target,
 )
-from .topology import ExecutorTopology
+from .topology import FLOATING_START, ExecutorTopology
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .config import AppConfig
@@ -32,6 +36,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 LOGGER = logging.getLogger("ma2pi.poller")
 
 BlockKey = tuple[int | str, int]
+#: A request in flight is identified by its purpose and its block.
+RequestKey = tuple[str, int | str, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +110,8 @@ class PlaybackPoller:
         self._feedback_blocks: dict[BlockKey, RequestBlock] = {}
         self._target_blocks: dict[BlockKey, RequestBlock] = {}
         self._targets: dict[BlockKey, list[PlaybackTarget]] = {}
-        self._pending: dict[BlockKey, float] = {}
+        self._pending: dict[RequestKey, float] = {}
+        self._topology_due = 0.0
         self._warned: set[tuple[str, int | str, int]] = set()
         self.set_config(config, {})
 
@@ -121,6 +128,10 @@ class PlaybackPoller:
         ranges: dict[BlockKey, list[int]] = {}
         self._targets = {}
         for target in targets:
+            # Only floating buttons are redirected to a wide executor; faders
+            # keep their own slot, so their region is never polled for topology.
+            if target.kind != "button" or target.executor < FLOATING_START:
+                continue
             key = _block_key(target.page, target.executor)
             ranges.setdefault(key, []).append(target.executor)
             self._targets.setdefault(key, []).append(target)
@@ -133,6 +144,7 @@ class PlaybackPoller:
 
         self._topology.invalidate()
         self._pending.clear()
+        self._topology_due = 0.0
         self.drain()
 
     def drain(self) -> None:
@@ -160,20 +172,19 @@ class PlaybackPoller:
         )
 
     def blocks(self) -> dict[BlockKey, RequestBlock]:
-        """Blocks of the next cycle: LED blocks united with all playback targets."""
+        """Topology blocks: the floating buttons the controls address."""
 
-        result: dict[BlockKey, RequestBlock] = {}
-        if self.feedback_active:
-            result.update(self._feedback_blocks)
-        if self.topology_active:
-            for key, block in self._target_blocks.items():
-                result[key] = _merge(result.get(key), block)
-        return result
+        return dict(self._target_blocks) if self.topology_active else {}
 
     def interval(self) -> float:
+        """Shortest period any active reader needs."""
+
+        periods = []
         if self.feedback_active:
-            return max(0.1, self.config.feedback.interval_ms / 1000.0)
-        return max(0.1, self.config.mapping.topology_interval_ms / 1000.0)
+            periods.append(self.config.feedback.interval_ms / 1000.0)
+        if self.topology_active or not periods:
+            periods.append(self.config.mapping.topology_interval_ms / 1000.0)
+        return max(0.1, min(periods))
 
     def _timeout(self) -> float:
         if self._timeout_override is not None:
@@ -187,16 +198,24 @@ class PlaybackPoller:
 
         if not getattr(self._client, "authenticated", False):
             return
-        for key, block in self.blocks().items():
-            await self._request_block(key, block)
-
-    async def _request_block(self, key: BlockKey, block: RequestBlock) -> None:
+        if self.feedback_active:
+            for key, block in self._feedback_blocks.items():
+                await self._request_block(("led", *key), key, block)
         now = self._clock()
-        deadline = self._pending.get(key)
+        if self.topology_active and now >= self._topology_due:
+            self._topology_due = now + self.config.mapping.topology_interval_ms / 1000.0
+            for key, block in self._target_blocks.items():
+                await self._request_block(("topology", *key), key, block)
+
+    async def _request_block(
+        self, request: RequestKey, key: BlockKey, block: RequestBlock
+    ) -> None:
+        now = self._clock()
+        deadline = self._pending.get(request)
         if deadline is not None and now < deadline:
             return
         timeout = self._timeout()
-        self._pending[key] = now + timeout
+        self._pending[request] = now + timeout
         self.drain()
         self._client.request_playbacks(
             block.page, block.start, block.count, block.items_type, block.view
@@ -222,18 +241,18 @@ class PlaybackPoller:
                     block.start,
                 )
                 continue
-            self._pending.pop(key, None)
-            self._distribute(key, block, snapshot)
+            self._pending.pop(request, None)
+            self._distribute(request[0], key, block, snapshot)
             return
-        self._pending.pop(key, None)
+        self._pending.pop(request, None)
         LOGGER.debug(
             "Playbacks-Antwort für %s.%s ausgeblieben", block.page, block.start
         )
 
     def _distribute(
-        self, key: BlockKey, block: RequestBlock, snapshot: PlaybackSnapshot
+        self, kind: str, key: BlockKey, block: RequestBlock, snapshot: PlaybackSnapshot
     ) -> None:
-        if self.topology_active:
+        if kind == "topology":
             self._topology.update(
                 block.page,
                 key[1],
@@ -242,11 +261,7 @@ class PlaybackPoller:
                 range(block.start + 1, block.start + block.count + 1),
             )
             self._diagnose(key, block)
-        if (
-            self._on_answer is not None
-            and self.feedback_active
-            and key in self._feedback_blocks
-        ):
+        elif self._on_answer is not None and self.feedback_active:
             self._on_answer(snapshot, block)
 
     def _diagnose(self, key: BlockKey, block: RequestBlock) -> None:

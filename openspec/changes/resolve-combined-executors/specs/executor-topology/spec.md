@@ -56,24 +56,31 @@ die betroffene Topologie verworfen werden.
 ### Requirement: Abfrage unabhängig vom LED-Feedback
 
 Bei `combined_executors = "auto"` SHALL `ma2pi` die Executoren aller
-Playback-Ziele (Button und Fader) abfragen, auch wenn das LED-Feedback
-ausgeschaltet ist. Abfragen für Topologie und LEDs MUST aus denselben Antworten
-bedient werden; es MUST nie mehr als eine Anfrage je Page und Bereich offen
-sein. Ohne LED-Feedback MUST das Intervall `topology_interval_ms` betragen
-(500–10000, Default 2000).
+Floating-Button-Ziele (Executor ab 101) abfragen, auch wenn das LED-Feedback
+ausgeschaltet ist. Fader-Ziele und Ziele unter 101 MUST NOT für die Topologie
+abgefragt werden, weil sie nie umgeleitet werden. Topologie-Abfragen MUST im
+Intervall `topology_interval_ms` laufen (500–10000, Default 2000), unabhängig
+vom Takt des LED-Feedbacks; es MUST nie mehr als eine Anfrage je Zweck, Page und
+Bereich offen sein.
 
 #### Scenario: Feedback aus, Topologie an
 
 - **WHEN** `[feedback] enabled = false` und `combined_executors = "auto"` gilt
-  und ein Playback-Ziel existiert
+  und ein Floating-Button-Ziel existiert
 - **THEN** fragt `ma2pi` die Executoren des Ziels im Intervall
   `topology_interval_ms` ab und sendet keine LED-Frames
 
 #### Scenario: Feedback und Topologie gleichzeitig
 
-- **WHEN** das LED-Feedback aktiv ist
-- **THEN** wird dieselbe Antwort für LEDs und Topologie verwendet und es entsteht
-  keine zweite Anfrage für denselben Bereich
+- **WHEN** das LED-Feedback mit `interval_ms = 250` aktiv ist und
+  `topology_interval_ms = 2000` gilt
+- **THEN** laufen die LED-Blöcke alle 250 ms und der Topologie-Block nur alle
+  2 s; die Topologie-Abfrage vergrößert die LED-Anfragen nicht
+
+#### Scenario: Fader werden nicht abgefragt
+
+- **WHEN** nur Fader-Ziele und Button-Ziele unter Executor 101 existieren
+- **THEN** sendet `ma2pi` keine Topologie-Anfrage
 
 #### Scenario: Ungültiges Intervall
 
