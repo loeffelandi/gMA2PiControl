@@ -26,17 +26,11 @@ der Konfiguration mit einem Fehler abgelehnt werden.
 
 ### Requirement: LUA-Hardkey-Befehl
 
-Bei `hardkey_transport = "lua"` SHALL jeder Press und jeder Release als
-`command`-Frame gesendet werden, dessen Befehl
-`LUA 'gma.canbus.hardkey(<code>, <pressed>, <hold>)'` lautet. `<pressed>` MUST `true`
-bei Press und `false` bei Release sein. Ein kurzer Tipper MUST den Press mit
-`hold=false` senden. Wird eine Taste länger als `ma2.hardkey_hold_threshold`
-gehalten, SHALL der Daemon einen zusätzlichen Press mit `hold=true` senden, damit
-die onPC die Taste gedrückt hält (Store Options). Der Release MUST immer
-`hold=false` sein. Modifier MUST sofort mit einem initialen Press (`hold=false`)
-gefolgt von einem Press mit `hold=true` gepresst werden, damit sie für Akkorde
-(MA + Taste) gehalten sind. Ein `hold=true` bei jedem Press würde auch kurze Tipper
-zu Halten machen und ist daher verboten.
+Bei `hardkey_transport = "lua"` SHALL jeder Press und Release als `command`-Frame
+`LUA 'gma.canbus.hardkey(<code>, <pressed>, <hold>)'` gesendet werden. `<pressed>`
+MUST `true` bei Press und `false` bei Release sein; der Release MUST immer
+`hold=false` haben. `hold=true` MUST nur bei gehaltener Taste oder bei Modifiern
+gesendet werden, nie bei jedem Press.
 
 #### Scenario: Tippen einer Taste
 
