@@ -57,7 +57,7 @@ Das Anwenden ist zweiphasig:
 6. Schlägt die Wiederherstellung fehl, wird die Notfall-Adresse
    `192.168.178.254/24` ohne Gateway und DNS gesetzt. Kurze
    Verbindungsabbrüche lösen keinen sofortigen Rollback aus; Auslöser ist nur
-   das erfolglose Bestätigungsfenster oder ein ausdrücklicher Notfallbefehl.
+   das erfolglose Bestätigungsfenster oder ein fehlgeschlagener Rollback.
 
 Der Benutzer `ma2pi` erhält eine eng begrenzte Polkit-Regel für
 `org.freedesktop.NetworkManager.settings.modify.system` und

@@ -17,3 +17,4 @@
 * [0015. Attribut-Encoder folgen der onPC statt fester Wheel-Ziele](0015-attribut-encoder-folgen-der-onpc-statt-fester-wheel-ziele.md)
 * [0016. Hardkey-Injection über gma.canbus.hardkey im Command-Line-Modus](0016-hardkey-injection-ueber-gma-canbus-hardkey-im-command-line-modus.md)
 * [0017. Netzwerkkonfiguration über NetworkManager mit Bestätigung und Rollback](0017-netzwerkkonfiguration-ueber-networkmanager-mit-rollback.md)
+* [0018. Rettungs-WLAN als NetworkManager-Hotspot](0018-rettungs-wlan-als-networkmanager-hotspot.md)

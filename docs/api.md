@@ -390,21 +390,40 @@ Antwort ist der neue Status wie bei `GET /api/network`. Ohne offene Änderung
 Stellt die vorherige IPv4-Konfiguration sofort wieder her. Antwort ist der neue
 Status. Ohne offene Änderung `409 no_pending`.
 
-### `POST /api/network/emergency`
+### Rettungs-WLAN
+
+Der Rettungs-Hotspot spannt auf `wlan0` ein WPA2-WLAN auf, vergibt per DHCP
+Adressen aus `192.168.50.0/24` und ist unter `http://192.168.50.1:8080/`
+erreichbar. Er ist standardmäßig aus. Die Einstellungen liegen unter
+`/var/lib/ma2pi/recovery.json` (0600).
+
+#### `GET /api/recovery`
 
 ```json
-{}
+{
+  "available": true, "enabled": false, "active": false,
+  "ssid": "ma2pi-recovery", "password": "ma2pi-recovery",
+  "auto": true, "auto_triggered": false,
+  "address": null, "url": "http://192.168.50.1:8080/", "error": null
+}
 ```
 
-Aktiviert die Notfall-Adresse `192.168.178.254/24` ohne Gateway und DNS,
-speichert sie und beendet eine offene Änderung. Der Client benötigt für den
-Zugriff eine Adresse aus `192.168.178.0/24`; die Adresse muss frei sein. Antwort
-ist der neue Status mit `last_result.status = "fallback"`.
+#### `PUT /api/recovery`
 
-Kurze Verbindungsabbrüche lösen keinen Rollback aus. Der automatische Rollback
-greift erst, wenn das 180-Sekunden-Bestätigungsfenster erfolglos abläuft;
-schlägt auch die Wiederherstellung der vorherigen Konfiguration fehl, wird die
-Notfall-Adresse angewendet.
+```json
+{ "enabled": true, "ssid": "ma2pi-recovery", "password": "geheim-123", "auto": true }
+```
+
+Alle Felder sind optional. `ssid` 1–32 Zeichen, `password` 8–63 Zeichen. Ein
+ungültiger Wert liefert `422` mit `field`. Die Antwort hat dasselbe Format wie
+`GET /api/recovery`.
+
+Die Automatik (`auto`) schaltet den Hotspot ein, wenn das kabelgebundene Netz
+länger als 60 Sekunden keine nutzbare Adresse hat oder die Schnittstelle auf
+der Notfall-Adresse `192.168.178.254` liegt. Er schaltet sich wieder aus, wenn
+das Netz danach 60 Sekunden stabil ist und der Hotspot automatisch eingeschaltet
+wurde. Beim Aktivieren wird eine bestehende WLAN-Verbindung auf `wlan0`
+getrennt.
 
 ### Netzwerk-Fehlercodes
 
@@ -444,6 +463,8 @@ Fehler haben die Form:
 | 502 | `unreachable` | Ziel ist nicht erreichbar |
 | 503 | `config_store_unavailable` / `learn_unavailable` | Dienstteil nicht aktiv |
 | 503 | `network_unavailable` | Netzwerkverwaltung nicht aktiv oder nicht verfügbar |
+| 503 | `recovery_unavailable` | Rettungs-WLAN nicht aktiv |
+| 500 | `recovery_failed` | Hotspot konnte nicht angewendet werden (z. B. fehlende Polkit-Berechtigung) |
 | 503 | `ui_not_built` | `web/dist` fehlt |
 
 Antworten und Logs enthalten nie das MA2-Passwort oder dessen Hash.

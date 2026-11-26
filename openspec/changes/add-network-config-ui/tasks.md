@@ -32,7 +32,7 @@
 
 ## 5. Deployment und Berechtigungen
 
-- [ ] 5.1 `deploy/50-ma2pi-network.rules` mit der auf zwei NetworkManager-Aktionen begrenzten Polkit-Regel für `ma2pi` anlegen. Verifikation: `pkaction`/`busctl` auf dem Pi zeigt, dass die Aktionen erlaubt sind und andere NetworkManager-Aktionen nicht.
+- [x] 5.1 `deploy/50-ma2pi-network.rules` mit der auf zwei NetworkManager-Aktionen begrenzten Polkit-Regel für `ma2pi` anlegen. Verifikation: `pkaction`/`busctl` auf dem Pi zeigt, dass die Aktionen erlaubt sind und andere NetworkManager-Aktionen nicht.
 - [ ] 5.2 `install.sh` um die Prüfung von `nmcli`, NetworkManager-Dienst und Polkit sowie die Installation der Regel erweitern; bei fehlenden Paketen mit Paket-Hinweis abbrechen. Verifikation: Test auf Trixie mit und ohne NetworkManager; die Installation ist idempotent und die Regel hat Modus 0644, root:root.
 - [x] 5.3 ADR-0017 „Netzwerkkonfiguration über NetworkManager mit Bestätigung und Rollback“ anlegen und in `docs/adr/README.md` verlinken. Verifikation: ADR folgt der Vorlage, nennt Alternativen und Konsequenzen und ist im Design referenziert.
 - [ ] 5.4 README-Anforderungen und Update-/Rollback-Abschnitt um NetworkManager, Polkit und die neue Seite ergänzen; die systemd-Härtung ausdrücklich als unverändert dokumentieren. Verifikation: `systemd-analyze verify deploy/ma2pi.service` ist grün und die dokumentierten Befehle laufen auf dem Pi.
@@ -41,15 +41,25 @@
 
 - [x] 6.1 Integrationstest mit Fake-Backend über die HTTP-API: Status lesen, Vorschau, statisch anwenden, bestätigen, auf DHCP wechseln und zurückrollen. Verifikation: Der Test deckt alle Phasen und die Persistenz der bestätigten Konfiguration ab.
 - [x] 6.2 Integrationstest für Aussperrschutz: Apply ohne Bestätigung lässt den Timer ablaufen, Rollback stellt die vorherige Konfiguration wieder her und ein Dienstneustart im Fenster setzt den Timer korrekt fort. Verifikation: Test mit steuerbarer Uhr und simuliertem Neustart ist grün.
-- [ ] 6.3 Test auf dem Pi: DHCP → statisch → neue Adresse im Browser öffnen, PIN eingeben, bestätigen; danach statisch → DHCP. Verifikation: Die tatsächlich vergebene Adresse, Gateway und DNS werden im UI korrekt angezeigt; die MA2-Verbindung baut sich nach dem Wechsel wieder auf.
-- [ ] 6.4 Rollback auf dem Pi: Änderung ohne Bestätigung starten, 180 s warten, alte Adresse erneut öffnen und den Status prüfen. Verifikation: Die alte Adresse ist erreichbar, die offene Änderung ist entfernt und `last_result` beschreibt den Rollback.
+- [x] 6.3 Test auf dem Pi: DHCP → statisch → neue Adresse im Browser öffnen, PIN eingeben, bestätigen; danach statisch → DHCP. Verifikation: Die tatsächlich vergebene Adresse, Gateway und DNS werden im UI korrekt angezeigt; die MA2-Verbindung baut sich nach dem Wechsel wieder auf.
+- [x] 6.4 Rollback auf dem Pi: Änderung ohne Bestätigung starten, 180 s warten, alte Adresse erneut öffnen und den Status prüfen. Verifikation: Die alte Adresse ist erreichbar, die offene Änderung ist entfernt und `last_result` beschreibt den Rollback.
 - [ ] 6.5 Sicherheits- und Härtungsabnahme: PIN-Pflicht, JSON-/Header-Pflicht, keine Geheimnisse in Antworten/Logs, fehlende Polkit-Berechtigung führt zu keiner Teiländerung, Dienst läuft weiter als `ma2pi`. Verifikation: Tests und ein Lauf auf dem Pi protokollieren die Ergebnisse.
 - [x] 6.6 Vollständige Suite (`pytest`, `npm run check`, `npm run build`, `openspec validate --strict`) ausführen und das Ergebnis dokumentieren. Verifikation: Alle Tests und die strikte OpenSpec-Validierung sind grün.
-- [x] 6.7 Notfall-Adresse implementieren: bei fehlgeschlagenem Rollback `192.168.178.254/24` ohne Gateway/DNS anwenden und als `last_result` melden; `POST /api/network/emergency` und eine bestätigte UI-Aktion ergänzen. Verifikation: Tests decken fehlgeschlagenen Rollback, manuellen Notfallbefehl und den Unterschied zu einem kurzen Verbindungsabbruch ab.
-- [x] 6.8 Notfall-Verhalten in README, API-Referenz und ADR-0017 dokumentieren; erklären, dass kein Neustart nötig ist und `192.168.178.254` nur im Subnetz `192.168.178.0/24` ohne Client-Umkonfiguration erreichbar ist. Verifikation: Dokumentation und UI-Warnung nennen dieselbe Adresse, Maske und Einschränkung.
+- [x] 6.7 Notfall-Adresse bei fehlgeschlagenem Rollback: `192.168.178.254/24` ohne Gateway/DNS anwenden und als `last_result` melden. Ein manueller Notfall-Knopf/Endpunkt wurde auf Wunsch entfernt. Verifikation: `tests/test_network.py::test_failed_rollback_falls_back_to_emergency_address` und `test_failed_rollback_uses_fallback_result`.
+- [ ] 6.8 Notfall-Verhalten in README, API-Referenz und ADR-0017 dokumentieren (API und ADR erledigt; README-Abschnitt offen, siehe 8.7); erklären, dass kein Neustart nötig ist und `192.168.178.254` nur im Subnetz `192.168.178.0/24` ohne Client-Umkonfiguration erreichbar ist. Verifikation: Dokumentation und UI-Warnung nennen dieselbe Adresse, Maske und Einschränkung.
 
 ## Workflow follow-up
 
 - Proposal, Spec, Design, Tasks und ADR-0017 zur Review vorlegen und Freigabe abwarten.
 - Erst nach Freigabe implementieren und Tasks abhaken.
 - Change nach bestandener Abnahme archivieren und die Haupt-Spec `network-config` synchronisieren.
+
+## 8. Rettungs-WLAN (Capability `recovery-access`)
+
+- [x] 8.1 `ma2pi/recovery.py`: NetworkManager-AP-Profil `ma2pi-recovery` (WPA2, `192.168.50.1/24`, `ipv4.method=shared`) anlegen, aktivieren und deaktivieren; Einstellungen atomar in `recovery.json` (0600) speichern und beim Start wieder anwenden. Verifikation: `tests/test_recovery.py::test_recovery_store_roundtrip`, `test_recovery_save_enables_and_disables`; Pi: Hotspot ein/aus über die API, `wlan0` führt `192.168.50.1`, AP antwortet lokal mit HTTP 200.
+- [x] 8.2 `GET /api/recovery` und `PUT /api/recovery` mit SSID 1–32 und Passwort 8–63 Zeichen; Feldfehler als `422` mit `field`. Verifikation: `tests/test_recovery.py::test_recovery_validation`, `test_recovery_api_roundtrip`.
+- [x] 8.3 Automatik: Hotspot nach 60 s ohne nutzbares LAN einschalten, nach 60 s stabilem LAN wieder aus; Notfall-Adresse `192.168.178.254` zählt als LAN nicht nutzbar. Verifikation: `tests/test_recovery.py::test_auto_cycle_enables_after_down_grace_and_disables_after_up_grace`. Live nicht geprüft, siehe 8.6.
+- [x] 8.4 Oberfläche: Bereich „Rettungs-WLAN“ auf der Netzwerkseite mit Schalter, SSID, Passwort, Automatik und Hinweis auf die Trennung der bestehenden WLAN-Verbindung. Verifikation: `web/src/lib/NetworkPage.test.ts` „configures the recovery hotspot“.
+- [x] 8.5 Polkit-Regel um `org.freedesktop.NetworkManager.wifi.share.open` und `.wifi.share.protected` erweitern, sonst scheitert der AP mit „Berechtigung fehlt“. Verifikation: Pi, `busctl` als `ma2pi` zeigt beide Aktionen `yes`, `wifi.scan` bleibt `auth`.
+- [ ] 8.6 Live-Test der Automatik bei echtem LAN-Ausfall auf dem Pi. Offen, weil dabei die SSH-Verbindung über LAN und WLAN gleichzeitig wegfallen kann; braucht vorher einen Rückholweg (z. B. `systemd-run --on-active=`).
+- [ ] 8.7 README-Abschnitt „Rettungs-WLAN“ schreiben. Offen: der Arbeitsbaum von `README.md` weicht stark von HEAD ab (fehlende Abschnitte „Web-Oberfläche“, „Netzwerk“, „Backups“); vorher klären, wie er wiederhergestellt wird. API-Doku in `docs/api.md` und ADR-0018 sind erledigt.

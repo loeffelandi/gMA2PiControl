@@ -24,6 +24,12 @@ from .ma2_client import Ma2Client
 from .mapping import MappingEngine
 from .midi_input import MidiManager, list_midi_devices
 from .network import NetworkManagerBackend, NetworkService, PendingStore
+from .recovery import (
+    MONITOR_INTERVAL as RECOVERY_MONITOR_INTERVAL,
+    RecoveryBackend,
+    RecoveryService,
+    RecoveryStore,
+)
 from .runtime import ConfigStore
 
 LOGGER = logging.getLogger("ma2pi")
@@ -213,12 +219,18 @@ async def _start_web(
         PendingStore(paths.state_dir / "network-pending.json"),
         port=config.web.port,
     )
+    recovery = RecoveryService(
+        RecoveryBackend(),
+        RecoveryStore(paths.state_dir / "recovery.json"),
+        port=config.web.port,
+    )
     app = create_app(
         config,
         status_provider=lambda: _status_snapshot(client, store),
         config_store=store,
         learn_manager=learn,
         network_service=network,
+        recovery_service=recovery,
     )
     runner = aiohttp_web.AppRunner(app, access_log=None)
     await runner.setup()
@@ -234,10 +246,15 @@ async def _start_web(
 
     bus = app[BUS_KEY]
     network.publish = bus.publish
+    recovery.publish = bus.publish
     try:
         await network.resume()
     except Exception as exc:  # a broken pending file must not stop the daemon
         LOGGER.error("Netzwerk-Pending-Zustand konnte nicht geladen werden: %s", exc)
+    try:
+        await recovery.resume()
+    except Exception as exc:
+        LOGGER.error("Rettungs-WLAN konnte nicht geladen werden: %s", exc)
 
     async def broadcast() -> None:
         """Push the runtime status once per second while clients listen."""
@@ -249,8 +266,21 @@ async def _start_web(
                 )
 
     task = asyncio.create_task(broadcast(), name="ma2pi-web-status")
+    recovery_task = asyncio.create_task(
+        recovery_loop(network, recovery), name="ma2pi-recovery"
+    )
     LOGGER.info("Web-UI erreichbar unter http://%s:%s/", config.web.bind, config.web.port)
-    return runner, task, bus, network
+    return runner, task, bus, network, recovery_task
+
+
+async def recovery_loop(network: NetworkService, recovery: RecoveryService) -> None:
+    """Enable the recovery hotspot only after a sustained wired outage."""
+    while True:
+        await asyncio.sleep(RECOVERY_MONITOR_INTERVAL)
+        try:
+            await recovery.auto_cycle(await network.wired_ok())
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.error("Rettungs-WLAN-Prüfung fehlgeschlagen: %s", exc)
 
 
 async def run_daemon(config: AppConfig, dry_run: bool) -> int:
@@ -283,6 +313,12 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
         if config.led.enabled
         else None
     )
+    def _modifier_led(control: str, pressed: bool) -> None:
+        led = led_holder.get("led")
+        if led is not None and control == engine.config.mapping.resolution.cycle_modifier:
+            led.set_fine(pressed)
+
+    engine.modifier_hook = _modifier_led
     web_service = await _start_web(config, client, store, learn)
     bus = web_service[2] if web_service is not None else None
     encoder_task = asyncio.create_task(engine.run_encoder_loop(), name="ma2pi-encoder")
@@ -336,7 +372,10 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
         if led_holder["led"] is not None:
             led_holder["led"].close()
         if web_service is not None:
-            web_runner, web_task, _, network = web_service
+            web_runner, web_task, _, network, recovery_task = web_service
+            recovery_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await recovery_task
             await network.close()
             web_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):

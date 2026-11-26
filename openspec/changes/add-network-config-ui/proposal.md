@@ -26,7 +26,8 @@ Rückkehr zur alten Adresse, wenn die neue Konfiguration nicht erreichbar ist.
   nötig.
 - **Notfall-Adresse**: Schlägt auch die Wiederherstellung fehl, setzt der
   Daemon `192.168.178.254/24` ohne Gateway und DNS. Kurze
-  Verbindungsunterbrechungen lösen keinen sofortigen Rollback aus.
+  Verbindungsunterbrechungen lösen keinen sofortigen Rollback aus. Ein manueller
+  Notfall-Knopf entfällt.
 - Vor dem Anwenden: strikte Validierung von IPv4-Adresse, Subnetzmaske,
   Gateway und DNS sowie die NetworkManager-Validierung; ungültige oder
   widersprüchliche Eingaben werden mit Feldbezug abgelehnt.
@@ -53,6 +54,8 @@ Internet-Exposition, Konflikt-Erkennung per ARP und das Setzen der IP über
 - `network-config`: Lesen, Validieren, Anwenden, Bestätigen und Zurückrollen der
   kabelgebundenen IPv4-Konfiguration des Pi über die Weboberfläche, inklusive
   DHCP/statisch, Subnetzmaske, Gateway, DNS und Schutz vor Aussperren.
+- `recovery-access`: Rettungszugang über einen eigenen WLAN-Hotspot mit
+  SSID, Passwort, manueller und automatischer Aktivierung bei fehlendem LAN.
 
 ### Modified Capabilities
 

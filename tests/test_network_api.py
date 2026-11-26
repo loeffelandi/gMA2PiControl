@@ -26,7 +26,7 @@ HEADERS = {"X-Ma2pi-Request": "1"}
 class FakeBackend:
     def __init__(self) -> None:
         self.interface = InterfaceInfo("eth0", "ethernet", "connected", "Wired connection 1")
-        self.profile: ProfileInfo | None = ProfileInfo("uuid-1", "Wired connection 1", "auto")
+        self.profile: ProfileInfo | None = ProfileInfo("uuid-1", "ma2pi-eth0", "auto")
         self.current = CurrentIPv4()
         self.addresses: dict[str, str] = {}
         self.persisted: list[Candidate] = []
@@ -45,6 +45,23 @@ class FakeBackend:
     async def create_profile(self, interface: str) -> ProfileInfo:
         self.profile = ProfileInfo("uuid-created", f"ma2pi-{interface}", "auto", created=True)
         return self.profile
+
+    async def ensure_managed_profile(self, interface: str) -> ProfileInfo:
+        if self.profile is None or self.profile.name != f"ma2pi-{interface}":
+            return await self.create_profile(interface)
+        return self.profile
+
+    async def activate_profile(self, uuid: str) -> None:
+        pass
+
+    async def deactivate_profile(self, uuid: str) -> None:
+        pass
+
+    async def set_autoconnect(self, uuid: str, enabled: bool) -> None:
+        pass
+
+    async def delete_profile(self, uuid: str) -> None:
+        pass
 
     async def stage(self, candidate: Candidate, profile: ProfileInfo) -> None:
         self.current = CurrentIPv4(
@@ -416,22 +433,7 @@ async def test_network_rollback_endpoint(config, tmp_path):
         await client.close()
 
 
-async def test_emergency_endpoint(config, tmp_path):
-    backend = FakeBackend()
-    service = _service(tmp_path, backend)
-    client = await _client(config, service)
-    try:
-        response = await client.post("/api/network/emergency", json={}, headers=HEADERS)
-        assert response.status == 200
-        body = await response.json()
-        assert body["last_result"]["status"] == "fallback"
-        assert body["current"]["address"] == "192.168.178.254"
-        assert body["pending"] is None
-    finally:
-        await client.close()
-
-
-async def test_failed_rollback_uses_emergency_endpoint_result(config, tmp_path):
+async def test_failed_rollback_uses_fallback_result(config, tmp_path):
     backend = FakeBackend()
     backend.fail_restore = True
     service = _service(tmp_path, backend)

@@ -240,10 +240,22 @@ normale Netz in einem anderen Subnetz, ist die Notfall-Adresse nur mit
 entsprechender Client-Konfiguration erreichbar; das wird in der Oberfläche und
 im README erklärt.
 
-Die Notfall-Adresse kann zusätzlich über einen ausdrücklichen Notfallbefehl
-gesetzt werden (`POST /api/network/emergency`). Der Befehl beendet eine offene
-Änderung, wendet die Notfall-Konfiguration an und speichert sie. Er ist wie alle
-schreibenden Aufrufe PIN- und JSON-geschützt.
+### Rettungs-WLAN
+
+Der Rettungszugang ist ein NetworkManager-AP-Profil `ma2pi-recovery` auf
+`wlan0` (WPA2-PSK, `192.168.50.1/24`, `ipv4.method=shared`). NetworkManager
+startet den internen DHCP-Dienst selbst; es wird keine zusätzliche Software
+installiert. Die Entscheidung ist in ADR-0018 festgehalten.
+
+Der gewünschte Zustand (`enabled`, SSID, Passwort, `auto`) liegt in
+`/var/lib/ma2pi/recovery.json` (0600). Ein Dienststart wendet ihn wieder an.
+Die Automatik prüft alle 10 s, ob die verwaltete kabelgebundene Schnittstelle
+eine nutzbare Adresse hat. Eine Adresse auf der Notfall-Adresse gilt als nicht
+nutzbar. Der Hotspot wird nach 60 s Ausfall eingeschaltet und nach 60 s stabiler
+Rückkehr wieder ausgeschaltet, aber nur, wenn die Automatik ihn selbst
+eingeschaltet hat. Ein manueller Schalter bleibt unverändert.
+
+Zusätzliche Polkit-Aktionen: `wifi.share.open` und `wifi.share.protected`.
 
 ### Profilwahl und Rollback
 
@@ -272,7 +284,6 @@ und der Fehler ist sichtbar; ein erneuter Start versucht den Rollback erneut.
 | PUT | `/api/network` | Kandidat validieren, Pending anlegen und temporär aktivieren; `202` |
 | POST | `/api/network/confirm` | Offene Änderung dauerhaft speichern |
 | POST | `/api/network/rollback` | Offene Änderung vorzeitig zurückrollen |
-| POST | `/api/network/emergency` | Notfall-Adresse `192.168.178.254/24` anwenden |
 
 Alle Pfade liegen unter dem bestehenden PIN-Schutz. Schreibende Aufrufe
 verlangen `Content-Type: application/json` und `X-Ma2pi-Request: 1`; die
@@ -314,8 +325,6 @@ Neue Seite **Netzwerk** in der bestehenden Navigation. Sie zeigt:
   „Ich bin verbunden – bestätigen“ und „Zurückrollen“. Die Seite pollt den
   Status, solange eine Änderung läuft, und verbindet sich über die bestehende
   WebSocket-Logik neu.
-* Im Fehlerfall und im normalen Formular eine ausdrücklich bestätigte
-  „Notfall-IP aktivieren“-Aktion mit dem Hinweis auf `192.168.178.254/24`.
 * Kein Neustart-Popup und kein Neustartzwang: Die Änderung wird live angewendet;
   der Dialog erklärt die Trennung, die Ziel-URL und das Bestätigungsfenster.
 * Bei nicht verfügbarem Backend eine schreibgeschützte Ansicht mit
@@ -397,7 +406,7 @@ deshalb bleibt die Warnung vor jedem Apply sichtbar.
   `192.168.178.0/24`, und die Adresse muss frei sein.
 * **Kurzer Verbindungsverlust wird als Aussperrung missverstanden** → kein
   sofortiger Rollback; nur das erfolglose 180-s-Bestätigungsfenster oder der
-  ausdrückliche Notfallbefehl lösen eine Änderung aus.
+  Ausfall des Rollbacks lösen die Notfall-Adresse aus.
 * **IPv6-only-Netze** → nicht unterstützt; die Oberfläche und die API arbeiten
   ausschließlich mit IPv4.
 

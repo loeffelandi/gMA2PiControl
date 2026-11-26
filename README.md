@@ -67,8 +67,8 @@ presses are replayed.
 * A non-root system user `ma2pi` with read access to `/dev/input/event*` and
   `/dev/snd/midiC*` through the supplied udev rules.
 * NetworkManager with `nmcli` and Polkit for the **Netzwerk** page. The
-  installer grants `ma2pi` only the two NetworkManager actions needed to change
-  and activate a system connection.
+  installer grants `ma2pi` only the NetworkManager actions needed to change and
+  activate a system connection and to share WiFi as an access point (recovery hotspot).
 * The Cherry keyboard and the ASL panel connected by USB.
 
 Install the OS packages once:
@@ -408,18 +408,37 @@ Daemon die **Notfall-Adresse `192.168.178.254/24`** ohne Gateway und DNS. Sie
 ist im Netz `192.168.178.0/24` gültig, sofern sie nicht bereits belegt ist. Ein
 Client braucht für den Zugriff eine Adresse aus diesem Subnetz; in einem
 anderen Netz ist die Notfall-Adresse ohne Client-Umkonfiguration nicht
-erreichbar. Dieselbe Adresse kann auf der Netzwerkseite über **Notfall-IP …**
-ausdrücklich aktiviert werden; das beendet eine offene Änderung.
+erreichbar. Einen manuellen Notfall-Knopf gibt es nicht.
+
+#### Rettungs-WLAN
+
+Für den Fall, dass das Kabelnetz ausfällt, spannt der Pi einen eigenen WLAN-
+Hotspot auf. Die Einstellungen liegen auf der Netzwerkseite unter
+**Rettungs-WLAN**:
+
+* SSID (Standard `ma2pi-recovery`) und Passwort (Standard `ma2pi-recovery`,
+  8–63 Zeichen) sind änderbar. Das Standardpasswort sollte im Betrieb geändert
+  werden.
+* Der Hotspot ist standardmäßig aus. Er läuft mit WPA2 auf `wlan0`, vergibt
+  Adressen aus `192.168.50.0/24` und ist unter `http://192.168.50.1:8080/`
+  erreichbar. Die PIN-Sperre gilt auch dort.
+* **Automatik**: Ist das Kabelnetz länger als 60 Sekunden ohne nutzbare
+  Adresse oder liegt die Schnittstelle auf der Notfall-Adresse, schaltet der
+  Pi den Hotspot ein. Nach 60 Sekunden stabilem Kabelnetz schaltet er ihn
+  wieder aus. Ein manuell eingeschalteter Hotspot bleibt, bis du ihn ausschaltest.
+* Der Hotspot trennt eine bestehende WLAN-Verbindung auf `wlan0`. Das ist
+  beabsichtigt.
 
 Unterstützt wird genau eine kabelgebundene IPv4-Schnittstelle. WLAN, IPv6,
 VLAN, Bonding und mehrere gleichzeitig verwaltete Schnittstellen sind nicht
 enthalten. Die Netzwerkeinstellungen stehen ausschließlich bei NetworkManager
 und nicht in `config.toml`.
 
-Die Berechtigung regelt
-`/etc/polkit-1/rules.d/50-ma2pi-network.rules`: Der Benutzer `ma2pi` darf
-Systemprofile ändern und Verbindungen aktivieren, aber keine WLAN- oder
-sonstigen Systemaktionen ausführen. Der Dienst läuft weiterhin unprivilegiert;
+Die Berechtigung regelt `/etc/polkit-1/rules.d/50-ma2pi-network.rules`. Der
+Benutzer `ma2pi` darf Systemprofile ändern, Verbindungen aktivieren und WLAN
+nur im Access-Point-Modus freigeben (`wifi.share.open`, `wifi.share.protected`,
+nötig für den Rettungs-Hotspot). WLAN-Scan und andere NetworkManager-Aktionen
+bleiben gesperrt. Der Dienst läuft weiterhin unprivilegiert;
 `ProtectSystem=strict` und `NoNewPrivileges` bleiben aktiv.
 
 ### Sicherheitsmodell (v1)

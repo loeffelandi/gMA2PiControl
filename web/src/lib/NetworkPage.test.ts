@@ -76,21 +76,30 @@ function fakeApi(initial: NetworkStatus = status()) {
         },
       }),
     ),
-    emergencyNetwork: vi.fn(async () =>
-      status({
-        current: {
-          address: '192.168.178.254',
-          subnet_mask: '255.255.255.0',
-          gateway: null,
-          dns: [],
-        },
-        last_result: {
-          status: 'fallback',
-          at: new Date().toISOString(),
-          detail: 'Notfall-Adresse 192.168.178.254/24 aktiv',
-        },
-      }),
-    ),
+    recovery: vi.fn(async () => ({
+      available: true,
+      enabled: false,
+      active: false,
+      ssid: 'ma2pi-recovery',
+      password: 'ma2pi-recovery',
+      auto: true,
+      auto_triggered: false,
+      address: null,
+      url: 'http://192.168.50.1:8080/',
+      error: null,
+    })),
+    saveRecovery: vi.fn(async (settings: Record<string, unknown>) => ({
+      available: true,
+      enabled: Boolean(settings.enabled),
+      active: Boolean(settings.enabled),
+      ssid: String(settings.ssid),
+      password: String(settings.password),
+      auto: Boolean(settings.auto),
+      auto_triggered: false,
+      address: settings.enabled ? '192.168.50.1' : null,
+      url: 'http://192.168.50.1:8080/',
+      error: null,
+    })),
   } as unknown as ApiClient;
 }
 
@@ -248,22 +257,31 @@ describe('NetworkPage', () => {
     expect(screen.getByText(/zurückgerollt/)).toBeTruthy();
   });
 
-  it('requires confirmation before activating the emergency address', async () => {
+  it('configures the recovery hotspot', async () => {
     const api = fakeApi();
     render(NetworkPage, { props: { api } });
 
     await waitFor(() => {
-      expect(screen.getByText('192.168.10.50')).toBeTruthy();
+      expect(screen.getByText('Rettungs-WLAN')).toBeTruthy();
+      expect((screen.getByLabelText('SSID') as HTMLInputElement).value).toBe(
+        'ma2pi-recovery',
+      );
     });
-    await fireEvent.click(screen.getByText('Notfall-IP …'));
-    expect(screen.getByRole('dialog').textContent).toContain('192.168.178.254/24');
-    expect(api.emergencyNetwork).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByLabelText('Aktiv'));
+    await fireEvent.input(screen.getByLabelText('WLAN-Passwort'), {
+      target: { value: 'sicheres-passwort' },
+    });
+    await fireEvent.click(screen.getByText('Rettungs-WLAN speichern'));
 
-    await fireEvent.click(screen.getByText('Ja, Notfall-IP aktivieren'));
     await waitFor(() => {
-      expect(api.emergencyNetwork).toHaveBeenCalled();
+      expect(api.saveRecovery).toHaveBeenCalledWith({
+        enabled: true,
+        ssid: 'ma2pi-recovery',
+        password: 'sicheres-passwort',
+        auto: true,
+      });
     });
-    expect(screen.getByText(/Notfall-Adresse 192.168.178.254\/24 ist aktiv/)).toBeTruthy();
+    expect(screen.getByText('Rettungs-WLAN aktiv: ma2pi-recovery')).toBeTruthy();
   });
 
   it('warns when the change affects the current browser connection', async () => {

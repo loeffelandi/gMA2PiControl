@@ -9,6 +9,7 @@
     type NetworkMode,
     type NetworkPending,
     type NetworkStatus,
+    type RecoveryStatus,
   } from './api';
   import type { StatusStore } from './status';
 
@@ -30,9 +31,15 @@
   let gateway = $state('');
   let dns = $state('');
   let dialogOpen = $state(false);
-  let emergencyConfirm = $state(false);
   let targetUrl = $state<string | null>(null);
   let now = $state(Date.now());
+  let recovery = $state<RecoveryStatus | null>(null);
+  let recoveryEnabled = $state(false);
+  let recoverySsid = $state('ma2pi-recovery');
+  let recoveryPassword = $state('');
+  let recoveryAuto = $state(true);
+  let recoveryInitialized = $state(false);
+  let recoveryMessage = $state<string | null>(null);
 
   function errorText(value: unknown): string {
     if (value instanceof ApiError) return value.detail || value.message;
@@ -95,8 +102,46 @@
     }
   }
 
+  async function loadRecovery(): Promise<void> {
+    try {
+      const next = await api.recovery();
+      recovery = next;
+      if (!recoveryInitialized) {
+        recoveryEnabled = next.enabled;
+        recoverySsid = next.ssid;
+        recoveryPassword = next.password;
+        recoveryAuto = next.auto;
+        recoveryInitialized = true;
+      }
+    } catch (value) {
+      recoveryMessage = errorText(value);
+    }
+  }
+
+  async function saveRecovery(): Promise<void> {
+    busy = true;
+    recoveryMessage = null;
+    try {
+      const next = await api.saveRecovery({
+        enabled: recoveryEnabled,
+        ssid: recoverySsid.trim(),
+        password: recoveryPassword,
+        auto: recoveryAuto,
+      });
+      recovery = next;
+      recoveryMessage = next.active
+        ? `Rettungs-WLAN aktiv: ${next.ssid}`
+        : 'Rettungs-WLAN ist aus.';
+    } catch (value) {
+      recoveryMessage = errorText(value);
+    } finally {
+      busy = false;
+    }
+  }
+
   onMount(() => {
     void load(true);
+    void loadRecovery();
     const ticker = setInterval(() => {
       now = Date.now();
     }, 1000);
@@ -196,25 +241,6 @@
     error = null;
     try {
       const next = await api.rollbackNetwork();
-      status = next;
-      pending = next.pending;
-      lastResult = next.last_result;
-      message = null;
-      initialized = false;
-      applyForm(next);
-    } catch (value) {
-      error = errorText(value);
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function emergency(): Promise<void> {
-    emergencyConfirm = false;
-    busy = true;
-    error = null;
-    try {
-      const next = await api.emergencyNetwork();
       status = next;
       pending = next.pending;
       lastResult = next.last_result;
@@ -375,9 +401,6 @@
             >
               Zurückrollen
             </button>
-            <button type="button" onclick={() => (emergencyConfirm = true)} disabled={busy}>
-              Notfall-IP …
-            </button>
           </div>
           <p class="hint">
             Öffne die Ziel-Adresse in einem neuen Tab und melde dich dort erneut mit
@@ -455,9 +478,6 @@
           <div class="actions">
             <button type="button" onclick={preview} disabled={busy}>Vorschau</button>
             <button type="button" onclick={openDialog} disabled={busy}>Anwenden …</button>
-            <button type="button" onclick={() => (emergencyConfirm = true)} disabled={busy}>
-              Notfall-IP …
-            </button>
           </div>
         </form>
       {/if}
@@ -478,26 +498,65 @@
     {/if}
   {/if}
 
-  {#if emergencyConfirm}
-    <div class="network-dialog" role="dialog" aria-modal="true" aria-labelledby="network-emergency-title">
-      <h2 id="network-emergency-title">Notfall-Adresse aktivieren?</h2>
-      <p>
-        Die Schnittstelle erhält <strong>192.168.178.254/24</strong>, ohne
-        Gateway und ohne DNS. Eine offene Änderung wird dabei beendet.
+  {#if recovery}
+    <section class="network-pending">
+      <h2>Rettungs-WLAN</h2>
+      <p class="muted">
+        Der Pi spannt bei Bedarf einen eigenen Hotspot auf. Er ist unter
+        <strong>{recovery.url}</strong> erreichbar; die Oberfläche bleibt durch
+        die PIN geschützt.
       </p>
-      <p>
-        Der Client braucht für den Zugriff eine Adresse aus
-        <code>192.168.178.0/24</code>. Die Adresse muss im Netz frei sein.
-      </p>
-      <div class="actions">
-        <button type="button" onclick={emergency} disabled={busy}>
-          Ja, Notfall-IP aktivieren
-        </button>
-        <button type="button" onclick={() => (emergencyConfirm = false)} disabled={busy}>
-          Abbrechen
-        </button>
-      </div>
-    </div>
+      {#if !recovery.available}
+        <p class="error">
+          {recovery.error ?? 'Keine WLAN-Schnittstelle verfügbar.'}
+        </p>
+      {:else}
+        {#if recovery.active}
+          <p class="message" role="status">
+            Aktiv: <strong>{recovery.ssid}</strong>
+            {#if recovery.address} · {recovery.address}{/if}
+          </p>
+        {/if}
+        {#if recovery.auto_triggered}
+          <p class="hint">Automatisch wegen fehlender LAN-Verbindung aktiviert.</p>
+        {/if}
+        <form class="form network-form" onsubmit={(event) => event.preventDefault()}>
+          <label for="recovery-enabled">Aktiv</label>
+          <input id="recovery-enabled" type="checkbox" bind:checked={recoveryEnabled} />
+
+          <label for="recovery-ssid">SSID</label>
+          <input id="recovery-ssid" bind:value={recoverySsid} autocomplete="off" />
+
+          <label for="recovery-password">WLAN-Passwort</label>
+          <input
+            id="recovery-password"
+            bind:value={recoveryPassword}
+            autocomplete="new-password"
+          />
+          <p class="hint">8 bis 63 Zeichen; das Standardpasswort sollte geändert werden.</p>
+
+          <label for="recovery-auto">Automatik</label>
+          <input id="recovery-auto" type="checkbox" bind:checked={recoveryAuto} />
+          <p class="hint">
+            Nach 60 Sekunden ohne nutzbares LAN automatisch einschalten und nach
+            stabiler LAN-Rückkehr wieder ausschalten.
+          </p>
+
+          <div class="actions">
+            <button type="button" onclick={saveRecovery} disabled={busy}>
+              Rettungs-WLAN speichern
+            </button>
+          </div>
+        </form>
+        <p class="hint">
+          Beim Aktivieren wird die bestehende WLAN-Verbindung auf <code>wlan0</code>
+          getrennt. Das ist für den Rettungszugang beabsichtigt.
+        </p>
+        {#if recoveryMessage}
+          <p class="message" role="status">{recoveryMessage}</p>
+        {/if}
+      {/if}
+    </section>
   {/if}
 
   {#if dialogOpen}

@@ -121,6 +121,26 @@ export interface NetworkApplyResult {
   target_url: string | null;
 }
 
+export interface RecoveryStatus {
+  available: boolean;
+  enabled: boolean;
+  active: boolean;
+  ssid: string;
+  password: string;
+  auto: boolean;
+  auto_triggered: boolean;
+  address: string | null;
+  url: string;
+  error: string | null;
+}
+
+export interface RecoverySettings {
+  enabled: boolean;
+  ssid: string;
+  password: string;
+  auto: boolean;
+}
+
 export interface Ma2Config {
   host: string;
   port: number;
@@ -267,8 +287,12 @@ export class ApiClient {
     return this.request<NetworkStatus>('POST', '/api/network/rollback', {});
   }
 
-  emergencyNetwork(): Promise<NetworkStatus> {
-    return this.request<NetworkStatus>('POST', '/api/network/emergency', {});
+  recovery(): Promise<RecoveryStatus> {
+    return this.request<RecoveryStatus>('GET', '/api/recovery');
+  }
+
+  saveRecovery(settings: RecoverySettings): Promise<RecoveryStatus> {
+    return this.request<RecoveryStatus>('PUT', '/api/recovery', settings);
   }
 
   authStatus(): Promise<AuthStatus> {

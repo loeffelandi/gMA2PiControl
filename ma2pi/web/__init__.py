@@ -32,6 +32,7 @@ from ..network import (
     NoPending as NetworkNoPending,
     PendingExists as NetworkPendingExists,
 )
+from ..recovery import RecoveryError, RecoveryService, RecoveryValidationError
 from ..runtime import ApplyBusy, ConfigStore
 from .devices import detect_devices
 from .events import EventBus, events_handler
@@ -54,6 +55,7 @@ CONFIG_KEY: web.AppKey[AppConfig] = web.AppKey("config", AppConfig)
 CONFIG_STORE_KEY: web.AppKey[ConfigStore] = web.AppKey("config_store", ConfigStore)
 LEARN_KEY: web.AppKey[LearnManager] = web.AppKey("learn", LearnManager)
 NETWORK_KEY: web.AppKey[NetworkService] = web.AppKey("network", NetworkService)
+RECOVERY_KEY: web.AppKey[RecoveryService] = web.AppKey("recovery", RecoveryService)
 DIST_KEY: web.AppKey[Path] = web.AppKey("dist_dir", Path)
 BUS_KEY: web.AppKey[EventBus] = web.AppKey("bus", EventBus)
 PIN_TOKENS_KEY: web.AppKey[set[str]] = web.AppKey("pin_tokens", set[str])
@@ -208,6 +210,7 @@ def create_app(
     devices_provider: Callable[[], list[dict[str, Any]]] | None = None,
     learn_manager: LearnManager | None = None,
     network_service: NetworkService | None = None,
+    recovery_service: RecoveryService | None = None,
 ) -> web.Application:
     """Build the aiohttp application for the configuration UI."""
     dist = Path(dist_dir) if dist_dir is not None else DEFAULT_DIST
@@ -226,6 +229,10 @@ def create_app(
         app[NETWORK_KEY] = network_service
         if network_service.publish is None:
             network_service.publish = bus.publish
+    if recovery_service is not None:
+        app[RECOVERY_KEY] = recovery_service
+        if recovery_service.publish is None:
+            recovery_service.publish = bus.publish
 
     async def auth_status(request: web.Request) -> web.Response:
         current = _current_config(request.app)
@@ -511,14 +518,28 @@ def create_app(
         except Exception as exc:
             return _network_error(exc)
 
-    async def emergency_network(request: web.Request) -> web.Response:
-        service = request.app.get(NETWORK_KEY)
+    async def get_recovery(request: web.Request) -> web.Response:
+        service = request.app.get(RECOVERY_KEY)
         if service is None:
-            return _json_error(503, "network_unavailable", "Netzwerkverwaltung nicht aktiv")
+            return _json_error(503, "recovery_unavailable", "Rettungs-WLAN nicht aktiv")
+        return web.json_response(await service.status())
+
+    async def put_recovery(request: web.Request) -> web.Response:
+        service = request.app.get(RECOVERY_KEY)
+        if service is None:
+            return _json_error(503, "recovery_unavailable", "Rettungs-WLAN nicht aktiv")
+        body = await _json_body(request)
+        if body is None:
+            return _json_error(400, "invalid_json", "JSON-Objekt erwartet")
         try:
-            return web.json_response(await service.emergency(local_ip=_local_ip(request)))
+            return web.json_response(await service.save(body))
+        except RecoveryValidationError as exc:
+            return web.json_response(
+                {"error": "validation_error", "field": exc.field, "detail": exc.message},
+                status=422,
+            )
         except Exception as exc:
-            return _network_error(exc)
+            return _json_error(500, "recovery_failed", str(exc))
 
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/version", version)
@@ -542,7 +563,8 @@ def create_app(
     app.router.add_put("/api/network", apply_network)
     app.router.add_post("/api/network/confirm", confirm_network)
     app.router.add_post("/api/network/rollback", rollback_network)
-    app.router.add_post("/api/network/emergency", emergency_network)
+    app.router.add_get("/api/recovery", get_recovery)
+    app.router.add_put("/api/recovery", put_recovery)
 
     _mount_static(app, dist)
     return app

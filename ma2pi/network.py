@@ -358,6 +358,8 @@ class PendingChange:
     deadline: float | None = None
     target_url: str | None = None
     error: str | None = None
+    previous_profile_uuid: str | None = None
+    previous_profile_name: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -373,6 +375,8 @@ class PendingChange:
             "phase": self.phase,
             "target_url": self.target_url,
             "error": self.error,
+            "previous_profile_uuid": self.previous_profile_uuid,
+            "previous_profile_name": self.previous_profile_name,
         }
 
     @classmethod
@@ -393,6 +397,16 @@ class PendingChange:
             deadline=float(deadline) if deadline is not None else None,
             target_url=str(data["target_url"]) if data.get("target_url") else None,
             error=str(data["error"]) if data.get("error") else None,
+            previous_profile_uuid=(
+                str(data["previous_profile_uuid"])
+                if data.get("previous_profile_uuid")
+                else None
+            ),
+            previous_profile_name=(
+                str(data["previous_profile_name"])
+                if data.get("previous_profile_name")
+                else None
+            ),
         )
 
     def to_api(self) -> dict[str, Any]:
@@ -638,6 +652,51 @@ class NetworkManagerBackend:
         text = await self._run(*args)
         return [split_terse(line) for line in _lines(text)]
 
+    async def _profile_fields(
+        self, name: str, uuid: str, *, created: bool = False
+    ) -> ProfileInfo:
+        method = _first(
+            await self._values("ipv4.method", "connection", "show", "uuid", uuid)
+        ) or "auto"
+        addresses = _split_values(
+            await self._values("ipv4.addresses", "connection", "show", "uuid", uuid)
+        )
+        gateway = _first(
+            await self._values("ipv4.gateway", "connection", "show", "uuid", uuid)
+        ) or ""
+        dns = _split_values(
+            await self._values("ipv4.dns", "connection", "show", "uuid", uuid)
+        )
+        ignore_auto_dns = (
+            _first(
+                await self._values(
+                    "ipv4.ignore-auto-dns", "connection", "show", "uuid", uuid
+                )
+            )
+            == "yes"
+        )
+        return ProfileInfo(
+            uuid=uuid,
+            name=name,
+            method=method,
+            addresses=addresses,
+            gateway=gateway,
+            dns=dns,
+            ignore_auto_dns=ignore_auto_dns,
+            created=created,
+        )
+
+    async def profile_by_name(self, name: str) -> ProfileInfo | None:
+        rows = await self._connection_rows(active=False)
+        for row in rows:
+            if (
+                len(row) >= 4
+                and row[0] == name
+                and row[2] in {"802-3-ethernet", "ethernet"}
+            ):
+                return await self._profile_fields(row[0], row[1])
+        return None
+
     async def read_profile(self, interface: str) -> ProfileInfo | None:
         rows = await self._connection_rows(active=True)
         chosen: list[str] | None = None
@@ -672,34 +731,7 @@ class NetworkManagerBackend:
                         break
         if chosen is None:
             return None
-        name, uuid, _, _ = chosen[0], chosen[1], chosen[2], chosen[3]
-        method = _first(await self._values("ipv4.method", "connection", "show", "uuid", uuid)) or "auto"
-        addresses = _split_values(
-            await self._values("ipv4.addresses", "connection", "show", "uuid", uuid)
-        )
-        gateway = _first(
-            await self._values("ipv4.gateway", "connection", "show", "uuid", uuid)
-        ) or ""
-        dns = _split_values(
-            await self._values("ipv4.dns", "connection", "show", "uuid", uuid)
-        )
-        ignore_auto_dns = (
-            _first(
-                await self._values(
-                    "ipv4.ignore-auto-dns", "connection", "show", "uuid", uuid
-                )
-            )
-            == "yes"
-        )
-        return ProfileInfo(
-            uuid=chosen[1],
-            name=name,
-            method=method,
-            addresses=addresses,
-            gateway=gateway,
-            dns=dns,
-            ignore_auto_dns=ignore_auto_dns,
-        )
+        return await self._profile_fields(chosen[0], chosen[1])
 
     async def current_values(
         self, interface: str, profile: ProfileInfo | None
@@ -808,17 +840,60 @@ class NetworkManagerBackend:
             name,
             "autoconnect",
             "no",
+            "connection.autoconnect-priority",
+            "100",
             "ipv4.method",
             "auto",
         )
-        uuid = _first(
-            await self._values("UUID", "connection", "show", "id", name)
-        )
-        if not uuid:
+        profile = await self.profile_by_name(name)
+        if profile is None:
             raise NetworkError("Neues Netzwerkprofil hat keine UUID")
         return ProfileInfo(
-            uuid=uuid, name=name, method="auto", created=True
+            uuid=profile.uuid,
+            name=profile.name,
+            method=profile.method,
+            addresses=profile.addresses,
+            gateway=profile.gateway,
+            dns=profile.dns,
+            ignore_auto_dns=profile.ignore_auto_dns,
+            created=True,
         )
+
+    async def ensure_managed_profile(self, interface: str) -> ProfileInfo:
+        """Return the persistent ma2pi profile, creating it if needed.
+
+        OS-managed profiles (netplan, distribution defaults) are never modified:
+        netplan can regenerate or remove them on reload.  A dedicated profile
+        with a higher autoconnect priority keeps the UI change stable.
+        """
+        name = f"ma2pi-{interface}"
+        existing = await self.profile_by_name(name)
+        if existing is not None:
+            return existing
+        return await self.create_profile(interface)
+
+    async def activate_profile(self, uuid: str) -> None:
+        await self._run("connection", "up", "uuid", uuid, timeout=30.0)
+
+    async def deactivate_profile(self, uuid: str) -> None:
+        try:
+            await self._run("connection", "down", "uuid", uuid, timeout=15.0)
+        except NetworkError:
+            # Already inactive is the normal case during rollback.
+            pass
+
+    async def set_autoconnect(self, uuid: str, enabled: bool) -> None:
+        await self._run(
+            "connection",
+            "modify",
+            "uuid",
+            uuid,
+            "connection.autoconnect",
+            "yes" if enabled else "no",
+        )
+
+    async def delete_profile(self, uuid: str) -> None:
+        await self._run("connection", "delete", "uuid", uuid)
 
     async def stage(self, candidate: Candidate, profile: ProfileInfo) -> None:
         await self._run(
@@ -832,14 +907,16 @@ class NetworkManagerBackend:
         await self._run("connection", "up", "uuid", profile.uuid, timeout=30.0)
 
     async def persist(self, candidate: Candidate, profile: ProfileInfo) -> None:
-        extra = ["connection.autoconnect", "yes"] if profile.created else []
         await self._run(
             "connection",
             "modify",
             "uuid",
             profile.uuid,
             *self._candidate_args(candidate),
-            *extra,
+            "connection.autoconnect",
+            "yes",
+            "connection.autoconnect-priority",
+            "100",
         )
 
     async def restore(
@@ -1011,6 +1088,22 @@ class NetworkService:
             "warnings": [],
         }
 
+    async def wired_ok(self) -> bool:
+        """True when the managed wired interface has a usable IPv4 address."""
+        try:
+            status = await self._read_status()
+        except NetworkError:
+            return False
+        interface = status.get("interface") or {}
+        current = status.get("current") or {}
+        return bool(
+            status.get("available")
+            and interface.get("state") == "connected"
+            and current.get("address")
+            and current.get("address") != FALLBACK_ADDRESS
+            and status.get("mode") in {"dhcp", "static"}
+        )
+
     async def status(self, *, local_ip: str | None = None) -> dict[str, Any]:
         try:
             return await self._read_status(local_ip=local_ip)
@@ -1168,28 +1261,35 @@ class NetworkService:
                 if self._pending is not None:
                     raise PendingExists("Es wartet bereits eine Netzwerkänderung")
                 result = await self._validate_locked(payload, apply=True)
-                profile = result.profile
-                created_profile = False
-                if profile is None:
-                    profile = await self._backend.create_profile(result.interface.name)
-                    created_profile = True
+                active = result.profile
+                target = await self._backend.ensure_managed_profile(
+                    result.interface.name
+                )
+                same_profile = active is not None and active.uuid == target.uuid
+                previous = (
+                    active.raw
+                    if active is not None
+                    else RawIPv4()
+                )
                 pending = PendingChange(
                     interface=result.interface.name,
-                    profile_uuid=profile.uuid,
-                    profile_name=profile.name,
-                    created_profile=created_profile,
-                    previous=profile.raw if not created_profile else RawIPv4(),
+                    profile_uuid=target.uuid,
+                    profile_name=target.name,
+                    created_profile=target.created,
+                    previous=previous,
                     candidate=result.candidate,
                     started_at=self._clock(),
                     phase="activating",
                     target_url=result.target_url,
+                    previous_profile_uuid=None if same_profile else (active.uuid if active else None),
+                    previous_profile_name=None if same_profile else (active.name if active else None),
                 )
                 try:
                     self._store.save(pending)
                 except OSError as exc:
-                    if created_profile:
+                    if target.created:
                         with contextlib.suppress(Exception):
-                            await self._backend.restore(RawIPv4(), profile)
+                            await self._backend.delete_profile(target.uuid)
                     raise NetworkError(f"Pending-Zustand nicht schreibbar: {exc}") from exc
                 self._pending = pending
                 self._pending_error = None
@@ -1200,7 +1300,7 @@ class NetworkService:
                 )
                 self._emit()
                 self._apply_task = asyncio.create_task(
-                    self._activate(pending, profile), name="ma2pi-network-apply"
+                    self._activate(pending, target), name="ma2pi-network-apply"
                 )
                 return pending
         finally:
@@ -1326,38 +1426,6 @@ class NetworkService:
         )
         self._emit()
 
-    async def emergency(self, *, local_ip: str | None = None) -> dict[str, Any]:
-        """Apply the emergency address explicitly, ending any open change."""
-        async with self._lock:
-            info, profile, _ = await self._backend.discover()
-            if info is None:
-                raise NetworkValidationError(
-                    "interface", "keine kabelgebundene Schnittstelle gefunden"
-                )
-            if profile is None:
-                profile = await self._backend.create_profile(info.name)
-            candidate = fallback_candidate()
-            await self._backend.stage(candidate, profile)
-            temporary = False
-            try:
-                await self._backend.persist(candidate, profile)
-            except Exception as exc:
-                temporary = True
-                LOGGER.error("Notfall-Adresse nur temporär aktiv: %s", exc)
-            suffix = " (nur vorübergehend)" if temporary else ""
-            self._cancel_timer()
-            with contextlib.suppress(OSError):
-                self._store.clear()
-            self._pending = None
-            self._last_result = LastResult(
-                "fallback",
-                self._clock(),
-                f"Notfall-Adresse {FALLBACK_ADDRESS}/24 aktiv{suffix}",
-            )
-            LOGGER.warning("Notfall-Adresse %s/24 manuell aktiviert", FALLBACK_ADDRESS)
-            self._emit()
-        return await self.status(local_ip=local_ip)
-
     async def _rollback_locked(
         self,
         pending: PendingChange,
@@ -1371,6 +1439,58 @@ class NetworkService:
         with contextlib.suppress(OSError):
             self._store.save(pending)
         self._emit()
+        target = ProfileInfo(
+            uuid=pending.profile_uuid,
+            name=pending.profile_name,
+            method="manual" if pending.candidate.mode == "static" else "auto",
+            created=pending.created_profile,
+        )
+        if (
+            pending.previous_profile_uuid
+            and pending.previous_profile_uuid != pending.profile_uuid
+        ):
+            try:
+                await self._backend.activate_profile(pending.previous_profile_uuid)
+            except Exception as exc:
+                try:
+                    await self._apply_fallback_locked(
+                        pending, target, f"Rollback fehlgeschlagen: {exc}"
+                    )
+                except Exception as fallback_exc:
+                    pending.phase = "failed"
+                    pending.error = str(fallback_exc)
+                    with contextlib.suppress(OSError):
+                        self._store.save(pending)
+                    self._pending = pending
+                    self._last_result = LastResult(
+                        "failed",
+                        self._clock(),
+                        f"Rollback fehlgeschlagen: {exc}; Notfall-IP fehlgeschlagen: {fallback_exc}",
+                    )
+                    self._emit()
+                    raise NetworkError(
+                        f"Rollback und Notfall-IP fehlgeschlagen: {exc}; {fallback_exc}"
+                    ) from fallback_exc
+                return
+            try:
+                await self._backend.deactivate_profile(pending.profile_uuid)
+                if pending.created_profile:
+                    await self._backend.delete_profile(pending.profile_uuid)
+                else:
+                    await self._backend.set_autoconnect(pending.profile_uuid, False)
+            except Exception as exc:
+                LOGGER.warning(
+                    "Altes ma2pi-Profil konnte nicht entfernt werden: %s", exc
+                )
+            self._cancel_timer()
+            with contextlib.suppress(OSError):
+                self._store.clear()
+            self._pending = None
+            self._last_result = LastResult(status, self._clock(), detail)
+            LOGGER.warning("Netzwerkänderung zurückgerollt: %s", detail)
+            self._emit()
+            return
+
         profile = ProfileInfo(
             uuid=pending.profile_uuid,
             name=pending.profile_name,

@@ -179,7 +179,7 @@ Daemon die Standard-Notfall-Adresse `192.168.178.254` mit Maske
 `255.255.255.0` ohne Gateway und DNS anwenden. Kurze
 Verbindungsunterbrechungen MUST NOT einen sofortigen Rollback auslösen; ein
 Rollback erfolgt erst nach dem erfolglosen Bestätigungsfenster oder durch einen
-ausdrücklichen Notfallbefehl.
+Ausfall des Rollbacks.
 
 #### Scenario: Rollback schlägt fehl
 
@@ -190,11 +190,6 @@ ausdrücklichen Notfallbefehl.
 
 - **WHEN** die Verbindung nach dem Anwenden kurzzeitig abbricht, aber innerhalb des Bestätigungsfensters wieder bestätigt wird
 - **THEN** bleibt die neue Konfiguration aktiv und es findet kein Rollback statt
-
-#### Scenario: Manueller Notfallbefehl
-
-- **WHEN** der Benutzer die Notfall-Adresse ausdrücklich aktiviert
-- **THEN** wird `192.168.178.254/24` angewendet und eine offene Änderung beendet
 
 ### Requirement: Neustart während der offenen Änderung
 

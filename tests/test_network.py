@@ -238,6 +238,10 @@ async def test_persist_and_dhcp_arguments_are_deterministic():
         "",
         "ipv4.ignore-auto-dns",
         "no",
+        "connection.autoconnect",
+        "yes",
+        "connection.autoconnect-priority",
+        "100",
     )
 
 
@@ -284,10 +288,19 @@ async def test_create_profile_returns_created_flag():
                 "ma2pi-eth0",
                 "autoconnect",
                 "no",
+                "connection.autoconnect-priority",
+                "100",
                 "ipv4.method",
                 "auto",
             ): "",
-            ("-g", "UUID", "connection", "show", "id", "ma2pi-eth0"): "uuid-new\n",
+            ("-t", "-f", "NAME,UUID,TYPE,DEVICE", "connection", "show"): _status_rows(
+                "ma2pi-eth0:uuid-new:802-3-ethernet:"
+            ),
+            ("-g", "ipv4.method", "connection", "show", "uuid", "uuid-new"): "auto\n",
+            ("-g", "ipv4.addresses", "connection", "show", "uuid", "uuid-new"): "",
+            ("-g", "ipv4.gateway", "connection", "show", "uuid", "uuid-new"): "",
+            ("-g", "ipv4.dns", "connection", "show", "uuid", "uuid-new"): "",
+            ("-g", "ipv4.ignore-auto-dns", "connection", "show", "uuid", "uuid-new"): "no\n",
         }
     )
     backend = NetworkManagerBackend(runner)
@@ -399,13 +412,17 @@ class FakeBackend:
     def __init__(self) -> None:
         self.interface = InterfaceInfo("eth0", "ethernet", "connected", "Wired connection 1")
         self.profile: ProfileInfo | None = ProfileInfo(
-            "uuid-1", "Wired connection 1", "auto"
+            "uuid-1", "ma2pi-eth0", "auto"
         )
         self.current = CurrentIPv4()
         self.addresses: dict[str, str] = {}
         self.staged: list[Candidate] = []
         self.persisted: list[Candidate] = []
         self.restored: list[RawIPv4] = []
+        self.activated: list[str] = []
+        self.deactivated: list[str] = []
+        self.autoconnect: list[tuple[str, bool]] = []
+        self.deleted: list[str] = []
         self.fail_stage = False
         self.fail_restore = False
         self.assign_on_stage = True
@@ -422,6 +439,23 @@ class FakeBackend:
     async def create_profile(self, interface: str) -> ProfileInfo:
         self.profile = ProfileInfo("uuid-created", f"ma2pi-{interface}", "auto", created=True)
         return self.profile
+
+    async def ensure_managed_profile(self, interface: str) -> ProfileInfo:
+        if self.profile is None or self.profile.name != f"ma2pi-{interface}":
+            return await self.create_profile(interface)
+        return self.profile
+
+    async def activate_profile(self, uuid: str) -> None:
+        self.activated.append(uuid)
+
+    async def deactivate_profile(self, uuid: str) -> None:
+        self.deactivated.append(uuid)
+
+    async def set_autoconnect(self, uuid: str, enabled: bool) -> None:
+        self.autoconnect.append((uuid, enabled))
+
+    async def delete_profile(self, uuid: str) -> None:
+        self.deleted.append(uuid)
 
     async def stage(self, candidate: Candidate, profile: ProfileInfo) -> None:
         if self.fail_stage:
@@ -586,6 +620,25 @@ async def test_second_apply_is_rejected(tmp_path):
     await _wait_phase(service, "awaiting_confirmation")
 
 
+async def test_rollback_returns_to_existing_os_profile(tmp_path):
+    backend = FakeBackend()
+    backend.profile = ProfileInfo("uuid-netplan", "netplan-eth0", "auto")
+    service = _service(tmp_path, backend)
+    await service.apply(
+        {
+            "mode": "static",
+            "address": "192.168.10.50",
+            "subnet_mask": "255.255.255.0",
+        }
+    )
+    await _wait_phase(service, "awaiting_confirmation")
+    status = await service.rollback()
+    assert status["pending"] is None
+    assert "uuid-netplan" in backend.activated
+    assert "uuid-created" in backend.deleted
+    assert backend.restored == []
+
+
 async def test_timeout_rolls_back(tmp_path):
     backend = FakeBackend()
     service = _service(tmp_path, backend, confirm_timeout=0.05)
@@ -672,16 +725,6 @@ async def test_failed_rollback_falls_back_to_emergency_address(tmp_path):
     assert status["last_result"]["status"] == "fallback"
     assert backend.staged[-1].address == "192.168.178.254"
     assert backend.staged[-1].subnet_mask == "255.255.255.0"
-    assert backend.persisted[-1].address == "192.168.178.254"
-
-
-async def test_manual_emergency_address(tmp_path):
-    backend = FakeBackend()
-    service = _service(tmp_path, backend)
-    status = await service.emergency()
-    assert status["pending"] is None
-    assert status["last_result"]["status"] == "fallback"
-    assert status["current"]["address"] == "192.168.178.254"
     assert backend.persisted[-1].address == "192.168.178.254"
 
 
@@ -836,3 +879,17 @@ async def test_link_down_blocks_apply(tmp_path):
                 "subnet_mask": "255.255.255.0",
             }
         )
+
+
+async def test_wired_ok_is_false_on_emergency_address(tmp_path):
+    backend = FakeBackend()
+    backend.current = CurrentIPv4(
+        address="192.168.178.254", subnet_mask="255.255.255.0"
+    )
+    service = _service(tmp_path, backend)
+    assert await service.wired_ok() is False
+
+    backend.current = CurrentIPv4(
+        address="192.168.178.21", subnet_mask="255.255.255.0"
+    )
+    assert await service.wired_ok() is True
