@@ -89,7 +89,7 @@ sichtbare Farbe und Helligkeit.
   ASL, Modus-, Fine- und Nipple-LED funktionieren, ENC zeigt bei laufendem
   Executor die Appearance-Farbe hell. Verifikation: Journal-Auszug und
   Beobachtung im Design.
-- [ ] 6.3 Live-Test mit onPC und ENC (übernommen aus
+- [x] 6.3 Live-Test mit onPC und ENC (übernommen aus
   `add-midicraft-led-feedback` Task 6.2): Exec 1–5 und Floating-Exec 101–105
   starten/stoppen, Buttons 2/3 der Exec 1–5 auslösen und Appearance-Farben
   ändern; LEDs folgen innerhalb von zwei Intervallen, auch nach einem
@@ -97,7 +97,9 @@ sichtbare Farbe und Helligkeit.
 
 ## 7. Befunde aus dem Live-Test
 
-- [ ] 7.1 `Ma2Client` meldet Zeitpunkt der letzten Live-Aktion und ob eine
+- [x] 7.1 ENTFÄLLT (2026-11-27, Entscheidung des Betreibers, Design D7): nie
+  umgesetzt, Requirement aus der Spec entfernt. Ursprünglich: `Ma2Client` meldet
+  Zeitpunkt der letzten Live-Aktion und ob eine
   Live-Aktion wartet; `ExecutorFeedback` überspringt Abfragen, solange eine
   wartet oder die letzte < 300 ms her ist. Verifikation:
   `tests/test_feedback.py` (Fake-Client: keine Abfrage während Bewegung,
@@ -108,8 +110,9 @@ sichtbare Farbe und Helligkeit.
   `[led]`-Noten ausgenommen. Verifikation: `tests/test_feedback.py` —
   unbelegte ENC-Taste erhält Velocity 0, entferntes Ziel geht aus, ASL-Note 9
   mit `[led]` bleibt unberührt.
-- [ ] 7.3 README-Abschnitt `[feedback]` um beide Verhaltensweisen ergänzen.
-  Verifikation: README nennt die 300 ms und das Ausschalten unbelegter Tasten.
+- [x] 7.3 README-Abschnitt `[feedback]` ergänzen: Ausschalten unbelegter Tasten
+  (ohne die gestrichenen 300 ms). Verifikation: README nennt das Ausschalten
+  unbelegter Tasten und die Notenbelegung je Bank.
 - [x] 7.5 CTO/CTB nehmen am Farbabstand teil (Bezugswerte `#ffc882`,
   `#c8e1ff`); `#ffffff` bleibt weiß. Verifikation: `tests/test_feedback.py` —
   `#ffe0b0` → CTO, `#c0e0ff` → CTB, `#ffffff` → weiß, Grundfarben unverändert;
@@ -120,9 +123,27 @@ sichtbare Farbe und Helligkeit.
   Exec 103–115 leer, 101/102 belegt; breiter Executor in
   `page3_fader_wide_exec6.json` bleibt belegt; Ziel auf leerem Executor
   erhält Velocity 0.
-- [ ] 7.4 Deploy auf den Pi und 6.3 wiederholen: Fader laufen bei aktivem
-  Feedback flüssig, unbelegte Tasten sind dunkel. Verifikation: Betreiber
-  bestätigt, Journal ohne Stau-Warnung.
+- [x] 7.4 Deploy auf den Pi und 6.3 wiederholen: unbelegte Tasten sind dunkel,
+  Journal ohne Stau-Warnung (Betreiber bestätigt am 2026-11-27, siehe Design,
+  Live-Test). Die Aussage zu flüssigen Fadern entfällt mit 7.1.
+
+## 8. Bänke und Auffrischen (2026-11-27)
+
+- [x] 8.1 `led_notes_by_bank` in `ma2pi/feedback.py`: LED-fähige Controls aus Bank 1,
+  je Bank auf deren Noten abgebildet; `build_feedback_targets` und
+  `build_dark_leds` nutzen es. Verifikation:
+  `test_other_banks_use_their_own_notes_for_the_led_controls`.
+- [x] 8.2 Mitschnitt des ENC beim Bankwechsel (90 s, Dienst gestoppt): nur Note-On/Off
+  auf Kanal 1–3, kein Program Change, kein Control Change. Verifikation: Design D10.
+- [x] 8.3 `refresh_interval_ms` (`0` oder 200–60000) in `LedFeedbackProfile`,
+  Parser, Serialisierer und `config.toml` (ENC: 1500); `_queue_refresh` sendet
+  kanalweise reihum. Verifikation: `test_refresh_resends_one_bank_channel_per_turn`,
+  `test_refresh_zero_turns_it_off`, Konfigurationstests.
+- [x] 8.4 `_apply` verwirft einen eingereihten Frame nur noch, wenn sein Zustand vom
+  Poll-Ergebnis abweicht. Verifikation:
+  `test_poll_answer_does_not_cancel_a_queued_refresh` schlägt ohne die Korrektur fehl.
+- [x] 8.5 README und Hardware-Abnahme am ENC: Farben aller Bänke nach dem Bankwechsel
+  ohne Aus- und Wiedereinschalten (Betreiber bestätigt, 2026-11-27).
 
 ## Workflow follow-up
 

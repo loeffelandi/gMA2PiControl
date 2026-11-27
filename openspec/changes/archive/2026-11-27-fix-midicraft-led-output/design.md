@@ -240,7 +240,30 @@ sondern die Kodierung angepasst; das wäre ein Folge-Change an
    dauerhafte Eingabe über 10 Minuten.
 5. Rollback: `enabled = false` im Profil beziehungsweise global.
 
+## Abnahme 2026-11-27
+
+Das ENC bekommt Feedback mit `frame_interval_ms = 20`, 45 LEDs (3 Bänke) und
+periodischem Auffrischen. Die Eingabe läuft weiter, die Ausgabe wird nicht
+gestaut, ein Dienstneustart dauert 0,36 s (zuvor 28–56 s). Nach dem letzten
+Wiederöffnen des ENC (01:13:28) blieb das Kernel-Log 15 Minuten ohne
+`urb status -32` und ohne Disconnect.
+
+**Offener Befund:** Das ENC verschwindet vom USB-Bus, jeweils nach einer
+Stall-Welle (`urb status -32`, bis zu mehreren tausend Zeilen) und mit
+anschließender Neu-Enumeration: 2026-11-26 20:30, 20:33, 20:35, 20:44, 21:59,
+22:37, 22:39, 23:17, 23:59 und 2026-11-27 01:13. Das Executor-Feedback des ENC lief nur
+23:05–23:15 und ab 01:06; bei den Ereignissen um 20:30–22:39 und 23:59 war es
+aus (`enabled = false`), 23:17 folgte einem Neustart ohne Feedback kurz nach der
+Feedback-Phase, 01:13 lag nach dem Einschalten. Die Stalls sind damit nicht
+allein durch LED-Ausgabe erklärbar. Die Hypothese H3 (anderer USB-Port bzw. Hub) bleibt ungeprüft und
+wäre ein eigener Change.
+
 ## Open Questions
+
+Alle drei Fragen wurden durch den Betrieb beantwortet: 20 ms sind stabil
+(kleinere Abstände ungeprüft), der Status-ioctl wird für die Stau-Erkennung
+genutzt, und die RGB-Noten 65–69, 75–79, 80–84 gelten je Bank auf deren
+Kanal. Die ursprüngliche Liste bleibt zur Nachvollziehbarkeit:
 
 - Welcher Mindestabstand ist am ENC stabil (1, 5, 20, 50 ms)? Antwort aus der
   Messung.

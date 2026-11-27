@@ -89,7 +89,7 @@ class FakeMidi:
 
 
 def _enable_enc_leds(data: dict) -> None:
-    # The shipped example keeps the ENC LEDs off until they are measured.
+    # Explicit, so the tests do not depend on the shipped default.
     data["profiles"]["midicraft-enc"]["led_feedback"]["enabled"] = True
     # These tests cover the LED path alone; polling every playback target for
     # the executor topology is tested in test_poller.py.

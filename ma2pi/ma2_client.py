@@ -1142,6 +1142,12 @@ class Ma2Client:
         if "keyname" in frame:
             fields["keyname"] = frame["keyname"]
             fields["value"] = frame["value"]
+        if frame.get("requestType") == "playbacks_userInput":
+            # Which executor was really addressed; the covered-slot redirect
+            # and the bank offset are only visible here.
+            fields["execIndex"] = frame.get("execIndex")
+            fields["pageIndex"] = frame.get("pageIndex")
+            fields["buttonId"] = frame.get("buttonId")
         if "name" in frame:
             fields["name"] = frame["name"]
             if "value" in frame:

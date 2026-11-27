@@ -333,6 +333,8 @@ def test_fixed_leds_and_feedback_share_one_asl_device(make_config):
             "protocol": "asl-mk2",
             "led_notes": [10],
         }
+        # Only the ASL is under test; the ENC would send on its own device.
+        data["profiles"]["midicraft-enc"]["led_feedback"]["enabled"] = False
         data["mapping"]["playbacks"]["asl_button_2"] = {
             "page": "current",
             "executor": 1,

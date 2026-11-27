@@ -30,8 +30,9 @@ ein Gerät, das nichts mehr abnimmt, wird weiter beschrieben.
 ## What Changes
 
 - **Feedback je Gerät schaltbar**: `[profiles.<id>.led_feedback]` bekommt
-  `enabled` (Default `true`). Die ausgelieferte Konfiguration setzt es für
-  `midicraft-enc` auf `false`, bis die Messung am Gerät bestanden ist.
+  `enabled` (Default `true`). Die ausgelieferte Konfiguration setzte es für
+  `midicraft-enc` zunächst auf `false`, bis die Messung am Gerät bestanden ist;
+  seit der Abnahme am 2026-11-27 steht es auf `true`.
 - **Getaktete LED-Ausgabe**: Frames je Gerät werden mit Mindestabstand
   (`frame_interval_ms`, Default 20 ms) gesendet. Offene Frames werden je LED
   zusammengefasst, der Startzustand wird so über mehrere Takte verteilt.
@@ -47,8 +48,8 @@ ein Gerät, das nichts mehr abnimmt, wird weiter beschrieben.
   Einzel-Frames mit Pause gesendet, die Eingabe dazwischen geprüft und das
   Kernel-Log mitgelesen. Das Ergebnis entscheidet, ob und mit welchem Intervall
   der ENC Feedback bekommt und ob `midicraft-v2` angepasst werden muss.
-- **Nicht enthalten**: Bank-Kanal und Bank-Offset der LED-Frames (Feedback sendet
-  weiter fest auf Kanal 1), Backoff-Obergrenze beim Öffnen (derzeit bis 60 s),
+- **Nicht enthalten**: Bank-Kanal und Bank-Offset der LED-Frames (kamen später mit
+  `add-per-device-led-protocols`, Gruppe 8), Backoff-Obergrenze beim Öffnen (derzeit bis 60 s),
   Änderungen am USB-/Hub-Aufbau. Ebenfalls nicht enthalten: die Korrektur der
   Velocity-Tabelle. Das mitgelieferte Midicraft-Plugin nutzt hell = 17 + Farbe
   und 15 Farben, `midicraft-v2` hell = 15 + Farbe und 13 Farben; welches Layout

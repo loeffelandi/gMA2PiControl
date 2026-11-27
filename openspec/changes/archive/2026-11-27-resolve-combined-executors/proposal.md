@@ -87,3 +87,14 @@ Topologie-Auswertung und wird hier mit geklärt.
 - Nicht Teil dieser Änderung: Anzeige der Diagnose in der Web-Oberfläche,
   automatisches Umschreiben der Konfiguration, Umleiten von Zielen in der
   Fader-Ansicht.
+
+## Nachtrag 2026-11-27
+
+Mit `add-midi-remote-executors` laufen Executor-Tasten standardmäßig als
+MIDI-Noten an MA-MIDI-Remotes. Solche Ziele werden **nicht** umgeleitet; die MA
+behandelt einen verdeckten Slot wie eine Konsolentaste (gemessen). Das ENC-
+Beispiel aus „Why“ (`mc_row3_5` in Bank 3 auf Exec 115) trifft die Umleitung
+deshalb nur noch mit `transport = "web"`. Relevant bleiben für alle Ziele die
+LED-Farbe des überdeckten Slots (Spiegelung des führenden Executors) und die
+Diagnose nicht vorhandener Ziele, für Web-Ziele zusätzlich die Umleitung. Die
+Abnahme am ENC-Gerät (Task 7.2) entfällt aus diesem Grund.

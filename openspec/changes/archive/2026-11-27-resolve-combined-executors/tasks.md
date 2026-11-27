@@ -98,13 +98,14 @@
 ## 7. Abnahme
 
 - [x] 7.1 `pytest` komplett ausführen. Verifizieren: grün, keine neuen Warnungen.
-- [ ] 7.2 Hardware-Abnahme am MIDICRAFT ENC: Bank 3 `mc_row3_5` löst Exec 114
-  (Page 2) aus, Frame-Log zeigt `execIndex = 113`, `buttonId = 0`;
-  `combined_executors = "off"` zeigt wieder `execIndex = 114`. Ergebnis in
-  `verification.md` festhalten. Verifizieren: Frame-Log-Auszug beider Läufe im
-  Protokoll.
-  Stand: Teil gegen die echte MA mit den echten Klassen erledigt (siehe
-  `verification.md`, 7.2); offen ist nur der Lauf am ENC-Gerät.
+- [x] 7.2 Abnahme: Bank 3 `mc_row3_5` löst Exec 114 (Page 2) aus, Frame mit
+  `execIndex = 113`, `buttonId = 0`; mit `combined_executors = "off"` wieder
+  `execIndex = 114`. Erledigt gegen die echte MA mit den echten Klassen (siehe
+  `verification.md`, 7.2). Der Lauf am ENC-Gerät entfällt (2026-11-27,
+  Entscheidung des Betreibers): ENC-Tasten laufen jetzt über MIDI-Remotes und
+  werden nicht umgeleitet; die Umleitung betrifft nur Ziele mit
+  `transport = "web"`. Der Daemon loggt dazu `execIndex`, `pageIndex` und
+  `buttonId` der Playback-Frames.
 
 ## Workflow follow-up
 

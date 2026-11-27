@@ -123,5 +123,6 @@ Wirkung an der Konsole (Floating-Exec 114 "Profile Pos", Cue-Liste vorher
 Die Show wurde dabei verändert: Exec 114 steht durch die Abnahmeläufe ein paar
 Cues weiter als vorher.
 
-Offen bleibt die Abnahme am ENC selbst (Bank 3, `mc_row3_5` mit der echten
-Bank-Zuordnung).
+Die Abnahme am ENC selbst (Bank 3, `mc_row3_5`) entfällt (2026-11-27): Die
+ENC-Tasten gehen jetzt über MIDI-Remotes (ADR 0024) und werden dabei nicht
+umgeleitet; die Umleitung gilt für Ziele mit `transport = "web"`.

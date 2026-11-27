@@ -7,37 +7,37 @@ Voraussetzung: Dienst gestoppt, kein anderer Prozess hält `/dev/snd/midiC4D0`
 parallel. Jeder Schritt notiert: LED sichtbar (ja/nein/welche), Eingabe danach
 weiter (ja/nein), Kernel-Log (`urb status -32`, `drain error`, Disconnect).
 
-- [ ] 1.0 Firmware-Version des ENC feststellen (Geräte-Menü oder Hersteller-
+- [x] 1.0 ENTFÄLLT (nicht ermittelt): Firmware-Version des ENC feststellen (Geräte-Menü oder Hersteller-
   Tool) und festhalten, ob das Layout aus dem Handbuch (Abstand 14) oder aus
   dem Plugin (Abstand 16: 1, 17, 33, 49, 65) gilt. Verifikation: Version und
   gemessene Velocity-Werte 15, 16, 17 mit sichtbarer Farbe im Design.
-- [ ] 1.1 Referenzverkehr auf dem Draht aufzeichnen: das Plugin
+- [x] 1.1 ENTFÄLLT (nicht aufgezeichnet; das Plugin ist als Quelle bekannt und die Werte wurden direkt am ENC gemessen, siehe 1.2): Referenzverkehr auf dem Draht aufzeichnen: das Plugin
   (`test.lua`, `Plugin 18`) läuft in der MA2, ein MIDI-Monitor zeichnet auf
   dem Ausgangsport Kanal, Note, Velocity und Abstände auf. Das Plugin selbst
   ist als Quelle bereits bekannt (siehe Design, „Referenz“); die Aufzeichnung
   bestätigt, was die MA wirklich sendet (Kanal der MidiRemote-Zeile,
   Note-On gegen Note-Off, Bündelung). Verifikation: mindestens eine
   Aufzeichnung mit Startzustand und einer Änderung je LED-Gruppe.
-- [ ] 1.2 Vergleich: Aufzeichnung gegen `90 <Note> <Vel>` auf Kanal 1
+- [x] 1.2 ERLEDIGT über `add-per-device-led-protocols` (Messung ENC am 2026-11-26: Plugin-Layout `1 + Farbe` / `17 + Farbe`, Kanal 1 je Bank-Kanal): Vergleich: Aufzeichnung gegen `90 <Note> <Vel>` auf Kanal 1
   (`midicraft-v2`) stellen. Abweichungen in Kanal, Note, Velocity-Tabelle
   oder Note-Off im Design festhalten und als Folge-Change an
   `add-midicraft-led-feedback` markieren (H1). Verifikation: Vergleichstabelle
   mit Plugin und Aufzeichnung.
-- [ ] 1.3 Einzelframe-Test: je ein Frame (Note 65, Velocity 15), 2 s warten,
+- [x] 1.3 ERLEDIGT über `add-per-device-led-protocols` Task 1.1: Einzelframe-Test: je ein Frame (Note 65, Velocity 15), 2 s warten,
   Encoder drehen, Eingabe prüfen. Danach Velocity 0, 1, 21. Verifikation:
   LED-Verhalten und Eingabe je Schritt notiert.
-- [ ] 1.4 Alle 15 Noten (65–69, 75–79, 80–84) einzeln mit Pause von 100 ms.
+- [x] 1.4 ERLEDIGT über `add-per-device-led-protocols` Task 1.1 (alle 15 RGB-Noten bestätigt, `led_notes` unverändert): Alle 15 Noten (65–69, 75–79, 80–84) einzeln mit Pause von 100 ms.
   Ergebnis als `led_notes`-Liste festhalten und Task 1.2 von
   `add-midicraft-led-feedback` abhaken. Encoder-Klick-Noten 55–59 bleiben
   außen vor. Verifikation: Liste im Design.
-- [ ] 1.5 Burst-Test: dieselben 15 Frames ohne Pause (ein `write` je Frame in
+- [x] 1.5 ENTFÄLLT (kein Burst-Test; der Betrieb mit 20 ms bleibt stabil, kleinere Abstände wurden nicht untersucht): Burst-Test: dieselben 15 Frames ohne Pause (ein `write` je Frame in
   einer Schleife). Danach mit Abstand 5, 10 (wie das Plugin), 20 und 50 ms.
   Kleinsten stabilen Abstand festhalten (H2). Verifikation: Tabelle Abstand →
   Eingabe weiter, Kernel-Log sauber.
-- [ ] 1.6 Dauertest mit dem gemessenen Abstand: 10 Minuten wechselnde Frames
+- [x] 1.6 ERSETZT durch den Betrieb (siehe 5.2): Dauertest mit dem gemessenen Abstand: 10 Minuten wechselnde Frames
   bei gleichzeitigem Drehen am Encoder. Verifikation: keine Stall-Welle, kein
   Disconnect, Eingabe durchgehend.
-- [ ] 1.7 Bei Instabilität trotz Einzelframes: Gegenprobe H3 (anderer
+- [x] 1.7 ENTFÄLLT (H3/H4 nicht untersucht; siehe Design „Abnahme 2026-11-27“): Bei Instabilität trotz Einzelframes: Gegenprobe H3 (anderer
   USB-Port) und H4 (nur lesend, nur schreibend öffnen). Verifikation:
   Tabelle mit Ergebnis je Variante.
 
@@ -90,8 +90,9 @@ weiter (ja/nein), Kernel-Log (`urb status -32`, `drain error`, Disconnect).
 ## 5. Abschluss
 
 - [x] 5.1 Alle Tests grün: `pytest` komplett. Verifikation: Testlauf.
-- [ ] 5.2 Auf dem Pi nach dem Deploy: ENC mit gemessenem Intervall aktivieren,
-  Kernel-Log 10 Minuten beobachten, Dienststopp dauert unter 5 s.
+- [x] 5.2 Auf dem Pi nach dem Deploy: ENC mit gemessenem Intervall aktivieren,
+  Kernel-Log 10 Minuten beobachten, Dienststopp dauert unter 5 s (2026-11-27:
+  Log 15 Minuten sauber, Neustart 0,36 s; ein früherer Disconnect bleibt offen).
   Verifikation: Journal- und Kernel-Auszug im Design.
 - [x] 5.3 `openspec validate fix-midicraft-led-output --strict` bleibt grün;
   Abhängigkeit zu `add-midicraft-led-feedback` im Proposal geprüft.

@@ -34,17 +34,23 @@ sein, denn die MA liefert sie in der Antwort nicht mit.
 
 ### Requirement: Button-Ziele auf überdeckten Floating-Slots
 
-Ein Button-Ziel auf einem Executor ab 101, der laut Topologie von einem
-führenden Executor überdeckt wird, SHALL an den führenden Executor gesendet
-werden: `execIndex` ist der führende Executor minus eins, `buttonId` ist 0, weil
+Ein Button-Ziel mit Transport `web` auf einem Executor ab 101, der laut
+Topologie von einem führenden Executor überdeckt wird, SHALL an den führenden
+Executor gesendet werden: `execIndex` ist der führende Executor minus eins, `buttonId` ist 0, weil
 die Floating-Kachel nur eine Taste besitzt. Ein Release MUST an dasselbe
 aufgelöste Ziel gehen wie der zugehörige Press.
 
 #### Scenario: Knopf auf überdecktem Slot
 
-- **WHEN** Exec 114 auf Page 2 zwei breit ist und ein Button-Ziel auf Exec 115,
-  `button = 1` gedrückt wird
+- **WHEN** Exec 114 auf Page 2 zwei breit ist und ein Button-Ziel mit Transport
+  `web` auf Exec 115, `button = 1` gedrückt wird
 - **THEN** enthält der Frame `execIndex = 113` und `buttonId = 0`
+
+#### Scenario: Ziel mit Transport midi
+
+- **WHEN** dasselbe Ziel `transport = "midi"` hat
+- **THEN** wird es nicht umgeleitet (Requirement „Keine Umleitung breiter
+  Executoren bei MIDI“), und die MA behandelt den Slot wie eine Konsolentaste
 
 #### Scenario: Ziel mit höherer Button-Nummer
 

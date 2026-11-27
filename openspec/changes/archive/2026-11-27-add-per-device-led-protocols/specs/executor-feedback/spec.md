@@ -9,8 +9,10 @@ Feedback ausgegeben wird und mit welchem Protokoll. Gültig MUST
 `protocol = "midicraft-v2"` oder `protocol = "asl-mk2"` sein. Die optionale
 Liste `led_notes` MUST die Noten benennen, die tatsächlich LEDs besitzen; fehlt
 sie, gelten alle Profil-Noten, die ein Button-Ziel haben, als LED-fähig.
-Feedback MUST ausschließlich an Controls gehen, deren Note im Profil als
-LED-fähig gilt.
+Bei einem Gerät mit Bänken nennt `led_notes` die Noten der ersten Bank; die
+Controls dieser Noten gelten in jeder Bank als LED-fähig, und zwar auf der Note,
+die das Control in der jeweiligen Bank hat. Feedback MUST ausschließlich an
+Controls gehen, die im Profil als LED-fähig gelten.
 
 #### Scenario: Gerät ohne Feedback-Deklaration
 
@@ -27,6 +29,13 @@ LED-fähig gilt.
 - **WHEN** ein Control mit Playback-Ziel eine Note nutzt, die nicht in
   `led_notes` steht
 - **THEN** sendet `ma2pi` für dieses Control keinen LED-Frame
+
+#### Scenario: Weitere Bank mit anderer Notenbelegung
+
+- **WHEN** das ENC in Bank 1 `led_notes = [65]` mit dem Control `mc_row1_1`
+  hat und Bank 2 dasselbe Control auf Note 10 (Kanal 2) legt
+- **THEN** erhält Note 10 auf Kanal 2 die LED des Executors dieser Bank, und
+  Controls ohne LED in Bank 1 bleiben in Bank 2 ohne LED-Frame
 
 #### Scenario: Zwei Geräte, zwei Protokolle
 
@@ -116,6 +125,26 @@ NOT gesendet werden.
   `off_state = "dark"` gilt
 - **THEN** sendet `ma2pi` die Note des Controls mit Velocity 15
 
+### Requirement: Nur Änderungen senden
+
+`ma2pi` SHALL einen LED-Frame nur senden, wenn sich der LED-Zustand eines
+Controls geändert hat, außer das Profil des Geräts schaltet das Auffrischen
+ein. Wiederholte identische Zustände MUST dann keine Frames erzeugen. Die
+Ausgabe MUST den Daemon nicht blockieren, auch wenn das Gerät nicht
+schreibbereit ist.
+
+#### Scenario: Unveränderter Zustand
+
+- **WHEN** zwei aufeinanderfolgende Poll-Antworten denselben Zustand liefern
+  und das Auffrischen aus ist
+- **THEN** wird nach dem ersten Frame kein weiterer Frame gesendet
+
+#### Scenario: Gerät nimmt nicht an
+
+- **WHEN** das MIDI-Gerät Schreibversuche nicht annimmt
+- **THEN** protokolliert `ma2pi` höchstens eine Warnung und verarbeitet
+  weiterhin Eingaben
+
 ## ADDED Requirements
 
 ### Requirement: LED-Kodierung für ASL MK2
@@ -204,26 +233,6 @@ MUST `--check-config` die Konfiguration ablehnen und beide Felder nennen.
 - **THEN** ist die Konfiguration gültig und beide Funktionen steuern ihre
   eigenen LEDs
 
-### Requirement: Polling weicht Live-Eingaben
-
-`ma2pi` SHALL keine neue Playbacks-Abfrage senden, solange eine Live-Aktion
-(Fader, Encoder, Taste, Hardkey) auf das Senden wartet oder die letzte
-Live-Aktion weniger als 300 ms zurückliegt. Das Polling MUST danach ohne
-Konfigurationsänderung wieder aufgenommen werden. Live-Aktionen MUST dadurch
-nicht verzögert werden.
-
-#### Scenario: Fader wird gefahren
-
-- **WHEN** ein Fader 2 Sekunden lang durchgehend bewegt wird
-- **THEN** sendet `ma2pi` in dieser Zeit keine Playbacks-Abfrage, und alle
-  Fader-Frames gehen ohne Wartezeit durch das Polling hinaus
-
-#### Scenario: Ruhe nach der Bewegung
-
-- **WHEN** die letzte Fader-Bewegung 300 ms zurückliegt
-- **THEN** fragt `ma2pi` im nächsten Zyklus wieder Playbacks ab und die LEDs
-  holen den aktuellen Zustand nach
-
 ### Requirement: LEDs ohne Ziel sind aus
 
 Eine LED-fähige Note (laut `led_notes`) eines Geräts mit aktivem Feedback, die
@@ -271,6 +280,46 @@ Executor MUST den Aus-Zustand des Protokolls erhalten.
 - **WHEN** ein Executor einen Titel hat, aber keine `bottomButtons` (z. B. ein
   breiter Fader-Executor)
 - **THEN** gilt er als belegt und seine LED folgt Lauf-Zustand und Farbe
+
+### Requirement: LEDs aller Bänke
+
+Hat ein Gerät mit Feedback mehrere Bänke, SHALL `ma2pi` die LEDs aller Bänke
+gleichzeitig führen: jede Bank auf ihrem MIDI-Kanal, mit ihrer Notenbelegung,
+ihrem Executor-Offset und ihren `mapping.device_banks`-Overrides. Dies MUST
+unabhängig davon gelten, welche Bank das Gerät gerade zeigt; `ma2pi` MUST die
+angezeigte Bank nicht kennen.
+
+#### Scenario: Nicht angezeigte Bank
+
+- **WHEN** das ENC Bank 1 zeigt und der Executor von Bank 2, Taste 1, läuft
+- **THEN** sendet `ma2pi` die LED für diese Taste auf Kanal 2
+
+#### Scenario: Unbelegte Taste einer weiteren Bank
+
+- **WHEN** eine LED-fähige Taste von Bank 3 kein Playback-Ziel hat
+- **THEN** erhält sie auf Kanal 3 den Aus-Zustand
+
+### Requirement: Periodisches Auffrischen
+
+Ein Profil SHALL mit `[profiles.<id>.led_feedback] refresh_interval_ms` (`0` =
+aus, sonst 200–60000, Default `0`) festlegen, in welchem Takt `ma2pi` alle
+bekannten LED-Zustände des Geräts erneut sendet. `ma2pi` MUST dabei kanalweise
+reihum vorgehen und nur einreihen, solange die Ausgabe des Geräts leer ist.
+Ein geänderter Zustand MUST Vorrang vor einem Auffrisch-Frame derselben LED
+haben, und eine unveränderte Poll-Antwort MUST einen eingereihten
+Auffrisch-Frame nicht verwerfen.
+
+#### Scenario: Bankwechsel am Gerät
+
+- **WHEN** der Bediener am ENC auf Bank 2 wechselt und `refresh_interval_ms`
+  1500 ist
+- **THEN** zeigt das ENC die Farben von Bank 2 spätestens nach rund
+  einem Intervall, ohne dass sich ein Executor geändert hat
+
+#### Scenario: Aus
+
+- **WHEN** `refresh_interval_ms = 0` ist
+- **THEN** sendet `ma2pi` keine Auffrisch-Frames
 
 ### Requirement: Feste LED-Funktionen bleiben erhalten
 

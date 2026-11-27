@@ -254,9 +254,10 @@ default; the shipped `config.toml` enables it.
 
 Only controls with a button target in `[mapping.playbacks]` are polled. A device
 with banks gets LEDs for **every** bank at once, each on the MIDI channel of its
-bank and with the bank's executor offset and overrides. The device only shows
-the channel of the bank it is switched to, so nothing has to be re-sent when the
-bank changes. A `page =
+bank and with the bank's executor offset and overrides. A device like the
+MIDICRAFT ENC only accepts LED notes of the bank it is switched to and does not
+announce a bank switch, so such a profile sets `refresh_interval_ms` and every
+bank is sent again once per interval. A `page =
 "current"` target is requested with `pageIndex = -1`, so the LEDs follow page
 changes on the console (the console answers with the placeholder `iPage = 0`;
 a fixed page `N` is answered with `iPage = N`). The colour is taken from the `bC`/`bdC` fields of the
@@ -671,8 +672,8 @@ A wide (combined) executor covers several slots; the console then has no
 separate executor for the covered slots. On the Floating tile (executors from
 101) the covered slot has no button either: the Web Remote sends the leading
 `execIndex` with `buttonId 0` when you click the right half. `ma2pi` reads this
-from the console and does the same: a button target on a covered Floating slot
-(for example Exec 115 behind the 2-wide Exec 114) presses the leading executor,
+from the console and does the same: a button target with `transport = "web"` on
+a covered Floating slot (for example Exec 115 behind the 2-wide Exec 114) presses the leading executor,
 button 1. In the fader view (executors up to 100) every slot of a wide executor
 keeps its own executor, buttons and fader, so nothing is redirected there.
 

@@ -626,16 +626,16 @@ number = 16
 channel = 16
 notes = {}
 
-# LED-Rückmeldung: Nur die 15 RGB-Tasten haben LEDs; Encoder-Klicks
-# (Noten 55-59) und Fader bleiben unbeleuchtet.
-# enabled = false: Am ENC hat die LED-Ausgabe die Eingabe still gelegt. Erst
-# wieder einschalten, wenn die Messung (OpenSpec fix-midicraft-led-output,
-# Gruppe 1) einen stabilen Abstand ergeben hat. frame_interval_ms ist der
+# LED-Rückmeldung: Nur die 15 RGB-Tasten der ersten Bank haben LEDs (led_notes
+# nennt sie); die anderen Bänke leuchten auf denselben Controls mit ihren
+# eigenen Noten. Encoder-Klicks (Noten 55-59) und Fader bleiben unbeleuchtet.
+# Am Gerät gemessen (OpenSpec fix-midicraft-led-output): mit 20 ms Abstand
+# zwischen den Frames bleibt die Eingabe stabil. frame_interval_ms ist der
 # Mindestabstand zwischen zwei LED-Frames an dieses Gerät.
 [profiles.midicraft-enc.led_feedback]
 protocol = "midicraft-v2"
 led_notes = [65, 66, 67, 68, 69, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84]
-enabled = false
+enabled = true
 frame_interval_ms = 20
 # Das ENC verwirft LED-Noten von Bänken, die es gerade nicht zeigt, und meldet
 # den Bankwechsel nicht. Deshalb wird jede Bank innerhalb dieser Zeit (ms)

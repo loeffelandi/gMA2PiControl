@@ -36,15 +36,20 @@ dem Executor-Zustand und der Palettenfarbe.
 - Die getaktete Ausgabe und der Stau-Schutz aus `fix-midicraft-led-output`
   gelten für jedes Protokoll; ein ASL-Frame (Freigabe plus zwei Note-On) zählt
   als ein Frame.
-- Ergänzt nach dem Live-Test (2026-11-26): Das Playbacks-Polling weicht
-  Live-Eingaben (keine Abfrage, solange eine Live-Aktion wartet oder bis 300 ms
-  nach der letzten), weil es sonst mit rund 6 Abfragen/s das Sendebudget von
-  25 Nachrichten/s mit den Fadern teilt und diese ruckeln. LED-fähige Tasten
-  ohne Playback-Ziel werden ausgeschaltet, statt ihren alten Zustand zu
-  behalten.
+- Ergänzt nach dem Live-Test (2026-11-26): LED-fähige Tasten ohne Playback-Ziel
+  werden ausgeschaltet, statt ihren alten Zustand zu behalten; unbelegte
+  Executoren der MA werden erkannt und ihre LEDs ausgeschaltet. Der ursprünglich
+  geplante Vorrang des Pollings gegenüber Live-Eingaben (keine Abfrage bis
+  300 ms nach der letzten Aktion) wurde nicht umgesetzt und gestrichen; die
+  Sendewarteschlange stellt Abfragen weiter ganz hinten ein (siehe Design D7).
+- Ergänzt am 2026-11-27: LEDs für alle Bänke eines Geräts gleichzeitig, jede auf
+  ihrem Kanal und ihrer Notenbelegung (`led_notes` gilt als Liste der Controls
+  der ersten Bank), und `refresh_interval_ms` je Profil. Das ENC verwirft LED-
+  Noten nicht angezeigter Bänke und meldet den Bankwechsel nicht (Mitschnitt);
+  ein reihum gesendetes Auffrischen stellt die Farben nach dem Wechsel her.
 
 Nicht Teil dieses Changes: blinkende oder komplementäre Midicraft-Modi,
-Kanal- bzw. Bank-Logik der LED-Frames, LED-Feedback für weitere Hersteller,
+LED-Feedback für weitere Hersteller,
 Änderungen am Verhalten der festen `[led]`-Funktionen.
 
 ## Capabilities

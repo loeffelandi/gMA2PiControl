@@ -132,23 +132,24 @@ nur bei `asl-mk2`; 25 entspricht der Ruhehelligkeit der festen `[led]`-Tasten.
 *Alternative:* Indizes aus einem angenommenen Farbkreis berechnen. Verworfen:
 drei Messpunkte reichen dafür nicht, falsche Farben wären schlechter als weiß.
 
-### D7: Polling weicht Live-Eingaben
+### D7: Polling weicht Live-Eingaben (verworfen)
 
-Gemessen im Live-Test: rund 6,2 Playbacks-Abfragen/s, in der Spitze 22
-Fader-Frames/s, Budget 25 Nachrichten/s. Die Abfragen stehen in der
-`SendQueue` zwar ganz hinten, verbrauchen aber ihr Token, sobald sie
-unterwegs sind; dann warten die Fader.
+Gemessen im Live-Test (2026-11-26): rund 6,2 Playbacks-Abfragen/s, in der Spitze
+22 Fader-Frames/s, Budget 25 Nachrichten/s. Die Abfragen stehen in der
+`SendQueue` ganz hinten, verbrauchen aber ihr Token, sobald sie unterwegs sind.
 
-`Ma2Client` merkt sich den Zeitpunkt der letzten eingereihten Live-Aktion
-(alles außer Playbacks-Abfragen) und meldet, ob noch eine Live-Aktion in der
-Queue wartet. `ExecutorFeedback` sendet eine Abfrage nur, wenn keine wartet
-und die letzte mindestens 300 ms (`LIVE_QUIET_SECONDS`) zurückliegt; sonst
-überspringt es den Block in diesem Zyklus. Ein Block, der gerade übersprungen
-wird, zählt nicht als offene Anfrage.
+Geplant war, dass `Ma2Client` den Zeitpunkt der letzten Live-Aktion meldet und
+`ExecutorFeedback` Abfragen bis 300 ms danach überspringt (`LIVE_QUIET_SECONDS`).
+**Das wurde nie umgesetzt** und ist auf Entscheidung des Betreibers
+(2026-11-27) gestrichen. Das Ruckeln vom 2026-11-26 wurde danach nicht erneut
+gemessen; es ist offen, ob es noch auftritt. Zwischenzeitlich sendet der Poller
+zwei Blöcke je 250 ms, und die Priorität in der `SendQueue` (Steuerung vor
+Encodern vor Playback-Fadern vor Abfragen, Abfragen je Block zusammengefasst)
+bleibt der einzige Schutz. Tritt Ruckeln wieder auf, ist ein eigener Change mit
+Messung der richtige Weg.
 
-*Alternativen:* festes Teilbudget fürs Polling (bremst Fader bei Spitzenlast
-trotzdem), `rate_limit` anheben (Risiko für die Web Remote der MA). Verworfen
-nach Rückfrage beim Betreiber.
+*Alternativen:* festes Teilbudget fürs Polling, `rate_limit` anheben. Beide
+waren verworfen worden und bleiben es.
 
 ### D8: LEDs ohne Ziel aus
 
@@ -182,8 +183,14 @@ breiten Fader-Executoren fehl, die ebenfalls keine haben.
 - 6.3 mit `[feedback] enabled = true` auf dem Pi: Start/Stop von Exec 1–5 und
   101–105, Appearance-Farben und Page-Wechsel folgen; die 15 Startframes
   wurden vom ENC abgenommen, keine Stau-Warnung, Kernel-Log sauber.
-  Befunde: Fader ruckeln, wenn viel los ist (→ D7); Tasten ohne Belegung
-  behalten ihren alten LED-Zustand (→ D8).
+  Befunde: Fader ruckeln, wenn viel los ist (→ D7, nicht umgesetzt); Tasten
+  ohne Belegung behalten ihren alten LED-Zustand (→ D8).
+- Wiederholung am 2026-11-27 nach dem Deploy mit LEDs für alle Bänke und
+  Auffrischen (`refresh_interval_ms = 1500`): Die LEDs folgen dem Executor-
+  Zustand in allen drei Bänken, auch nach dem Bankwechsel am Gerät, und
+  Farbänderungen kommen ohne Aus- und Wiedereinschalten an (Betreiber bestätigt).
+  Nach dem letzten ENC-Neustart (01:13:28) blieb das Kernel-Log 15 Minuten
+  sauber; ein Dienstneustart dauert 0,36 s. Stau-Warnungen gab es nicht.
 
 ## Risks / Trade-offs
 
@@ -210,6 +217,29 @@ breiten Fader-Executoren fehl, die ebenfalls keine haben.
 4. Rollback: vorherige Python-Dateien aus dem Backup unter `/opt/ma2pi`
    zurückkopieren; die Konfiguration ist abwärtskompatibel, solange kein
    `asl-mk2`-Profil eingetragen ist.
+
+### D10: Bänke und Auffrischen (2026-11-27)
+
+`led_notes` nennt die Noten der ersten Bank. Weil jede Bank ihre eigene
+Notenbelegung hat (ENC: Bank 1 Noten 55–84, Bank 2/3 `0–29`), werden die
+LED-fähigen *Controls* aus Bank 1 bestimmt (`led_notes_by_bank`) und je Bank auf
+deren Noten abgebildet; Controls ohne Note in einer Bank entfallen dort.
+`build_feedback_targets` und die Liste dunkler LEDs laufen darüber.
+
+Das ENC nimmt LED-Noten nur für die angezeigte Bank (= Kanal) an und sendet
+beim Bankwechsel nichts (Mitschnitt vom 2026-11-27: nur Note-On/Off, weder
+Program Change noch Control Change). Weil `ma2pi` nur Änderungen sendet, blieben
+die Farben der neuen Bank aus, bis sich ein Executor änderte. Ein Bankwechsel
+lässt sich nicht erkennen; deshalb sendet `_queue_refresh` pro Gerät mit
+`refresh_interval_ms` reihum einen Bank-Kanal komplett neu (Takt = Intervall /
+Zahl der Kanäle, nur bei leerer Ausgabe, `setdefault`, damit geänderte Zustände
+Vorrang behalten). Beim ersten Versuch löschte `_apply` unveränderte, noch nicht
+gesendete Frames aus der Ausgabe und damit die Auffrischung; es verwirft jetzt
+nur noch Frames mit einem anderen, veralteten Zustand.
+
+*Alternativen:* Bank aus der Eingabe-Note ableiten (greift erst nach der ersten
+Bedienung), Neusenden bei jedem Poll (belastet die Ausgabe). Verworfen.
+
 
 ## Messung ENC (Task 1.1, 2026-11-26)
 
