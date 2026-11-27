@@ -416,6 +416,19 @@ def _frame_intervals(config: "AppConfig") -> dict[str, float]:
     return result
 
 
+def _refresh_intervals(config: "AppConfig") -> dict[str, float]:
+    """Seconds for a full LED refresh, per device that has one configured."""
+
+    result: dict[str, float] = {}
+    for name, device in config.devices.items():
+        if device.backend != "midi":
+            continue
+        feedback = config.profiles[device.profile].led_feedback
+        if feedback is not None and feedback.enabled and feedback.refresh_interval_ms:
+            result[name] = feedback.refresh_interval_ms / 1000.0
+    return result
+
+
 def _encoders(config: "AppConfig") -> dict[str, LedEncoder]:
     """LED encoder per configured MIDI device with ``led_feedback``."""
 
@@ -494,6 +507,35 @@ def _resolve_playback_for_bank(
     return resolved[0], resolved[1]
 
 
+def led_notes_by_bank(profile: Any) -> dict[int, frozenset[int] | None]:
+    """LED notes per bank channel, or ``None`` per channel when unrestricted.
+
+    ``led_notes`` names the notes of the first bank.  A device that switches
+    bank also switches the note layout, so the same physical buttons carry other
+    notes in other banks; the LED-capable *controls* are therefore taken from
+    the first bank and each bank lists the notes of those controls.
+    """
+
+    feedback = profile.led_feedback
+    banks = list(profile.banks)
+    if not banks:
+        if feedback is None or feedback.notes is None:
+            return {1: None}
+        return {1: frozenset(feedback.notes) & frozenset(profile.notes)}
+    if feedback is None or feedback.notes is None:
+        return {bank.channel: None for bank in banks}
+    reference = banks[0].notes
+    controls = {
+        reference[note] for note in feedback.notes if note in reference
+    }
+    return {
+        bank.channel: frozenset(
+            note for note, control in bank.notes.items() if control in controls
+        )
+        for bank in banks
+    }
+
+
 def build_feedback_targets(
     config: "AppConfig",
 ) -> tuple[list[LedTarget], dict[tuple[int | str, int], RequestBlock]]:
@@ -510,10 +552,11 @@ def build_feedback_targets(
         feedback = profile.led_feedback
         if feedback is None or not feedback.enabled:
             continue
-        allowed = set(feedback.notes) if feedback.notes is not None else None
+        by_bank = led_notes_by_bank(profile)
 
         if profile.banks:
             for bank in profile.banks:
+                allowed = by_bank[bank.channel]
                 for note, control in bank.notes.items():
                     if allowed is not None and note not in allowed:
                         continue
@@ -541,6 +584,7 @@ def build_feedback_targets(
                         executor
                     )
         else:
+            allowed = by_bank[1]
             for note, control in profile.notes.items():
                 if allowed is not None and note not in allowed:
                     continue
@@ -605,12 +649,13 @@ def build_dark_leds(config: "AppConfig", targets: list[LedTarget]) -> list[DarkL
         feedback = profile.led_feedback
         if feedback is None or not feedback.enabled or feedback.notes is None:
             continue
+        by_bank = led_notes_by_bank(profile)
         banks = [(bank.channel, bank.notes) for bank in profile.banks] or [
             (1, profile.notes)
         ]
         seen: set[tuple[int, int]] = set()
         for channel, notes in banks:
-            for note in feedback.notes:
+            for note in sorted(by_bank[channel] or ()):
                 if (
                     note not in notes
                     or (channel, note) in seen
@@ -696,6 +741,8 @@ class ExecutorFeedback:
         self._unconsumed_since: dict[str, float] = {}
         self._pending_after_send: dict[str, int] = {}
         self._stalled: set[str] = set()
+        self._refresh_due: dict[str, float] = {}
+        self._refresh_turn: dict[str, int] = {}
         self._wake = asyncio.Event()
         self.set_config(config)
 
@@ -706,6 +753,7 @@ class ExecutorFeedback:
         self._targets, self._blocks = build_feedback_targets(config)
         self._dark = build_dark_leds(config, self._targets)
         self._intervals = _frame_intervals(config)
+        self._refresh = _refresh_intervals(config)
         self._encoders = _encoders(config)
         self._last.clear()
         self._poller.set_config(config, self._blocks)
@@ -724,6 +772,8 @@ class ExecutorFeedback:
         self._unconsumed_since.clear()
         self._pending_after_send.clear()
         self._preambled.clear()
+        self._refresh_due.clear()
+        self._refresh_turn.clear()
         if clear_stalled:
             self._stalled.clear()
 
@@ -741,6 +791,8 @@ class ExecutorFeedback:
         self._pending_after_send.pop(device, None)
         self._preambled.discard(device)
         self._stalled.discard(device)
+        self._refresh_due.pop(device, None)
+        self._refresh_turn.pop(device, None)
 
     @property
     def targets(self) -> tuple[LedTarget, ...]:
@@ -885,9 +937,46 @@ class ExecutorFeedback:
         if led_active:
             self._sync_devices()
             self._queue_dark()
+            self._queue_refresh()
         await self._poller.step()
         if led_active:
             self.pump()
+
+    def _queue_refresh(self) -> None:
+        """Re-send the LEDs of one bank channel at a time to devices that need it.
+
+        A device that drops LED notes of banks it does not show, and does not
+        announce a bank switch, would stay on its default colours after a switch
+        until the executor changes.  Resending every channel within the refresh
+        interval bounds that delay.  Channels take turns so a refresh never
+        floods the output.
+        """
+
+        if self._dry_run:
+            return
+        now = self._clock()
+        for device, interval in self._refresh.items():
+            if device not in self._devices or device in self._stalled:
+                continue
+            if self._outbox.get(device) or now < self._refresh_due.get(device, 0.0):
+                continue
+            by_channel: dict[int, list[tuple[int, LedState]]] = {}
+            for key, state in self._last.items():
+                if key[0] != device:
+                    continue
+                channel, note = (1, key[1]) if len(key) == 2 else (key[1], key[2])
+                by_channel.setdefault(channel, []).append((note, state))
+            if not by_channel:
+                continue
+            channels = sorted(by_channel)
+            turn = self._refresh_turn.get(device, 0) % len(channels)
+            channel = channels[turn]
+            self._refresh_turn[device] = turn + 1
+            self._refresh_due[device] = now + interval / len(channels)
+            outbox = self._outbox.setdefault(device, {})
+            for note, state in sorted(by_channel[channel], key=lambda item: item[0]):
+                outbox.setdefault(_outbox_key(channel, note), state)
+            self._wake.set()
 
     def _queue_dark(self) -> None:
         """Queue the off state for LEDs without a target that is not shown yet."""
@@ -959,8 +1048,11 @@ class ExecutorFeedback:
             out_key = _outbox_key(target.channel, target.note)
             waiting = self._outbox.get(target.device)
             if self._last.get(led) == state:
-                if waiting is not None:
-                    waiting.pop(out_key, None)
+                # A pending frame with another state is stale: the executor
+                # went back before it was sent.  One with this very state is
+                # a refresh and stays queued.
+                if waiting is not None and waiting.get(out_key, state) != state:
+                    del waiting[out_key]
                 continue
             if self._dry_run:
                 LOGGER.info(

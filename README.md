@@ -252,9 +252,11 @@ default; the shipped `config.toml` enables it.
 | `off_state` | `"dark"` or `"off"` | `"dark"` | Stopped executor: dark shade of its colour, or LED off. |
 | `fallback_color` | palette name | `"white"` | Used when the console reports no usable appearance colour. |
 
-Only controls with a button target in `[mapping.playbacks]` are polled. Bank
-overrides — both `[mapping.device_banks]` and alternate profile banks — are not
-followed yet; feedback uses the first (bank 1) note binding. A `page =
+Only controls with a button target in `[mapping.playbacks]` are polled. A device
+with banks gets LEDs for **every** bank at once, each on the MIDI channel of its
+bank and with the bank's executor offset and overrides. The device only shows
+the channel of the bank it is switched to, so nothing has to be re-sent when the
+bank changes. A `page =
 "current"` target is requested with `pageIndex = -1`, so the LEDs follow page
 changes on the console (the console answers with the placeholder `iPage = 0`;
 a fixed page `N` is answered with `iPage = N`). The colour is taken from the `bC`/`bdC` fields of the
@@ -284,9 +286,10 @@ run side by side:
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `protocol` | string | `"midicraft-v2"` | `"midicraft-v2"` or `"asl-mk2"`. |
-| `led_notes` | array of ints | all profile notes with a button target | Notes that actually have an LED. Controls on other notes are never lit. |
+| `led_notes` | array of ints | all profile notes with a button target | Notes of the first bank that actually have an LED. The controls on these notes are LED-capable in every bank, on that bank's own notes; other controls are never lit. |
 | `enabled` | bool | `true` | Per-device switch. `false` leaves this device's LEDs untouched while other devices keep their feedback. |
 | `frame_interval_ms` | int (1–500) | `20` | Minimum gap between two LED frames sent to this device. |
+| `refresh_interval_ms` | int (`0`, 200–60000) | `0` | Re-sends the LEDs of one bank channel at a time so that every bank is refreshed once per interval; `0` = off. Needed for devices like the MIDICRAFT ENC that drop LED notes of banks they do not show and do not announce a bank switch. |
 | `bright_level` | int (0–127) | `127` | `asl-mk2` only: brightness of a running executor. |
 | `dark_level` | int (0–127) | `25` | `asl-mk2` only: brightness of a stopped executor with `off_state = "dark"`. |
 | `colors` | table | see below | `asl-mk2` only: palette name → ASL colour index (0–127). |

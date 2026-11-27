@@ -12,6 +12,7 @@ from ma2pi.feedback import (
     RequestBlock,
     _belongs_to_block,
     _block_key,
+    build_dark_leds,
     build_feedback_targets,
     led_velocity,
     nearest_color,
@@ -93,6 +94,8 @@ def _enable_enc_leds(data: dict) -> None:
     # These tests cover the LED path alone; polling every playback target for
     # the executor topology is tested in test_poller.py.
     data["mapping"]["combined_executors"] = "off"
+    # Periodic refresh has its own tests; the others count the frames they send.
+    data["profiles"]["midicraft-enc"]["led_feedback"]["refresh_interval_ms"] = 0
 
 
 @pytest.fixture
@@ -872,6 +875,115 @@ def test_bank_channel_and_empty_page_turn_leds_off(make_config):
     feedback._apply(snap_empty, block)
     drain(feedback, clock)
     assert any(frame == bytes((0x91, 65, 0)) for _, frame in midi.sent)
+
+
+def test_other_banks_use_their_own_notes_for_the_led_controls(make_config):
+    """``led_notes`` names bank 1; later banks light the same controls on their notes."""
+
+    def mutate(data):
+        data["profiles"]["midicraft-enc"]["banks"][1]["notes"] = {
+            "10": "mc_row1_1",
+            "11": "mc_row1_2",
+            "0": "mc_click_1",  # no LED in bank 1 (note 55), so none here
+            "15": "mc_fader_1",
+        }
+        data["mapping"].setdefault("device_banks", {})["midicraft-enc"] = {"bank_size": 5}
+
+    cfg = make_config(mutate)
+    targets, _ = build_feedback_targets(cfg)
+    bank2 = {t.note: t for t in targets if t.channel == 2}
+    assert sorted(bank2) == [10, 11]
+    assert (bank2[10].control, bank2[10].executor) == ("mc_row1_1", 6)
+    assert (bank2[11].control, bank2[11].executor) == ("mc_row1_2", 7)
+    # Bank 1 keeps its own notes and offset-free executors.
+    bank1 = {t.note: t for t in targets if t.channel == 1}
+    assert bank1[65].executor == 1
+
+    # Unassigned LED buttons of bank 2 stay dark on bank 2's channel, by note of that bank.
+    dark = {(led.channel, led.note) for led in build_dark_leds(cfg, targets)}
+    assert (2, 65) not in dark
+    assert (2, 0) not in dark
+
+
+def test_refresh_resends_one_bank_channel_per_turn(make_config):
+    """A device that drops LEDs of hidden banks gets every bank again within the interval."""
+
+    def mutate(data):
+        data["profiles"]["midicraft-enc"]["led_feedback"]["refresh_interval_ms"] = 900
+        data["mapping"].setdefault("device_banks", {})["midicraft-enc"] = {"bank_size": 5}
+
+    cfg = make_config(mutate)
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(cfg, FakeClient([]), midi, clock=clock)
+    feedback._sync_devices()
+    lit = feedback._encoders["midicraft-enc"].off()
+    feedback._last[("midicraft-enc", 65)] = lit
+    feedback._last[("midicraft-enc", 2, 10)] = lit
+    feedback._last[("midicraft-enc", 3, 10)] = lit
+
+    seen_channels = []
+    for _ in range(3):
+        midi.sent.clear()
+        feedback._queue_refresh()
+        drain(feedback, clock)
+        seen_channels.append({frame[0] & 0x0F for _, frame in midi.sent})
+        clock.now += 0.3  # next slot: interval / channels
+    assert seen_channels == [{0}, {1}, {2}]  # one channel per turn, in order
+
+    # Nothing is due before the next slot.
+    feedback._queue_refresh()  # slot reached: queues the next channel
+    drain(feedback, clock)
+    midi.sent.clear()
+    clock.now += 0.1
+    feedback._queue_refresh()
+    drain(feedback, clock)
+    assert midi.sent == []
+
+
+def test_poll_answer_does_not_cancel_a_queued_refresh(make_config):
+    def mutate(data):
+        data["profiles"]["midicraft-enc"]["led_feedback"]["refresh_interval_ms"] = 900
+
+    cfg = make_config(mutate)
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(cfg, FakeClient([]), midi, clock=clock)
+    target = next(t for t in feedback.targets if t.channel == 1)
+    block = feedback._blocks[(target.page, (target.executor // 100) * 100)]
+    snap = parse_playbacks(
+        playbacks_payload(
+            0, 2, [{"iExec": target.executor - 1, "isRun": True, "bC": "#ff0000"}]
+        )
+    )
+    assert snap is not None
+    feedback._sync_devices()
+    feedback._apply(snap, block)
+    drain(feedback, clock)
+    midi.sent.clear()
+
+    clock.now += 1.0
+    feedback._queue_refresh()
+    queued = dict(feedback._outbox.get("midicraft-enc", {}))
+    assert queued
+    feedback._apply(snap, block)  # the next poll answer, nothing changed
+    assert feedback._outbox["midicraft-enc"] == queued
+
+
+def test_refresh_zero_turns_it_off(make_config):
+    cfg = make_config(
+        lambda data: data["profiles"]["midicraft-enc"]["led_feedback"].__setitem__(
+            "refresh_interval_ms", 0
+        )
+    )
+    clock = FakeClock()
+    midi = FakeMidi(clock=clock)
+    feedback = ExecutorFeedback(cfg, FakeClient([]), midi, clock=clock)
+    feedback._sync_devices()
+    feedback._last[("midicraft-enc", 65)] = feedback._encoders["midicraft-enc"].off()
+    feedback._queue_refresh()
+    drain(feedback, clock)
+    assert midi.sent == []
 
 
 def test_nearest_color_maps_warm_and_cool_white_to_colour_temperatures():

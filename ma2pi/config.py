@@ -195,7 +195,10 @@ class LedFeedbackProfile:
     ``notes`` restricts feedback to notes that actually have an LED; ``None``
     means every button note of the profile is LED-capable.  ``enabled`` turns
     the output off for this profile only, and ``frame_interval_ms`` is the
-    minimum gap between two LED frames sent to one device.  ``bright_level``,
+    minimum gap between two LED frames sent to one device.
+    ``refresh_interval_ms`` re-sends every LED once per interval (``0`` = off);
+    a device that ignores LED notes of banks it does not show and does not
+    announce a bank switch needs it.  ``bright_level``,
     ``dark_level`` and ``colors`` (palette name, colour index) only apply to
     ``asl-mk2``.
     """
@@ -207,6 +210,7 @@ class LedFeedbackProfile:
     bright_level: int = 127
     dark_level: int = 25
     colors: tuple[tuple[str, int], ...] = ()
+    refresh_interval_ms: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -1287,6 +1291,7 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
                     "led_notes",
                     "enabled",
                     "frame_interval_ms",
+                    "refresh_interval_ms",
                     "bright_level",
                     "dark_level",
                     "colors",
@@ -1331,6 +1336,14 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
                 raise ConfigError(
                     f"{fb_path}.frame_interval_ms", "muss zwischen 1 und 500 liegen"
                 )
+            refresh_interval_ms = _int(
+                fb_raw.get("refresh_interval_ms", 0), f"{fb_path}.refresh_interval_ms"
+            )
+            if refresh_interval_ms != 0 and not 200 <= refresh_interval_ms <= 60000:
+                raise ConfigError(
+                    f"{fb_path}.refresh_interval_ms",
+                    "muss 0 (aus) oder zwischen 200 und 60000 liegen",
+                )
             led_notes_raw = fb_raw.get("led_notes")
             led_notes: tuple[int, ...] | None = None
             if led_notes_raw is not None:
@@ -1361,6 +1374,7 @@ def _parse_profiles(raw: Any) -> Mapping[str, ProfileConfig]:
                 levels["bright_level"],
                 levels["dark_level"],
                 tuple(colors),
+                refresh_interval_ms,
             )
 
         if not controls:

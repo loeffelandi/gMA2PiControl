@@ -173,6 +173,8 @@ def _serialize_profile(profile: ProfileConfig) -> dict[str, Any]:
             "enabled": fb.enabled,
             "frame_interval_ms": fb.frame_interval_ms,
         }
+        if fb.refresh_interval_ms:
+            fb_out["refresh_interval_ms"] = fb.refresh_interval_ms
         if fb.notes is not None:
             fb_out["led_notes"] = list(fb.notes)
         if fb.protocol == "asl-mk2":

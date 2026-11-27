@@ -637,6 +637,10 @@ protocol = "midicraft-v2"
 led_notes = [65, 66, 67, 68, 69, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84]
 enabled = false
 frame_interval_ms = 20
+# Das ENC verwirft LED-Noten von Bänken, die es gerade nicht zeigt, und meldet
+# den Bankwechsel nicht. Deshalb wird jede Bank innerhalb dieser Zeit (ms)
+# einmal neu gesendet; 0 schaltet das aus.
+refresh_interval_ms = 1500
 
 [mapping]
 # Breite (kombinierte) Executoren: "auto" liest sie aus der Konsole. Eine Taste
