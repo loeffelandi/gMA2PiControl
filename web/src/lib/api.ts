@@ -79,6 +79,19 @@ export interface DevicePresence {
   seen: boolean;
 }
 
+export type PowerState = 'idle' | 'holding' | 'shutting_down';
+
+export interface PowerStatus {
+  enabled: boolean;
+  available: boolean;
+  /** Cherry chord active (`[power].combo` and a host that can power off). */
+  combo?: boolean;
+  state: PowerState;
+  /** Confirm presses still missing while `state` is `holding`. */
+  confirm_remaining?: number | null;
+  error?: string | null;
+}
+
 export interface StatusInfo {
   connected: boolean;
   authenticated: boolean;
@@ -95,6 +108,7 @@ export interface StatusInfo {
   activity?: ActivityInfo;
   presence?: Record<string, DevicePresence>;
   midi_remote?: MidiRemoteStatus;
+  power?: PowerStatus;
 }
 
 export type MidiRemoteSessionState =
@@ -575,6 +589,15 @@ export class ApiClient {
       `/api/backups/${encodeURIComponent(id)}/restore`,
       {},
     );
+  }
+
+  power(): Promise<PowerStatus> {
+    return this.request<PowerStatus>('GET', '/api/power');
+  }
+
+  /** Power the Pi off; the daemon answers 202 shortly before it goes down. */
+  shutdown(): Promise<PowerStatus> {
+    return this.request<PowerStatus>('POST', '/api/power/shutdown', { confirm: true });
   }
 
   startLearn(kind: 'key' | 'encoder', device?: string): Promise<LearnResult> {

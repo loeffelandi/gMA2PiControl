@@ -384,4 +384,12 @@ def redacted_config(config: AppConfig) -> dict[str, Any]:
             "port": config.screen_helper.port,
         },
         "midi_remote": midi_remote_out,
+        "power": {
+            "enabled": config.power.enabled,
+            "combo": config.power.combo,
+            "hold_controls": list(config.power.hold_controls),
+            "confirm_control": config.power.confirm_control,
+            "confirm_presses": config.power.confirm_presses,
+            "console_notice": config.power.console_notice,
+        },
     }

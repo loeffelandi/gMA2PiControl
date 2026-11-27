@@ -414,6 +414,24 @@ class FeedbackSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class PowerSettings:
+    """Shutting the Raspberry Pi down from the UI or a key chord.
+
+    ``enabled`` is the master switch for the web button and API.  ``combo``
+    watches a chord of held controls (default: MA + Off); while all of them
+    stay held, ``confirm_control`` has to be pressed ``confirm_presses`` times
+    (default: Please twice).  There are no time limits.
+    """
+
+    enabled: bool = True
+    combo: bool = True
+    hold_controls: tuple[str, ...] = ("ma", "off")
+    confirm_control: str = "please_big"
+    confirm_presses: int = 2
+    console_notice: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     schema_version: int
     ma2: Ma2Settings
@@ -430,6 +448,7 @@ class AppConfig:
     feedback: FeedbackSettings = field(default_factory=FeedbackSettings)
     screen_helper: ScreenHelperSettings = field(default_factory=ScreenHelperSettings)
     midi_remote: MidiRemoteSettings = field(default_factory=MidiRemoteSettings)
+    power: PowerSettings = field(default_factory=PowerSettings)
     source_path: str = ""
 
     def profile_for_device(self, name: str) -> ProfileConfig:
@@ -856,6 +875,82 @@ def _parse_screen_helper(raw: Any) -> ScreenHelperSettings:
     if not 1 <= port <= 65535:
         raise ConfigError(f"{path}.port", "muss zwischen 1 und 65535 liegen")
     return ScreenHelperSettings(enabled=enabled, host=host, port=port)
+
+
+def _parse_power(raw: Any) -> PowerSettings:
+    path = "power"
+    data = _table(raw, path)
+    _reject_unknown(
+        data,
+        {
+            "enabled",
+            "combo",
+            "hold_controls",
+            "confirm_control",
+            "confirm_presses",
+            "console_notice",
+        },
+        path,
+    )
+    defaults = PowerSettings()
+    enabled = _bool(data.get("enabled", defaults.enabled), f"{path}.enabled")
+    combo = _bool(data.get("combo", defaults.combo), f"{path}.combo")
+    raw_hold = data.get("hold_controls", list(defaults.hold_controls))
+    if not isinstance(raw_hold, list):
+        raise ConfigError(f"{path}.hold_controls", "muss eine Liste sein")
+    hold = tuple(
+        _string(item, f"{path}.hold_controls[{index}]")
+        for index, item in enumerate(raw_hold)
+    )
+    if not 2 <= len(hold) <= 4:
+        raise ConfigError(
+            f"{path}.hold_controls", "braucht 2 bis 4 Controls (nie eine einzelne Taste)"
+        )
+    if len(set(hold)) != len(hold):
+        raise ConfigError(f"{path}.hold_controls", "enthält ein Control mehrfach")
+    confirm = _string(
+        data.get("confirm_control", defaults.confirm_control), f"{path}.confirm_control"
+    )
+    if confirm in hold:
+        raise ConfigError(
+            f"{path}.confirm_control", "darf nicht zu hold_controls gehören"
+        )
+    presses = _int(
+        data.get("confirm_presses", defaults.confirm_presses), f"{path}.confirm_presses"
+    )
+    if not 1 <= presses <= 5:
+        raise ConfigError(f"{path}.confirm_presses", "muss zwischen 1 und 5 liegen")
+    notice = _bool(
+        data.get("console_notice", defaults.console_notice), f"{path}.console_notice"
+    )
+    return PowerSettings(
+        enabled=enabled,
+        combo=combo,
+        hold_controls=hold,
+        confirm_control=confirm,
+        confirm_presses=presses,
+        console_notice=notice,
+    )
+
+
+def _check_power_controls(config: AppConfig) -> None:
+    """An explicit ``[power]`` chord must only use controls some profile has."""
+
+    power = config.power
+    if not power.combo:
+        return
+    known = config.mapped_controls
+    for index, control in enumerate(power.hold_controls):
+        if control not in known:
+            raise ConfigError(
+                f"power.hold_controls[{index}]",
+                f"unbekanntes Control {control!r} (in keinem Profil vorhanden)",
+            )
+    if power.confirm_control not in known:
+        raise ConfigError(
+            "power.confirm_control",
+            f"unbekanntes Control {power.confirm_control!r} (in keinem Profil vorhanden)",
+        )
 
 
 def _parse_midi_remote(raw: Any) -> MidiRemoteSettings:
@@ -2156,6 +2251,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
             "feedback",
             "screen_helper",
             "midi_remote",
+            "power",
         },
         "config",
     )
@@ -2191,6 +2287,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
         )
     screen_helper_settings = _parse_screen_helper(data.get("screen_helper", {}))
     midi_remote_settings = _parse_midi_remote(data.get("midi_remote", {}))
+    power_settings = _parse_power(data.get("power", {}))
 
     config = AppConfig(
         schema_version=version,
@@ -2208,8 +2305,11 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
         feedback=feedback_settings,
         screen_helper=screen_helper_settings,
         midi_remote=midi_remote_settings,
+        power=power_settings,
         source_path=source_path,
     )
+    if "power" in data:
+        _check_power_controls(config)
     _check_led_note_owner(config)
     _check_playback_transports(config)
     _check_midi_address_space(config)

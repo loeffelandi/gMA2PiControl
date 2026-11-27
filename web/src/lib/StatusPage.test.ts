@@ -92,6 +92,50 @@ const status = {
 };
 
 describe('StatusPage', () => {
+  it('announces a held shutdown chord and a running shutdown', async () => {
+    const store = new StatusStore({
+      factory: (url) => new FakeSocket(url),
+      reconnectBaseMs: 10,
+    });
+    render(StatusPage, { props: { store, devicesLoader: async () => devices } });
+
+    store.connect();
+    const socket = FakeSocket.last!;
+    socket.emitOpen();
+    socket.emitMessage({
+      type: 'status',
+      data: {
+        ...status,
+        power: {
+          enabled: true,
+          available: true,
+          state: 'holding',
+          confirm_remaining: 2,
+        },
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/Ausschalten: noch 2× Please drücken/)).toBeTruthy();
+    });
+
+    socket.emitMessage({
+      type: 'status',
+      data: { ...status, power: { enabled: true, available: true, state: 'shutting_down' } },
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Der Pi fährt herunter.')).toBeTruthy();
+    });
+    expect(screen.queryByText(/Ausschalten: noch/)).toBeNull();
+
+    socket.emitMessage({
+      type: 'status',
+      data: { ...status, power: { enabled: true, available: true, state: 'idle' } },
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('Der Pi fährt herunter.')).toBeNull();
+    });
+  });
+
   it('shows device activity, merges log deltas and follows live status', async () => {
     const store = new StatusStore({
       factory: (url) => new FakeSocket(url),

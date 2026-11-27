@@ -96,6 +96,8 @@ Mismatch einen Hinweis. `ui` ist ein Build-Stempel aus `web/dist/index.html`.
   "last_error": null,
   "generation": 3,
   "busy": false,
+  "power": { "enabled": true, "available": true, "combo": true, "state": "idle",
+             "confirm_remaining": null, "error": null },
   "activity": {
     "devices": {
       "cherry": { "rx": 120, "tx": 0, "last_rx": 1790000000.12, "last_tx": null },
@@ -109,6 +111,9 @@ Mismatch einen Hinweis. `ui` ist ein Build-Stempel aus `web/dist/index.html`.
   }
 }
 ```
+
+`power` entspricht `GET /api/power` (siehe unten); `state` ist `idle`, `holding`
+(MA + Off gehalten, wartet auf Please) oder `shutting_down`.
 
 `generation` steigt nach jedem erfolgreichen Apply. `busy` ist `true`, während
 ein Apply läuft. Zugangsdaten sind nie enthalten.
@@ -507,6 +512,51 @@ getrennt.
 | 422 | `validation_error` | Feld ist ungültig; `field` nennt es |
 | 500 | `apply_failed` | Aktivierung, Persistenz oder Rollback fehlgeschlagen |
 | 503 | `network_unavailable` | NetworkManager, `nmcli` oder Berechtigung fehlt |
+
+## Ausschalten
+
+Der Pi hat keinen Ausschalter. Der Daemon fährt ihn über `systemctl poweroff`
+herunter, entweder auf Anforderung der Oberfläche oder über die
+Cherry-Tastenkombination (`[power]` in der Konfiguration, siehe README). Beide
+Wege laufen durch denselben Dienst; die PIN-Sperre gilt wie für alle
+nicht-öffentlichen Pfade.
+
+### `GET /api/power`
+
+```json
+{
+  "enabled": true,
+  "available": true,
+  "combo": true,
+  "state": "idle",
+  "confirm_remaining": null,
+  "error": null
+}
+```
+
+`available` ist `false`, wenn `[power] enabled = false` gilt oder der Rechner
+kein Linux mit systemd hat (außer mit `--dry-run`). `confirm_remaining` ist nur bei
+`state = "holding"` gesetzt (noch fehlende Please-Drücke). `error` nennt den
+letzten gescheiterten Versuch, etwa eine fehlende polkit-Regel.
+
+### `POST /api/power/shutdown`
+
+Körper: `{"confirm": true}`. Ohne `confirm: true` antwortet der Daemon mit 422.
+Bei Erfolg antwortet er mit **202** und dem Status (`state = "shutting_down"`)
+und fährt etwa 1,5 Sekunden später herunter, damit die Antwort noch ankommt.
+Mit `--dry-run` wird der Aufruf nur protokolliert.
+
+| Status | `error` | Bedeutung |
+| --- | --- | --- |
+| 403 | `power_disabled` | `[power] enabled = false` |
+| 409 | `shutdown_pending` | Das Herunterfahren läuft bereits |
+| 422 | `confirmation_required` | `confirm: true` fehlt |
+| 500 | `shutdown_failed` | Ein anderer Fehler beim Anstoßen |
+| 503 | `power_unavailable` | Kein systemd, oder der Dienst ist nicht aktiv |
+
+Scheitert `systemctl poweroff` selbst (zum Beispiel ohne
+`/etc/polkit-1/rules.d/50-ma2pi-power.rules`), bleibt der Daemon im Zustand
+`idle`, `error` im Status nennt den Grund und das Journal enthält die Meldung.
 
 ## Fehler
 

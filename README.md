@@ -189,6 +189,25 @@ Then:
 `deploy/install.sh` only enables the unit. Start it explicitly after the
 configuration is valid.
 
+### Switching the Pi off, and the SD card
+
+The Pi has no power button. Use **Erweitert → Pi herunterfahren** or the
+Cherry chord (see [`[power]`](#power)) and unplug it once the green LED is off.
+To survive an occasional plain unplug anyway, `install.sh` also reduces writes
+to the SD card:
+
+* the systemd journal is kept in RAM (`/etc/systemd/journald.conf.d/50-ma2pi-volatile.conf`,
+  `Storage=volatile`, 64 MB). Logs are lost on reboot or power loss; read them
+  with `journalctl -u ma2pi -f` while the daemon runs. An old persistent journal
+  stays in `/var/log/journal` until you delete it,
+* the root file system is mounted with `noatime` (Raspberry Pi OS does this by
+  default; otherwise `install.sh` adds it to `/etc/fstab` and keeps
+  `/etc/fstab.ma2pi-backup`),
+* an active `dphys-swapfile` is only reported, not changed.
+
+The daemon itself writes only when you save in the web interface, and it does
+so atomically (`fsync`, then rename).
+
 ## Configuration reference
 
 The file is TOML with `schema_version = 1`. Unknown keys are rejected. A
@@ -246,6 +265,37 @@ The password and its MD5 hash are never logged.
 | `port` | int | `8080` | HTTP/WebSocket port, 1–65535. |
 | `pin_enabled` | bool | `false` | PIN gate for the UI and every non-public API path. |
 | `pin` | string | `""` | 4–12 digits; empty means no PIN. Set one to protect the UI. |
+
+### `[power]`
+
+Shutting the Pi down cleanly, so it does not have to be unplugged while it is
+writing to the SD card. Two ways trigger it: the **Pi herunterfahren** button on
+the *Erweitert* page (`POST /api/power/shutdown`) and a key chord on the Cherry.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `enabled` | bool | `true` | Master switch for the button, the API and the chord. |
+| `combo` | bool | `true` | Key chord on the keyboard. |
+| `hold_controls` | list of strings | `["ma", "off"]` | 2–4 logical controls that must be held together. |
+| `confirm_control` | string | `"please_big"` | Control that confirms; must not be in `hold_controls`. |
+| `confirm_presses` | int | `2` | Presses of `confirm_control` needed, 1–5. |
+| `console_notice` | bool | `true` | Report each step on the onPC with `Echo "…"` (System Monitor). |
+
+With the defaults: **hold MA + Off and press Please twice** while holding both.
+There are no time limits; letting go of MA or Off cancels. The key that
+completes the chord is withheld from the onPC and every Please while the chord
+is held is swallowed, so neither Off nor Please ever executes a command line. If
+you let go before the first Please, the withheld key is passed on to the onPC as
+an ordinary press (a quick tap of MA + Off therefore arrives when you release).
+After one Please, cancelling drops the withheld key instead. Pressing any other
+key while holding cancels as well. Learn mode and a lost device reset the chord.
+
+The daemon runs `systemctl poweroff` as the unprivileged `ma2pi` user.
+`deploy/50-ma2pi-power.rules` (installed by `install.sh`) grants exactly
+`org.freedesktop.login1.power-off` (plus its multiple-sessions variant) and
+nothing else. With `--dry-run` the request is logged but never executed, so it
+is safe to try on a development machine. The Pi can only be started again by
+cutting and restoring its power.
 
 ### Web interface and offline operation
 
@@ -950,6 +1000,9 @@ blocked. The service still runs unprivileged; `ProtectSystem=strict` and
   `npm run check:offline` (see above).
 * The PIN is held as an HTTP cookie session. After a service restart you have
   to log in again.
+* Without a PIN, anyone in the LAN can power the Pi off (`POST /api/power/shutdown`
+  needs `{"confirm": true}` and the request header, nothing more). Set a PIN or
+  `[power] enabled = false` if that matters.
 
 ### Devices and mapping
 
@@ -1232,7 +1285,8 @@ journalctl -u ma2pi -n 50 --no-pager
 `install.sh` replaces the code and venv contents but leaves
 `/etc/ma2pi/config.toml` and `/etc/ma2pi/ma2pi.password` untouched. It also
 installs `/etc/polkit-1/rules.d/50-ma2pi-network.rules` for the **Network**
-page; the rule can be removed independently if the page is not needed.
+page and `/etc/polkit-1/rules.d/50-ma2pi-power.rules` for shutting down; each
+rule can be removed independently if the feature is not needed.
 
 Rollback:
 
@@ -1241,6 +1295,10 @@ sudo systemctl disable --now ma2pi.service
 sudo rm -f /etc/systemd/system/ma2pi.service
 sudo rm -f /etc/udev/rules.d/99-ma2pi.rules
 sudo rm -f /etc/polkit-1/rules.d/50-ma2pi-network.rules
+sudo rm -f /etc/polkit-1/rules.d/50-ma2pi-power.rules
+# optional, persistent journal again:
+sudo rm -f /etc/systemd/journald.conf.d/50-ma2pi-volatile.conf
+sudo systemctl restart systemd-journald.service
 sudo systemctl daemon-reload
 sudo udevadm control --reload-rules
 # optional, removes code and user but keeps /etc/ma2pi:

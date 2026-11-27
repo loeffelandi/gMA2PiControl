@@ -14,6 +14,9 @@ BACKUP_DIR="${STATE_DIR}/backups"
 SERVICE_FILE="/etc/systemd/system/ma2pi.service"
 UDEV_FILE="/etc/udev/rules.d/99-ma2pi.rules"
 POLKIT_FILE="/etc/polkit-1/rules.d/50-ma2pi-network.rules"
+POLKIT_POWER_FILE="/etc/polkit-1/rules.d/50-ma2pi-power.rules"
+JOURNALD_DIR="/etc/systemd/journald.conf.d"
+JOURNALD_FILE="${JOURNALD_DIR}/50-ma2pi-volatile.conf"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ "${EUID}" -ne 0 ]]; then
@@ -88,6 +91,58 @@ chown -R root:root "${VENV_DIR}"
 install -m 0644 "${REPO_DIR}/deploy/ma2pi.service" "${SERVICE_FILE}"
 install -m 0644 "${REPO_DIR}/deploy/99-ma2pi.rules" "${UDEV_FILE}"
 install -m 0644 -o root -g root "${REPO_DIR}/deploy/50-ma2pi-network.rules" "${POLKIT_FILE}"
+install -m 0644 -o root -g root "${REPO_DIR}/deploy/50-ma2pi-power.rules" "${POLKIT_POWER_FILE}"
+
+# Reduce SD-card writes: the Pi is switched off by pulling the plug.
+# 1. Keep the systemd journal in RAM.
+install -d -o root -g root -m 0755 "${JOURNALD_DIR}"
+JOURNALD_CHANGED=0
+if ! cmp -s "${REPO_DIR}/deploy/journald-ma2pi.conf" "${JOURNALD_FILE}" 2>/dev/null; then
+    install -m 0644 -o root -g root "${REPO_DIR}/deploy/journald-ma2pi.conf" "${JOURNALD_FILE}"
+    JOURNALD_CHANGED=1
+fi
+
+# 2. Make sure the root file system is mounted with noatime (Raspberry Pi OS
+#    already does).  /etc/fstab is only touched when the root line is a plain
+#    ext4 entry without it, and a backup is kept next to it.
+ensure_noatime() {
+    local fstab="/etc/fstab" tmp
+    if [[ ! -f "${fstab}" ]]; then
+        return 0
+    fi
+    if [[ "$(findmnt -no OPTIONS / 2>/dev/null || true)" == *noatime* ]]; then
+        echo "Root-Dateisystem: noatime ist bereits aktiv."
+        return 0
+    fi
+    if ! awk '!/^[[:space:]]*#/ && NF >= 4 && $2 == "/" && $3 == "ext4" { found = 1 } END { exit !found }' "${fstab}"; then
+        echo "Hinweis: kein ext4-Eintrag für / in ${fstab}; noatime bitte selbst setzen." >&2
+        return 0
+    fi
+    tmp="$(mktemp)"
+    awk '
+        !/^[[:space:]]*#/ && NF >= 4 && $2 == "/" && $3 == "ext4" && $4 !~ /(^|,)noatime(,|$)/ {
+            $4 = $4 ",noatime"
+        }
+        { print }
+    ' "${fstab}" > "${tmp}"
+    if [[ "$(diff "${fstab}" "${tmp}" | grep -c '^>')" -ne 1 ]]; then
+        echo "Hinweis: ${fstab} nicht angepasst (unerwartetes Format); noatime bitte selbst setzen." >&2
+        rm -f "${tmp}"
+        return 0
+    fi
+    cp -a "${fstab}" "${fstab}.ma2pi-backup"
+    cat "${tmp}" > "${fstab}"
+    rm -f "${tmp}"
+    mount -o remount,noatime / || echo "Hinweis: Remount fehlgeschlagen; noatime gilt nach dem nächsten Neustart." >&2
+    echo "Root-Dateisystem: noatime in ${fstab} ergänzt (Backup: ${fstab}.ma2pi-backup)."
+}
+ensure_noatime
+
+# 3. Swap on the SD card is not changed; only point it out.
+if systemctl is-active --quiet dphys-swapfile.service 2>/dev/null; then
+    echo "Hinweis: dphys-swapfile schreibt auf die SD-Karte. Abschalten (nur bei genug RAM):" >&2
+    echo "    sudo systemctl disable --now dphys-swapfile.service" >&2
+fi
 
 # Never overwrite an existing configuration or password.  A legacy
 # /etc/ma2pi/config.toml is migrated once into the writable state directory by
@@ -122,6 +177,11 @@ if [[ ! -f "${STATE_DIR}/ma2pi.password" ]]; then
 fi
 
 systemctl daemon-reload
+if [[ "${JOURNALD_CHANGED}" -eq 1 ]]; then
+    systemctl restart systemd-journald.service
+    echo "Journal läuft jetzt im RAM (Storage=volatile). Ein altes Journal liegt noch in /var/log/journal;"
+    echo "    zum Freigeben: sudo rm -rf /var/log/journal"
+fi
 udevadm control --reload-rules
 udevadm trigger --subsystem-match=input --subsystem-match=sound
 systemctl enable ma2pi.service
@@ -134,3 +194,4 @@ echo "3. sudo -u ${APP_USER} ${VENV_DIR}/bin/python -m ma2pi \\"
 echo "       --config ${STATE_DIR}/config.toml --check-config"
 echo "4. sudo systemctl restart ma2pi.service && journalctl -u ma2pi -f"
 echo "5. Weboberfläche im LAN öffnen: http://<pi-adresse>:8080/"
+echo "6. Pi ausschalten: Erweitert > Pi herunterfahren oder am Cherry MA + Off halten, dann 2x Please."

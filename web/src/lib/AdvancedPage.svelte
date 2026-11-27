@@ -22,6 +22,36 @@
   let pin = $state('');
   let pinSet = $state(false);
 
+  let powerEnabled = $state(true);
+  let powerCombo = $state(true);
+  let holdControls = $state<string[]>(['ma', 'off']);
+  let confirmControl = $state('please_big');
+  let confirmPresses = $state(2);
+  let confirming = $state(false);
+  let powerBusy = $state(false);
+  let shuttingDown = $state(false);
+  let powerError = $state<string | null>(null);
+
+  const CONTROL_LABELS: Record<string, string> = {
+    ma: 'MA',
+    off: 'Off',
+    please_big: 'Please',
+  };
+
+  function controlLabel(control: string): string {
+    return CONTROL_LABELS[control] ?? control;
+  }
+
+  let comboHint = $derived(
+    !powerEnabled
+      ? 'Herunterfahren ist in [power] abgeschaltet.'
+      : powerCombo
+        ? `Am Cherry: ${holdControls.map(controlLabel).join(' + ')} gedrückt halten und dabei ` +
+          `${confirmPresses}× ${controlLabel(confirmControl)} drücken. ` +
+          'Die onPC zeigt jeden Schritt im System Monitor.'
+        : 'Die Cherry-Tastenkombination ist in [power] abgeschaltet.',
+  );
+
   function errorText(error: unknown): string {
     if (error instanceof ApiError) return error.detail || error.message;
     if (error instanceof Error) return error.message;
@@ -34,11 +64,19 @@
       const rateLimit = (config.rate_limit ?? {}) as Record<string, unknown>;
       const logging = (config.logging ?? {}) as Record<string, unknown>;
       const web = (config.web ?? {}) as Record<string, unknown>;
+      const power = (config.power ?? {}) as Record<string, unknown>;
       rate = Number(rateLimit.messages_per_second ?? 25);
       burst = Number(rateLimit.burst ?? 10);
       level = String(logging.level ?? 'INFO');
       pinEnabled = Boolean(web.pin_enabled ?? false);
       pinSet = Boolean(web.pin_set ?? false);
+      powerEnabled = Boolean(power.enabled ?? true);
+      powerCombo = Boolean(power.combo ?? true);
+      if (Array.isArray(power.hold_controls)) {
+        holdControls = power.hold_controls.map(String);
+      }
+      confirmControl = String(power.confirm_control ?? 'please_big');
+      confirmPresses = Number(power.confirm_presses ?? 2);
     } catch (error) {
       message = { ok: false, text: errorText(error) };
     } finally {
@@ -71,6 +109,20 @@
       message = { ok: false, text: errorText(error) };
     } finally {
       busy = false;
+    }
+  }
+
+  async function shutdown(): Promise<void> {
+    powerBusy = true;
+    powerError = null;
+    try {
+      await api.shutdown();
+      shuttingDown = true;
+      confirming = false;
+    } catch (error) {
+      powerError = errorText(error);
+    } finally {
+      powerBusy = false;
     }
   }
 </script>
@@ -127,5 +179,43 @@
         {message.text}
       </p>
     {/if}
+
+    <h2>Raspberry Pi</h2>
+    <div class="power">
+      {#if shuttingDown}
+        <p class="message" role="status">
+          Der Pi fährt herunter. Den Strom erst trennen, wenn die grüne LED am Pi
+          aus ist (etwa 20 Sekunden).
+        </p>
+      {:else if confirming}
+        <p>
+          Pi wirklich herunterfahren? Er startet erst wieder, wenn der Strom
+          getrennt und neu verbunden wird.
+        </p>
+        <div class="power-actions">
+          <button type="button" class="danger" onclick={shutdown} disabled={powerBusy}>
+            Ja, herunterfahren
+          </button>
+          <button type="button" onclick={() => (confirming = false)} disabled={powerBusy}>
+            Abbrechen
+          </button>
+        </div>
+      {:else}
+        <div class="power-actions">
+          <button
+            type="button"
+            class="danger"
+            onclick={() => (confirming = true)}
+            disabled={!powerEnabled}
+          >
+            Pi herunterfahren
+          </button>
+        </div>
+      {/if}
+      {#if powerError}
+        <p class="message error" role="alert">{powerError}</p>
+      {/if}
+      <p class="muted">{comboHint}</p>
+    </div>
   {/if}
 </section>

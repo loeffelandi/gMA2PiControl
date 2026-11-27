@@ -1,0 +1,15 @@
+// Allow the ma2pi service to power the Raspberry Pi off (web button and Cherry
+// key chord) through systemd-logind.  Only power-off is granted; reboot, halt
+// and suspend stay denied.  "multiple-sessions" covers an open SSH login.
+polkit.addRule(function (action, subject) {
+    if (subject.user !== "ma2pi") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (
+        action.id === "org.freedesktop.login1.power-off" ||
+        action.id === "org.freedesktop.login1.power-off-multiple-sessions"
+    ) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

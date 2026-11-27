@@ -34,6 +34,7 @@ from .midi_input import MidiManager, list_midi_devices
 from .midi_remote_service import MidiRemoteService
 from .network import NetworkManagerBackend, NetworkService, PendingStore
 from .playback import PlaybackRouter
+from .power import PowerService
 from .topology import ExecutorTopology
 from .recovery import (
     MONITOR_INTERVAL as RECOVERY_MONITOR_INTERVAL,
@@ -98,7 +99,12 @@ async def _process_input(
     playback: PlaybackRouter | None = None,
     device_learn: DeviceLearnManager | None = None,
     activity: ActivityTracker | None = None,
+    power: PowerService | None = None,
 ) -> None:
+    def dispatch(event: InputEvent) -> None:
+        if playback is None or not playback.handle(event):
+            engine.handle(event)
+
     while True:
         item = await queue.get()
         if activity is not None:
@@ -111,6 +117,8 @@ async def _process_input(
                     item.device or "system", item.kind, describe_input(item)
                 )
         if isinstance(item, DeviceLost):
+            if power is not None:
+                power.reset_combo()
             if learn.active:
                 _publish_learn(bus, learn.cancel())
             if device_learn is not None:
@@ -123,6 +131,8 @@ async def _process_input(
         elif learn.active:
             # Learn owns all input while a session is open; no mapping action
             # may reach the onPC, including the captured key's release.
+            if power is not None:
+                power.reset_combo()
             _publish_learn(bus, learn.feed(item))
         elif (
             device_learn is not None
@@ -131,9 +141,19 @@ async def _process_input(
         ):
             # A device learn session consumes the selected device completely,
             # including events that were queued before it started.
+            if power is not None:
+                power.reset_combo()
             continue
-        elif playback is None or not playback.handle(item):
-            engine.handle(item)
+        else:
+            if power is not None:
+                # The shutdown chord withholds its last key and swallows the
+                # confirm presses, so none of them reaches the onPC.
+                outcome = power.filter(item)
+                for replayed in outcome.forward:
+                    dispatch(replayed)
+                if outcome.swallow:
+                    continue
+            dispatch(item)
 
 
 def _publish_learn(bus, result) -> None:
@@ -159,6 +179,7 @@ def _status_snapshot(
     activity: ActivityTracker | None = None,
     presence: dict[str, dict] | None = None,
     midi_remote: MidiRemoteService | None = None,
+    power: PowerService | None = None,
 ) -> dict:
     """Runtime status for the UI; never contains credentials."""
     snapshot = {
@@ -182,6 +203,11 @@ def _status_snapshot(
         "presence": presence if presence is not None else {},
         "midi_remote": (
             midi_remote.status() if midi_remote is not None else {"enabled": False}
+        ),
+        "power": (
+            power.status()
+            if power is not None
+            else {"enabled": False, "available": False, "state": "idle"}
         ),
     }
     return snapshot
@@ -372,6 +398,7 @@ async def _start_web(
     hid: HidManager | None = None,
     midi: MidiManager | None = None,
     midi_remote: MidiRemoteService | None = None,
+    power: PowerService | None = None,
 ):
     """Start the embedded UI; return ``(runner, broadcast_task, bus)`` or ``None``."""
     from aiohttp import web as aiohttp_web
@@ -398,12 +425,13 @@ async def _start_web(
     )
     app = create_app(
         config,
-        status_provider=lambda: _status_snapshot(client, store, activity, presence(), midi_remote),
+        status_provider=lambda: _status_snapshot(client, store, activity, presence(), midi_remote, power),
         config_store=store,
         learn_manager=learn,
         device_learn_manager=device_learn,
         network_service=network,
         recovery_service=recovery,
+        power_service=power,
     )
     runner = aiohttp_web.AppRunner(app, access_log=None)
     await runner.setup()
@@ -440,7 +468,7 @@ async def _start_web(
             tick += 1
             if tick % 4 == 0 and bus.subscriber_count:
                 bus.publish(
-                    {"type": "status", "data": _status_snapshot(client, store, activity, presence(), midi_remote)}
+                    {"type": "status", "data": _status_snapshot(client, store, activity, presence(), midi_remote, power)}
                 )
 
     task = asyncio.create_task(broadcast(), name="ma2pi-web-status")
@@ -497,6 +525,12 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
         client.add_connection_lost_callback(playback.on_connection_lost)
     hid = HidManager(config)
     midi = MidiManager(config)
+    power = PowerService(
+        config.power,
+        dry_run=dry_run,
+        notify=lambda text: client.command(f'Echo "{text}"'),
+        record=lambda text: activity.record_rx("system", "power", text),
+    )
     midi.set_raw_hook(device_learn.handle_raw)
     midi.set_send_hook(
         lambda device, data: activity.record_tx(device, "midi", describe_midi(data))
@@ -509,6 +543,7 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
     client.add_connection_lost_callback(midi_remote.request_sync)
     led_holder: dict = {}
     store.add_activate_hook(midi_remote.set_config)
+    store.add_activate_hook(power.set_config)
     store.add_activate_hook(hid.set_config)
     store.add_activate_hook(midi.set_config)
     store.add_activate_hook(feedback.set_config)
@@ -543,7 +578,7 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
     engine.modifier_hook = _modifier_led
     engine.screen_modifier_hook = client.set_screen_modifier
     web_service = await _start_web(
-        config, client, store, learn, device_learn, activity, hid, midi, midi_remote
+        config, client, store, learn, device_learn, activity, hid, midi, midi_remote, power
     )
     bus = web_service[2] if web_service is not None else None
     if bus is not None and hasattr(device_learn, "publish"):
@@ -554,7 +589,9 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
     hid_task = asyncio.create_task(hid.run(queue), name="ma2pi-hid")
     midi_task = asyncio.create_task(midi.run(queue), name="ma2pi-midi")
     input_task = asyncio.create_task(
-        _process_input(queue, engine, learn, bus, playback, device_learn, activity),
+        _process_input(
+            queue, engine, learn, bus, playback, device_learn, activity, power
+        ),
         name="ma2pi-input",
     )
     learn_task = asyncio.create_task(_learn_loop(learn, bus), name="ma2pi-learn")
@@ -622,6 +659,7 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
         # Lets the repeated Note-Offs of the releases above leave first.
         await asyncio.sleep(0.05)
         await midi_remote.close()
+        await power.close()
         await client.shutdown()
         if web_service is not None:
             web_runner, web_task, web_bus, network, recovery_task = web_service

@@ -35,6 +35,22 @@ channels = [16]                               # reservierte Kanäle, je 128 Ziel
 sync = "auto"                                 # auto | check | off
 telnet_port = 30000
 
+# Pi sauber herunterfahren, statt den Stecker zu ziehen: Knopf unter
+# Erweitert in der Web-Oberfläche und Tastenkombination am Cherry. Kombination:
+# alle hold_controls gedrückt halten und dabei confirm_control
+# confirm_presses-mal drücken (MA + Off halten, 2x Please). Ohne Zeitlimit;
+# Loslassen einer Kombi-Taste bricht ab. Die zuletzt gedrückte Kombi-Taste und
+# die Please-Drücke erreichen die onPC nicht; bei Abbruch ohne Please wird die
+# zurückgehaltene Taste nachgereicht. console_notice meldet den Stand per Echo
+# in der MA (System Monitor).
+[power]
+enabled = true
+combo = true
+hold_controls = ["ma", "off"]
+confirm_control = "please_big"
+confirm_presses = 2
+console_notice = true
+
 # Canbus-Keycodes für den LUA-Hardkey-Transport. Quelle: MIDIMonster maweb.c
 # (Community-Wissen, nicht offiziell dokumentiert). verified = false sendet nichts;
 # true = vom Benutzer freigegeben.

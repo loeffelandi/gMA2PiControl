@@ -40,6 +40,13 @@ from ..network import (
     NoPending as NetworkNoPending,
     PendingExists as NetworkPendingExists,
 )
+from ..power import (
+    PowerDisabled,
+    PowerError,
+    PowerService,
+    PowerUnavailable,
+    ShutdownPending,
+)
 from ..recovery import RecoveryError, RecoveryService, RecoveryValidationError
 from ..runtime import ApplyBusy, ConfigStore, StaleConfig
 from .devices import detect_devices
@@ -167,6 +174,7 @@ LEARN_KEY: web.AppKey[LearnManager] = web.AppKey("learn", LearnManager)
 DEVICE_LEARN_KEY: web.AppKey[Any] = web.AppKey("device_learn", Any)
 NETWORK_KEY: web.AppKey[NetworkService] = web.AppKey("network", NetworkService)
 RECOVERY_KEY: web.AppKey[RecoveryService] = web.AppKey("recovery", RecoveryService)
+POWER_KEY: web.AppKey[PowerService] = web.AppKey("power", PowerService)
 DIST_KEY: web.AppKey[Path] = web.AppKey("dist_dir", Path)
 BUS_KEY: web.AppKey[EventBus] = web.AppKey("bus", EventBus)
 PIN_SESSIONS_KEY: web.AppKey[PinSessions] = web.AppKey("pin_sessions", PinSessions)
@@ -411,6 +419,7 @@ def create_app(
     device_learn_manager: Any | None = None,
     network_service: NetworkService | None = None,
     recovery_service: RecoveryService | None = None,
+    power_service: PowerService | None = None,
     pin_clock: Callable[[], float] = time.monotonic,
     event_queue_size: int | None = None,
 ) -> web.Application:
@@ -439,6 +448,8 @@ def create_app(
         app[RECOVERY_KEY] = recovery_service
         if recovery_service.publish is None:
             recovery_service.publish = bus.publish
+    if power_service is not None:
+        app[POWER_KEY] = power_service
 
     async def auth_status(request: web.Request) -> web.Response:
         current = _current_config(request.app)
@@ -922,6 +933,35 @@ def create_app(
         except Exception as exc:
             return _json_error(500, "recovery_failed", str(exc))
 
+    async def get_power(request: web.Request) -> web.Response:
+        service = request.app.get(POWER_KEY)
+        if service is None:
+            return _json_error(503, "power_unavailable", "Ausschalten nicht aktiv")
+        return web.json_response(service.status())
+
+    async def power_shutdown(request: web.Request) -> web.Response:
+        service = request.app.get(POWER_KEY)
+        if service is None:
+            return _json_error(503, "power_unavailable", "Ausschalten nicht aktiv")
+        body = await _json_body(request)
+        if body is None:
+            return _json_error(400, "invalid_json", "JSON-Objekt erwartet")
+        if body.get("confirm") is not True:
+            return _json_error(
+                422, "confirmation_required", "confirm: true erforderlich"
+            )
+        try:
+            await service.shutdown("Web-Oberfläche")
+        except PowerDisabled as exc:
+            return _json_error(403, "power_disabled", str(exc))
+        except PowerUnavailable as exc:
+            return _json_error(503, "power_unavailable", str(exc))
+        except ShutdownPending as exc:
+            return _json_error(409, "shutdown_pending", str(exc))
+        except PowerError as exc:
+            return _json_error(500, "shutdown_failed", str(exc))
+        return web.json_response(service.status(), status=202)
+
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/version", version)
     app.router.add_get("/api/auth/status", auth_status)
@@ -951,6 +991,8 @@ def create_app(
     app.router.add_post("/api/network/rollback", rollback_network)
     app.router.add_get("/api/recovery", get_recovery)
     app.router.add_put("/api/recovery", put_recovery)
+    app.router.add_get("/api/power", get_power)
+    app.router.add_post("/api/power/shutdown", power_shutdown)
 
     _mount_static(app, dist)
     return app

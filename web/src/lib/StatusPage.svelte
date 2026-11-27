@@ -34,6 +34,7 @@
   );
   let devicesError = $state<string | null>(null);
   let pulses = $state<Record<string, boolean>>({});
+  let power = $derived(snapshot.status?.power ?? null);
 
   let previousCounts: Record<string, number> = Object.create(null);
   let pulseTimers: Record<string, ReturnType<typeof setTimeout>> =
@@ -359,6 +360,14 @@
       {:else}
         Keine Live-Verbindung zum Daemon.
       {/if}
+    </p>
+  {/if}
+
+  {#if power?.state === 'shutting_down'}
+    <p class="banner warn" role="status">Der Pi fährt herunter.</p>
+  {:else if power?.state === 'holding'}
+    <p class="banner warn" role="status">
+      Ausschalten: noch {power.confirm_remaining ?? 0}× Please drücken, MA + Off gehalten.
     </p>
   {/if}
 
