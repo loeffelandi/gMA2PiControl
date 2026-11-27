@@ -15,7 +15,7 @@ hardkey_release_value = 0.0                   # value 0 = Taste losgelassen
 page_refresh_interval = 1.0                   # veraltet, ohne Wirkung (kein presetTypes-Polling mehr)
 
 # Screen-Tasten laufen über einen Keystroke-Helper auf dem onPC-PC (nicht über
-# Web Remote): Insert an -> Ctrl+Alt+F1..F6 -> Insert aus. Der Helper lauscht
+# Web Remote): Insert an -> Ctrl+Alt+F2..F6 -> Insert aus (Screen 1 fokussiert nur das Fenster). Der Helper lauscht
 # auf UDP und sendet die Shortcuts. Siehe docs/screen-helper.ahk.
 [screen_helper]
 enabled = true

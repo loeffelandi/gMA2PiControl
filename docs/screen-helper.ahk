@@ -7,7 +7,8 @@ SendMode "Input"
 ; ============================================================
 ;  grandMA2 onPC Screen-Helper
 ;  Lauscht auf UDP und sendet die Screen-Shortcuts als echte
-;  PC-Tastendrücke:  Insert (an) -> Ctrl+Alt+F1..F6 -> Insert (aus)
+;  PC-Tastendrücke:  Insert (an) -> Ctrl+Alt+F2..F6 -> Insert (aus)
+;  Screen 1 holt nur das onPC-Fenster in den Vordergrund (kein Shortcut).
 ;
 ;  Der Pi (ma2pi) sendet Datagramme "screen 1" .. "screen 6".
 ; ============================================================
@@ -88,13 +89,18 @@ Handle(msg) {
 
 SendScreen(n) {
     global ONPC_TITLE
-    ; Screen 1 ist das Hauptfenster: WinActivate holt es sinnvoll nach vorne.
+    ; Screen 1 ist das Hauptfenster: nur den Fokus setzen, keine Tasten senden.
     ; Screen 2-6: KEIN WinActivate (würde die anderen offenen Screens verdecken).
-    if (n = 1 && WinExist(ONPC_TITLE)) {
-        WinActivate
-        Sleep 60
+    if (n = 1) {
+        if WinExist(ONPC_TITLE) {
+            WinActivate
+            LogLine("Screen 1 fokussiert")
+        } else {
+            LogLine("Screen 1: Fenster '" ONPC_TITLE "' nicht gefunden")
+        }
+        return
     }
-    ; Struktur fest: Insert an -> Kombi -> Insert aus.
+    ; Screen 2-6, Struktur fest: Insert an -> Kombi -> Insert aus.
     Send "{Insert}"          ; Shortcut-Modus AN
     Sleep 300
     Send "^!{F" n "}"        ; Ctrl+Alt+Fn  (Screen n toggeln)
