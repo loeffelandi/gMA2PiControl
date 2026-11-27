@@ -1,10 +1,17 @@
-# gMA2PiControl — Cherry keyboard and ASL encoders for grandMA2 onPC
+# gMA2PiControl — Cherry keyboard, ASL encoders and MIDICRAFT controllers for grandMA2 onPC
 
-`ma2pi` is a small Python 3.13 asyncio daemon that maps a Cherry POS Keyboard
-G86-63400EUADAA and an ASL MK2 E4B3 encoder panel to grandMA2 onPC. The only
-transport to onPC is the **Web Remote WebSocket API** (`ws://<host>:<port>/?ma=1`).
-MIDI is used for controller input and LED output; there is no MIDI,
-OSC, Telnet or Showcockpit path to onPC, and no parameter unlock.
+**gMA2PiControl** is a small Python 3.13 asyncio daemon for the Raspberry Pi
+that maps a Cherry POS Keyboard G86-63400EUADAA, an ASL MK2 E4B3 encoder panel
+and **MIDICRAFT controllers** (ENC, PUSH², FADE², TURN², MIX², SPOT) to
+grandMA2 onPC. Executors, faders, encoders and keys are assigned in a web
+interface; executor state is mirrored back onto the controller LEDs.
+
+The main transport to onPC is the **Web Remote WebSocket API**
+(`ws://<host>:<port>/?ma=1`). MIDI is used for controller input and LED output.
+Optionally, executor buttons can be sent as MIDI notes over RTP-MIDI to MA MIDI
+remotes (see [`[midi_remote]`](#midi_remote-executor-buttons-over-ma-midi-remotes))
+so that Store, Assign and similar commands work like on a console. There is no
+OSC or Showcockpit path to onPC, and no parameter unlock.
 
 > **Name:** the product is called **gMA2PiControl**. The Python package, the
 > `ma2pi` command and the systemd unit keep their technical name so existing
@@ -18,7 +25,10 @@ OSC, Telnet or Showcockpit path to onPC, and no parameter unlock.
 > Status: the software is implemented and the test suite runs on the
 > development machine and on the Pi. The ASL has been identified as a USB-MIDI
 > device, its MIDI backend is implemented, and its note/velocity layout has been
-> verified on the hardware. Remaining acceptance steps (controlled Cherry
+> verified on the hardware. The MIDICRAFT ENC (note layout of bank 1, absolute
+> faders/encoders, LED output) is verified on the device; PUSH², FADE², TURN²,
+> MIX² and SPOT ship as profiles whose notes are taught in with the learn mode.
+> Remaining acceptance steps (controlled Cherry
 > capture, live Web Remote login, ASL LED protocol, Raspberry Pi service
 > installation and hardware smoke/stress tests) are still open. See
 > [Open hardware acceptance](#open-hardware-acceptance).
@@ -26,6 +36,7 @@ OSC, Telnet or Showcockpit path to onPC, and no parameter unlock.
 ## Contents
 
 - [How it works](#how-it-works)
+- [MIDICRAFT support](#midicraft-support)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Configuration reference](#configuration-reference)
@@ -43,18 +54,21 @@ OSC, Telnet or Showcockpit path to onPC, and no parameter unlock.
 ## How it works
 
 ```
-Cherry keyboard ─┐
-                 ├─ evdev ─┐
-                 │         ├─→ normalised InputEvent ─→ MappingEngine ─→ Ma2Client ─→ onPC
-ASL encoders ────┘         │                          (held keys,        (queue,      WebSocket
-                 └─ MIDI ──┘                           chords, encoders)  rate limit)
+Cherry keyboard ──── evdev ─┐
+ASL encoders ─────┐         ├─→ normalised InputEvent ─→ MappingEngine ─→ Ma2Client ─→ onPC
+MIDICRAFT ────────┴─ MIDI ──┘                          (held keys,        (queue,      WebSocket
+                                                        chords, encoders,  rate limit)
+                                                        executors, banks)
+          ▲                                                                    │
+          └──── LED frames (executor state polled from the Web Remote) ◄───────┘
 ```
 
 * `ma2pi/config.py` — strict TOML schema, all references validated before start.
 * `ma2pi/hid_input.py` — evdev enumeration, interface scoring, key/axis
   normalisation, hotplug and encoder decoding.
 * `ma2pi/midi_input.py` — raw ALSA-MIDI enumeration, incremental note parser,
-  button and encoder normalisation for the ASL, hotplug and permission handling.
+  button, fader and encoder normalisation for the ASL and MIDICRAFT devices,
+  per-bank note maps, hotplug and permission handling.
 * `ma2pi/mapping.py` — held-key register, modifier chords, CMD keys, encoder
   accumulation, acceleration and Normal/Fine/Ultra resolution.
 * `ma2pi/ma2_client.py` — handshake, login, keepalive, reconnect, one global
@@ -67,6 +81,74 @@ Releases and commands are never dropped. Encoder frames are coalesced per
 target. On a connection loss the local key state is cleared and no stale
 presses are replayed.
 
+## MIDICRAFT support
+
+MIDICRAFT controllers are USB-MIDI devices (vendor `04d8`; the ENC is
+`04d8:e78c`). They appear as raw MIDI nodes (`/dev/snd/midiC*`) and are read
+with `backend = "midi"`. Supported models:
+
+| Model | Controls |
+| --- | --- |
+| `ENC` | 5 faders, 20 buttons, 5 absolute encoders (verified) |
+| `PUSH²` | 30 buttons |
+| `FADE²` | 5 faders, 20 buttons |
+| `TURN²` | 15 buttons, 15 pots |
+| `MIX²` | 5 faders, 15 buttons, 5 pots |
+| `SPOT` | 5 faders, 10 buttons, 10 pots |
+
+**How it works**
+
+1. **Input.** Each device sends MIDI notes: buttons as note-on (press) and
+   note-off, faders and absolute encoders as note-on with the velocity
+   (0–127) as position. `ma2pi` keeps one raw-MIDI handle per device open for
+   the daemon lifetime and turns the notes into logical controls such as
+   `mc_fader_1` or `mc_row1_3`.
+2. **Banks.** A MIDICRAFT page change switches the MIDI channel and the note
+   assignment together and is not announced by the device. Each profile
+   therefore declares its control inventory and one note map per bank
+   (channel = bank number). Bank 1 of the ENC is shipped with measured notes;
+   all other banks and the other models are filled by the **learn mode** in the
+   web interface (**Geräte** tab → *Noten anlernen*), which asks you to operate
+   each still unbound control. The bank in use is selected in the UI.
+3. **Mapping.** Controls are assigned to grandMA2 executors in the **Geräte**
+   or **Mapping** tab: faders and encoders to executor faders, buttons to
+   executor buttons 1–3, or to hardkeys and commands. A target with
+   `page = "current"` follows the active master page. Higher banks reuse the
+   bank 1 assignment shifted by the bank size (for example bank 2 → executors
+   6–10), unless a bank has its own override. Absolute encoders can be
+   accelerated: slow turns stay 1:1, fast turns cover the whole range.
+4. **Output.** Faders and encoders are sent over the Web Remote
+   (`playbacks_userInput`), buttons over the Web Remote or, with
+   `[midi_remote]`, as MIDI notes to the MA so that Store/Assign work.
+5. **LED feedback.** `ma2pi` polls the executor state from the Web Remote and
+   lights the 15 RGB buttons of the ENC in the executor's colour: bright when
+   running, dark when stopped. Frames use the `midicraft-v2` protocol, are
+   rate-limited per device (`frame_interval_ms`) and are re-sent per bank
+   (`refresh_interval_ms`), because the ENC drops LED notes of banks it is not
+   showing. Several MIDICRAFT devices and an ASL run side by side, each with
+   its own protocol.
+
+A device is added to `config.toml` like this (see
+[`[devices.<name>]`](#devicesname) and
+[`[profiles.<name>.led_feedback]`](#profilesnameled_feedback) for all keys):
+
+```toml
+[devices.midicraft-enc]
+backend = "midi"
+vendor_id = 0x04d8
+product_id = 0xe78c
+name_contains = "MIDICRAFT ENC"
+profile = "midicraft-enc"
+
+[profiles.midicraft-enc.led_feedback]
+protocol = "midicraft-v2"
+led_notes = [65, 66, 67, 68, 69, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84]
+```
+
+The note layout, the shipped executor assignment and the LED protocol are
+documented in the configuration reference below. The device must be the only
+reader of its `/dev/snd/midiC*` node.
+
 ## Requirements
 
 * Raspberry Pi OS Trixie / Debian 13 (other Linux distributions work in
@@ -78,7 +160,8 @@ presses are replayed.
 * NetworkManager with `nmcli` and Polkit for the **Netzwerk** page. The
   installer grants `ma2pi` only the NetworkManager actions needed to change and
   activate a system connection and to share WiFi as an access point (recovery hotspot).
-* The Cherry keyboard and the ASL panel connected by USB.
+* The Cherry keyboard, the ASL panel and/or MIDICRAFT controllers connected by
+  USB.
 
 Install the OS packages once:
 

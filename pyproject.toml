@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ma2pi"
 version = "0.1.0"
-description = "Cherry POS keyboard and ASL encoders to grandMA2 onPC via Web Remote"
+description = "gMA2PiControl: Cherry POS keyboard, ASL encoders and MIDICRAFT controllers to grandMA2 onPC via Web Remote"
 requires-python = ">=3.13"
 dependencies = [
     "websockets>=13",
