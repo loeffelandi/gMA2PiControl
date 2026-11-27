@@ -417,3 +417,121 @@ def test_redacted_config_preserves_custom_encoder_dot_control_id(make_config):
     payload["web"].pop("pin_set", None)
     reparsed = parse_config(payload, source_path="<roundtrip>")
     assert reparsed.profiles["banked-enc"].controls[0].encoder_id == 9
+
+
+async def test_get_config_sends_the_generation_as_etag(tmp_path):
+    _, store = _setup(tmp_path)
+    client = await _app(store)
+    try:
+        response = await client.get("/api/config")
+        assert response.status == 200
+        assert response.headers["ETag"] == '"0"'
+    finally:
+        await client.close()
+
+
+async def test_put_with_current_generation_succeeds_and_returns_next(tmp_path):
+    _, store = _setup(tmp_path)
+    client = await _app(store)
+    headers = {"X-Ma2pi-Request": "1"}
+    try:
+        etag = (await client.get("/api/config")).headers["ETag"]
+        response = await client.put(
+            "/api/config",
+            json={"logging": {"level": "DEBUG"}},
+            headers={**headers, "If-Match": etag},
+        )
+        assert response.status == 200
+        body = await response.json()
+        assert body["generation"] == 1
+        assert response.headers["ETag"] == '"1"'
+    finally:
+        await client.close()
+
+
+async def test_put_with_stale_generation_is_rejected_without_writing(tmp_path):
+    paths, store = _setup(tmp_path)
+    client = await _app(store)
+    headers = {"X-Ma2pi-Request": "1"}
+    try:
+        first = await client.put(
+            "/api/config", json={"logging": {"level": "DEBUG"}}, headers=headers
+        )
+        assert first.status == 200
+        before = paths.config.read_bytes()
+        stale = await client.put(
+            "/api/config",
+            json={"logging": {"level": "WARNING"}},
+            headers={**headers, "If-Match": '"0"'},
+        )
+        assert stale.status == 412
+        body = await stale.json()
+        assert body["error"] == "stale_config"
+        assert body["generation"] == 1
+        assert paths.config.read_bytes() == before
+        assert store.generation == 1
+    finally:
+        await client.close()
+
+
+async def test_put_with_invalid_if_match_is_a_bad_request(tmp_path):
+    _, store = _setup(tmp_path)
+    client = await _app(store)
+    try:
+        response = await client.put(
+            "/api/config",
+            json={"logging": {"level": "DEBUG"}},
+            headers={"X-Ma2pi-Request": "1", "If-Match": "abc"},
+        )
+        assert response.status == 400
+        assert (await response.json())["error"] == "invalid_if_match"
+    finally:
+        await client.close()
+
+
+async def test_put_without_if_match_stays_compatible(tmp_path):
+    _, store = _setup(tmp_path)
+    client = await _app(store)
+    try:
+        response = await client.put(
+            "/api/config",
+            json={"logging": {"level": "DEBUG"}},
+            headers={"X-Ma2pi-Request": "1"},
+        )
+        assert response.status == 200
+    finally:
+        await client.close()
+
+
+async def test_validation_errors_carry_the_field_path(tmp_path):
+    _, store = _setup(tmp_path)
+    client = await _app(store)
+    headers = {"X-Ma2pi-Request": "1"}
+    try:
+        cases = [
+            (
+                {"mapping": {"playbacks": {"mc_click_1": {"page": 0, "executor": 1, "kind": "button", "button": 1}}}},
+                "mapping.playbacks.mc_click_1.page",
+            ),
+            (
+                {"mapping": {"playbacks": {"mc_click_1": {"page": 1, "executor": 0, "kind": "button", "button": 1}}}},
+                "mapping.playbacks.mc_click_1.executor",
+            ),
+            (
+                {"mapping": {"screen_encoders": {"1": 99}}},
+                "mapping.screen_encoders",
+            ),
+            (
+                {"mapping": {"playbacks": {"mc_fader_1": {"page": 1, "executor": 1, "kind": "fader", "transport": "midi"}}}},
+                "mapping.playbacks.mc_fader_1.transport",
+            ),
+        ]
+        for patch, expected in cases:
+            response = await client.put("/api/config", json=patch, headers=headers)
+            assert response.status == 422, patch
+            body = await response.json()
+            assert body["error"] == "validation_error"
+            assert body["field"].startswith(expected), (body, expected)
+            assert expected in body["detail"]
+    finally:
+        await client.close()

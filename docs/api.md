@@ -166,7 +166,9 @@ Die Oberfläche verbindet sich nach einer Unterbrechung automatisch neu.
 
 ### `GET /api/config`
 
-Liefert die aktive Konfiguration ohne Passwortmaterial. Statt `password_file`
+Liefert die aktive Konfiguration ohne Passwortmaterial. Die Antwort trägt die
+aktuelle Konfigurations-Generation als `ETag` (z. B. `"4"`); die Oberfläche
+schickt sie beim Schreiben als `If-Match` zurück. Statt `password_file`
 und `password_env` erscheint `password_set`:
 
 ```json
@@ -217,6 +219,25 @@ Erfolg (`200`):
 
 Bei geänderten Zugangsdaten wird vorher ein Verbindungstest ausgeführt. Reine
 Mapping-Änderungen lassen die laufende Session bestehen.
+
+**Veraltete Entwürfe (`If-Match`).** Ein `PUT` darf die Generation, auf der der
+Client aufgebaut hat, als `If-Match: "<generation>"` mitschicken. Hat sich die
+Konfiguration inzwischen geändert, antwortet der Daemon mit `412 stale_config`
+und der aktuellen Generation, ohne etwas zu schreiben:
+
+```json
+{ "error": "stale_config", "detail": "Konfiguration wurde inzwischen geändert", "generation": 5 }
+```
+
+Ein unlesbarer Header ergibt `400 invalid_if_match`. Ohne `If-Match` schreibt der
+Aufruf wie bisher bedingungslos; erfolgreiche Antworten tragen die neue
+Generation zusätzlich als `ETag`. Der WebSocket meldet jede Änderung mit einem
+`config`-Ereignis (`{"generation": n}`); beide Tabs der Oberfläche teilen
+dadurch einen Stand.
+
+**Feldfehler.** Ein `422 validation_error` nennt in `field` den Pfad des
+fehlerhaften Wertes (z. B. `mapping.playbacks.fix.executor`); die Oberfläche
+zeigt die Meldung am betroffenen Eingabefeld.
 
 ### `POST /api/config/validate`
 
@@ -498,13 +519,15 @@ Fehler haben die Form:
 | Status | `error` | Bedeutung |
 | --- | --- | --- |
 | 400 | `invalid_json` | Körper ist kein JSON-Objekt |
+| 400 | `invalid_if_match` | `If-Match` ist keine Generation |
 | 401 | `pin_required` | PIN-Session fehlt oder ist abgelaufen |
 | 401 | `pin_invalid` | PIN falsch |
 | 403 | `missing_request_header` | `X-Ma2pi-Request: 1` fehlt |
 | 409 | `apply_busy` | Es läuft bereits ein Apply |
 | 409 | `learn_busy` | Es läuft bereits eine Learn-Sitzung |
+| 412 | `stale_config` | `If-Match` entspricht nicht der aktuellen Generation; nichts wurde geschrieben |
 | 415 | `unsupported_media_type` | Kein `application/json` bei einem Schreibaufruf |
-| 422 | `validation_error` | Konfiguration ist schemawidrig; `detail` nennt das Feld |
+| 422 | `validation_error` | Konfiguration ist schemawidrig; `detail` nennt den Grund, `field` den Pfad |
 | 422 | `connection_failed` | Zugangsdaten oder Handshake scheitern |
 | 422 | `invalid_backup` | Backup-ID unbekannt oder Backup ungültig |
 | 422 | `invalid_learn_request` | Unbekannter Learn-Typ |

@@ -6,6 +6,8 @@ export default defineConfig({
   resolve: {
     conditions: ['browser'],
   },
+  // The golden fixtures live in ../tests/fixtures and are shared with pytest.
+  server: { fs: { allow: ['..'] } },
   test: {
     environment: 'jsdom',
     include: ['src/**/*.test.ts'],

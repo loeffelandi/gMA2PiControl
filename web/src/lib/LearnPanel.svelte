@@ -1,138 +1,48 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
 
-  import { ApiError, type ApiClient, type DeviceLearnStatus } from './api';
-  import type { StatusStore } from './status';
+  import type { ConfigStore } from './configStore.svelte';
 
   interface Props {
-    api: ApiClient;
+    store: ConfigStore;
     device: string;
     bank: number;
     control?: string | null;
-    store?: StatusStore;
     onFinished?: () => void;
     onDone?: () => void;
-    onStatus?: (status: DeviceLearnStatus | null) => void;
   }
 
-  let {
-    api,
-    device,
-    bank,
-    control = null,
-    store,
-    onFinished,
-    onDone,
-    onStatus,
-  }: Props = $props();
+  let { store, device, bank, control = null, onFinished, onDone }: Props = $props();
 
-  let status = $state<DeviceLearnStatus | null>(null);
-  let error = $state<string | null>(null);
   let busy = $state(false);
   let startedSession = $state(false);
-  let timer: ReturnType<typeof setInterval> | null = null;
-  let inFlight = false;
-  let actionEpoch = 0;
-  let destroyed = false;
 
+  const status = $derived(store.deviceLearn);
+  const error = $derived(store.learnError);
   const activeHere = $derived(
     status?.active === true && status.device === device && status.bank === bank,
   );
-  const ownsOpenSession = $derived(startedSession || activeHere);
-
-  function formatError(cause: unknown, fallback: string): string {
-    if (cause instanceof ApiError) return cause.detail || cause.message || fallback;
-    if (cause instanceof Error) return cause.message || fallback;
-    return fallback;
-  }
-
-  function applyStatus(next: DeviceLearnStatus | null): void {
-    if (!next?.active) {
-      startedSession = false;
-    }
-    status = next;
-    onStatus?.(next);
-  }
-
-  async function refresh(force = false): Promise<void> {
-    if (destroyed) return;
-    if (!force && (busy || inFlight)) return;
-    inFlight = true;
-    const epoch = actionEpoch;
-    try {
-      const next = await api.deviceLearnStatus();
-      if (destroyed || epoch !== actionEpoch || (!force && busy)) return;
-      applyStatus(next);
-    } catch (cause) {
-      if (destroyed || epoch !== actionEpoch || (!force && busy)) return;
-      error = formatError(cause, 'Status nicht verfügbar');
-      onStatus?.(null);
-    } finally {
-      inFlight = false;
-    }
-  }
-
-  let lastTarget: { device: string; bank: number } | null = null;
-
-  function syncTarget(targetDevice: string, targetBank: number) {
-    return (): void => {
-      if (
-        lastTarget !== null &&
-        (lastTarget.device !== targetDevice || lastTarget.bank !== targetBank)
-      ) {
-        error = null;
-        void refresh();
-      }
-      lastTarget = { device: targetDevice, bank: targetBank };
-    };
-  }
+  const ownsOpenSession = $derived(
+    activeHere || (startedSession && status?.active === true),
+  );
+  // Only one session runs at a time, across both tabs.
+  const detecting = $derived(store.learn?.status === 'active');
 
   onMount(() => {
-    void refresh();
-    timer = setInterval(() => void refresh(), 500);
-    if (!store) return;
-    let previous = store.state.deviceLearn;
-    if (previous) {
-      applyStatus(previous);
-    }
-    return store.subscribe(() => {
-      const next = store.state.deviceLearn;
-      if (!next || next === previous) return;
-      previous = next;
-      if (!busy && !destroyed) {
-        actionEpoch += 1;
-        if (!next.active) {
-          startedSession = false;
-        }
-        applyStatus(next);
-      }
-    });
+    // One read for a session that started before this view; events keep it current.
+    void store.syncLearn();
   });
 
   onDestroy(() => {
-    destroyed = true;
-    if (timer !== null) clearInterval(timer);
-    onStatus?.(null);
     if (ownsOpenSession) {
-      startedSession = false;
-      void api.cancelDeviceLearn().catch(() => {});
+      void store.cancelDeviceLearn();
     }
   });
 
-  async function run(
-    action: () => Promise<void>,
-    options: { refreshAfter?: boolean } = { refreshAfter: true },
-  ): Promise<void> {
-    actionEpoch += 1;
+  async function run(action: () => Promise<void>): Promise<void> {
     busy = true;
-    error = null;
     try {
       await action();
-      if (options.refreshAfter) {
-        await refresh(true);
-      }
-    } catch (cause) {
-      error = formatError(cause, 'Aktion fehlgeschlagen');
     } finally {
       busy = false;
     }
@@ -140,52 +50,34 @@
 
   function startSession(): Promise<void> {
     return run(async () => {
-      const next = control
-        ? await api.startDeviceLearn(device, bank, control)
-        : await api.startDeviceLearn(device, bank);
-      startedSession = true;
-      if (next && typeof next.active === 'boolean') {
-        applyStatus(next);
-      }
+      await store.startDeviceLearn(device, bank, control ?? undefined);
+      startedSession = store.deviceLearn?.active === true;
     });
   }
 
   function skipControl(): Promise<void> {
-    return run(async () => {
-      const next = await api.skipDeviceLearn();
-      if (next && typeof next.active === 'boolean') {
-        applyStatus(next);
-      }
-    });
+    return run(() => store.skipDeviceLearn());
   }
 
   function cancelSession(): Promise<void> {
-    return run(
-      async () => {
-        await api.cancelDeviceLearn();
-        startedSession = false;
-        applyStatus({ active: false });
-        onDone?.();
-      },
-      { refreshAfter: false },
-    );
+    return run(async () => {
+      await store.cancelDeviceLearn();
+      startedSession = false;
+      onDone?.();
+    });
   }
 
   function finishSession(): Promise<void> {
-    return run(
-      async () => {
-        await api.finishDeviceLearn();
-        startedSession = false;
-        applyStatus({ active: false });
-        onFinished?.();
-        onDone?.();
-      },
-      { refreshAfter: false },
-    );
+    return run(async () => {
+      await store.finishDeviceLearn();
+      startedSession = false;
+      onFinished?.();
+      onDone?.();
+    });
   }
 </script>
 
-<section class="learn" {@attach syncTarget(device, bank)}>
+<section class="learn">
   <h3>Anlernen · {device} · Bank {bank}</h3>
 
   {#if activeHere}
@@ -229,7 +121,10 @@
     </div>
   {:else}
     <p class="muted">Startet einen geführten Durchlauf durch die noch unbelegten Controls.</p>
-    <button type="button" disabled={busy} onclick={startSession}>
+    {#if detecting}
+      <p class="muted">Die Control-Erkennung läuft – erst abschließen oder abbrechen.</p>
+    {/if}
+    <button type="button" disabled={busy || detecting} onclick={startSession}>
       {control ? `Control ${control} erneut anlernen` : 'Learn starten'}
     </button>
   {/if}

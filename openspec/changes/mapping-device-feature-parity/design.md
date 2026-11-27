@@ -4,21 +4,38 @@
 
 Siehe `proposal.md` für Motivation und Scope. Ausgangslage:
 
-- Der Mapping-Tab arbeitet nur mit den globalen Ebenen `mapping.keys`,
-  `mapping.playbacks`, `mapping.encoders`, `mapping.screen_encoders` und
-  `mapping.modifiers`. Er liest weder `mapping.device_banks` noch das
-  Control-Inventar der MIDICRAFT-Profile und zeigt deshalb bankgebundene
-  Controls und Overrides nicht an.
+- Der Mapping-Tab rendert eine eigene Tabelle ohne `AssignDialog`. Er bietet
+  seit den Review-Changes Inventar-, Bank-Controls und `accelerated` sowie
+  `null`-Patches beim Aktionswechsel, bearbeitet aber nur die globalen Ebenen
+  `mapping.keys`, `mapping.playbacks`, `mapping.encoders`,
+  `mapping.screen_encoders` und `mapping.modifiers`. Er liest
+  `mapping.device_banks` nicht für die Bearbeitung, zeigt weder Herkunft noch
+  Bank-Offset und kennt `transport` von Playback-Zielen nicht.
 - Der Geräte-Tab arbeitet mit Inventar, Bänken, Layout und effektiver
-  Auflösung, kann aber keine Belegung löschen, keinen globalen Scope gezielt
-  bearbeiten und schreibt bei Bank 1 am vorhandenen Layer vorbei.
+  Auflösung und kann über `AssignDialog.onClear` Belegungen entfernen. Er
+  bietet aber keinen gezielten globalen Scope für Tasten und Encoder und
+  schreibt bei Bank 1 immer global (`useGlobalScope = bank === 1`), auch wenn
+  für Bank 1 ein Layer-Eintrag existiert.
+- Beide Tabs laden die Konfiguration unabhängig voneinander; `App.svelte`
+  teilt nur den `StatusStore`.
+- Playback-Ziele tragen seit `add-midi-remote-executors` ein optionales
+  `transport = "midi"|"web"`. `midi` ist nur bei Buttons und mit
+  `[midi_remote] enabled = true` gültig. `AssignDialog` und `DevicesPage` lesen
+  und schreiben das Feld, `MappingPage` nicht.
 - `PUT /api/config` arbeitet mit RFC-7386-Merge: Objekte werden rekursiv
   zusammengeführt, Arrays ersetzt, `null` löscht einen Schlüssel. Die
   Laufzeitauflösung in `mapping.py`/`playback.py` ist die Referenz, nicht die
   UI.
-- `add-device-layout-visuals` liefert Bänke, Inventar und Geräteflächen, ist
-  aber noch nicht archiviert. Dieser Change wird nach dessen Archivierung
-  angewendet, damit die `config-ui`-Delta-Specs nicht übereinanderliegen.
+- `add-device-layout-visuals` (Bänke, Inventar, Geräteflächen) und
+  `add-midi-remote-executors` (`transport`) sind archiviert und in den
+  Haupt-Specs; die `config-ui`-Delta-Specs dieses Changes bauen darauf auf.
+- `resolve-combined-executors` leitet Web-Buttons auf überdeckten
+  Floating-Slots zur Laufzeit auf den führenden Executor um (MIDI-Buttons
+  nicht). Das ist reine Laufzeitauflösung und gehört nicht in das
+  Zuweisungsmodell.
+- `encoder-mode-led-ui` verlangt für zuweisungsbezogene Einstellungen denselben
+  Zustand und Schreibpfad in beiden Tabs und soll auf dem hier eingeführten
+  Config-Store aufbauen.
 
 ## Goals / Non-Goals
 
@@ -34,6 +51,8 @@ Siehe `proposal.md` für Motivation und Scope. Ausgangslage:
 **Non-Goals:**
 
 - Keine Änderung der Laufzeitauflösung oder der Prioritätsreihenfolge.
+- Keine Abbildung der Executor-Topologie (breite oder überdeckte Executoren);
+  der Resolver liefert das konfigurierte Ziel.
 - Kein neuer Schreib-Endpunkt; `PUT /api/config` bleibt der einzige Pfad.
 - Kein Drag-and-drop-Layouteditor und keine räumliche Mehrfachauswahl im
   Mapping-Tab; der Geräte-Tab bleibt die Flächen-Sicht.
@@ -56,7 +75,8 @@ type Assignment =
   | { kind: 'key'; hardkey?: string; command?: string; screenMode?: boolean;
       screen?: number; encoderPress?: number }
   | { kind: 'playback'; page: number | 'current'; executor: number;
-      target: 'button' | 'fader'; button?: number; accelerated?: boolean }
+      target: 'button' | 'fader'; button?: number; accelerated?: boolean;
+      transport?: 'midi' | 'web' }
   | { kind: 'encoder'; slot?: number; attribute?: string;
       screenEncoder?: number }
   | { kind: 'modifier'; hardkey?: string; local?: boolean };
@@ -88,7 +108,9 @@ Der Serializer arbeitet bewusst mit vollständigen, expliziten Feldern:
 
 - Key: alle fünf Aktionsfelder, ungenutzte als `null`.
 - Playback: `page`, `executor`, `kind`, `button` (bei Fader `null`),
-  `accelerated` (nur bei Encoder+Fader, sonst `null`).
+  `accelerated` (nur bei Encoder+Fader, sonst `null`), `transport`
+  (nur bei Button-Zielen; bei Fader oder ohne Auswahl `null`, damit der
+  Backend-Default gilt).
 - Encoder: die **komplette** `mapping.encoders`-Liste, weil Arrays ersetzt
   werden.
 - Screen-Encoder: gewünschte Map plus `null` für entfernte Slots.
@@ -101,10 +123,12 @@ Wechsel erzeugt sonst beide Felder und wird abgelehnt.
 
 ### 3. Bank 1: Layer gewinnt, aber sichtbar
 
-Existiert für Bank 1 ein Layer-Eintrag, bearbeitet der Geräte-Tab diesen Layer;
-sonst die globale Ebene. Die UI kennzeichnet die Herkunft und bietet beide
-Scopes an. Damit gibt es kein stilles „gespeichert, aber unsichtbar
-überschrieben“ mehr.
+Existiert für Bank 1 ein Layer-Eintrag, bearbeitet der gemeinsame Dialog diesen
+Layer; sonst die globale Ebene. Heute schreibt `DevicesPage` bei Bank 1
+unabhängig vom Layer immer global (`useGlobalScope = bank === 1`) – ein
+vorhandener Bank-1-Layer überdeckt die Änderung dann unsichtbar. Die UI
+kennzeichnet die Herkunft und bietet beide Scopes an. Damit gibt es kein
+stilles „gespeichert, aber unsichtbar überschrieben“ mehr.
 
 **Warum:** Die Laufzeit bevorzugt den Layer; die UI muss dieselbe Regel
 abbilden.
@@ -125,11 +149,14 @@ weil spätere Bankgrößenänderungen dann nicht mehr wirken.
 
 ### 5. Ein gemeinsamer Dialog, zwei Einstiegspunkte
 
-`AssignmentDialog` ersetzt den bisherigen Zuweisungsdialog und wird von beiden
-Tabs verwendet. Er enthält:
+`AssignmentDialog` entsteht aus dem bestehenden `AssignDialog` (der schon
+Entfernen, „Kein Screen-Encoder“, Slot-Aktualisierung und `transport` kennt)
+und wird von beiden Tabs verwendet. Er enthält:
 
 - Aktionsauswahl inklusive Modifier (Hardkey/lokal) und „Belegung entfernen“.
 - Scope-Auswahl (global / diese Bank) mit Herkunftsanzeige.
+- Playback-Transport (`midi`/`web`/Default), nur für Button-Ziele und mit
+  Hinweis, wenn `[midi_remote]` nicht aktiv ist.
 - Screen-Encoder-Slot 1–4 und Ziel 5–10, inklusive Leeren.
 - Feldbezogene Fehler aus dem Backend.
 - Vorschau bei Mehrfachzuweisung (nur Geräte-Tab).
@@ -179,6 +206,12 @@ Der Store berechnet pro Control den tatsächlichen Vorrang
 ein Abzeichen mit Erklärung. Gespeichert wird weiterhin alles; die Anzeige
 verhindert nur, dass der Benutzer eine wirkungslose Belegung für aktiv hält.
 
+Die Regel spiegelt `PlaybackRouter.handle`: Ein expliziter Key im Bank-Layer
+(`device_banks[...].keys`) gewinnt für **Tastenereignisse** und gibt das Ereignis
+ans Mapping weiter (auch das Release); ohne Layer-Key gewinnt ein Playback-Ziel
+vor globalem Key und Modifier. Wert- und Encoder-Ereignisse kennen keinen
+Layer-Key-Vorrang. Das Abzeichen erscheint daher nur bei Tasten-Controls.
+
 **Warum:** Die Laufzeit konsumiert Playback-Ereignisse vor dem Mapping; die UI
 zeigte bisher nur eine scheinbare Priorität.
 **Alternative:** Konflikte beim Speichern verbieten – verworfen, weil
@@ -186,20 +219,24 @@ mehrschichtige Konfigurationen bewusst möglich bleiben sollen.
 
 ### 9. Geräteauswahl
 
-Beide Tabs filtern auf erkannte Geräte (Regel aus
-`add-device-layout-visuals`). Die Auswahl von Gerät und Bank liegt im
-gemeinsamen Store und bleibt beim Tab-Wechsel erhalten, solange das Gerät
-erkannt ist.
+Beide Tabs filtern bereits auf erkannte Geräte (Regel aus
+`add-device-layout-visuals`, im Mapping-Tab umgesetzt). Neu ist, dass die
+Auswahl von Gerät und Bank im gemeinsamen Store liegt und beim Tab-Wechsel
+erhalten bleibt, solange das Gerät erkannt ist.
 
 **Warum:** Ein Gerät, das in einem Tab sichtbar und im anderen unsichtbar ist,
-widerspricht der Parity-Anforderung.
-**Alternative:** Im Mapping-Tab weiterhin alle Geräte zeigen – verworfen; die
-aktive Layout-Spec hat die Sichtbarkeit bereits auf erkannte Geräte begrenzt.
+widerspricht der Parity-Anforderung; eine getrennte Auswahl zwingt zum
+erneuten Suchen.
+**Alternative:** Pro Tab eigene Auswahl – verworfen, weil der Wechsel dann den
+Kontext verliert.
 
 ### 10. Backend nur minimal ergänzen
 
-- `field` in Validierungsfehlern, damit beide Tabs denselben Feldfehler
-  anzeigen können.
+- `field` in Validierungsfehlern von `PUT /api/config`, damit beide Tabs
+  denselben Feldfehler anzeigen können. `_apply_error` liefert für
+  `ConfigError` heute nur `validation_error` mit Text; `field` wird aus
+  `ConfigError.path` abgeleitet (Netzwerk- und Recovery-API liefern `field`
+  bereits). `ApiError.field` existiert im Client.
 - Generation/ETag zu `GET /api/config` und im `PUT`-Ergebnis.
 - Keine Änderung an `mapping.py`/`playback.py`; die dortige Auflösung bleibt
   Referenz für die Golden-Tests.
@@ -224,9 +261,12 @@ Laufzeitlogik duplizieren würde.
   Test für Wechsel zu Attribut, anderen Slot und „keiner“.
 - **Zwei Lern-Statusquellen** → ein Store, Event-basiert; Polling wird
   entfernt; Timeout-Test.
-- **Spezifikationskonflikt beim Gerätefilter** → Anwendung erst nach
-  Archivierung von `add-device-layout-visuals`; die dortige Regel „nur
-  erkannte Geräte“ gilt.
+- **Transport-Regeln driften** (`midi` nur bei Buttons und aktivem
+  `[midi_remote]`) → Serializer setzt `transport` bei Fader auf `null`;
+  Backend-Validierung bleibt maßgeblich und liefert das Feld im Fehler.
+- **Überschneidung mit `encoder-mode-led-ui`** → dieser Change wird zuerst
+  angewendet; der Config-Store ist die Schnittstelle, auf der
+  `encoder-mode-led-ui` seine Abschnitte aufsetzt.
 - **Großer UI-Refactor** → schrittweise: erst Modell + Tests, dann Dialog, dann
   Mapping, dann Geräte, dann Learn; jeder Schritt hält die bestehenden Tests
   grün.

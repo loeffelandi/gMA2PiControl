@@ -3,6 +3,7 @@
 
   import { ApiClient, ApiError, type AuthStatus } from './lib/api';
   import { BRAND_PREFIX, BRAND_SUFFIX } from './lib/brand';
+  import { ConfigStore } from './lib/configStore.svelte';
   import AdvancedPage from './lib/AdvancedPage.svelte';
   import BackupsPage from './lib/BackupsPage.svelte';
   import DevicesPage from './lib/DevicesPage.svelte';
@@ -75,6 +76,7 @@
     liveStarted = false;
     if (clear) {
       statusStore.reset();
+      configStore.reset();
     } else {
       statusStore.disconnect();
     }
@@ -132,6 +134,8 @@
   }
 
   const api = new ApiClient({ onUnauthorized: handleUnauthorized });
+  // One configuration state for the mapping and the device tab.
+  const configStore = new ConfigStore(api, statusStore);
 
   function unlocked(): void {
     applyAuth({ pin_enabled: true, pin_set: true, authenticated: true });
@@ -164,6 +168,7 @@
     void refreshAuth({ initial: true });
     return () => {
       api.onUnauthorized = null;
+      configStore.detach();
       stopLive();
     };
   });
@@ -228,9 +233,9 @@
     {:else if page === 'network'}
       <NetworkPage {api} store={statusStore} />
     {:else if page === 'mapping'}
-      <MappingPage {api} learnStore={statusStore} />
+      <MappingPage {api} {configStore} onOpenDevices={() => (page = 'devices')} />
     {:else if page === 'devices'}
-      <DevicesPage {api} store={statusStore} />
+      <DevicesPage {api} store={statusStore} {configStore} />
     {:else if page === 'advanced'}
       <AdvancedPage {api} onAuthChange={() => void refreshAuth()} />
     {:else if page === 'backups'}

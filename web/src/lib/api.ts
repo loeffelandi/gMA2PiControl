@@ -329,6 +329,18 @@ export interface LearnResult {
   timed_out: boolean;
 }
 
+export interface ConfigSnapshot {
+  config: Record<string, unknown>;
+  /** Generation from the ETag header, `null` when the daemon sent none. */
+  generation: number | null;
+}
+
+function parseGeneration(etag: string | null): number | null {
+  if (!etag) return null;
+  const text = etag.replace(/^W\//, '').replace(/"/g, '').trim();
+  return /^\d+$/.test(text) ? Number(text) : null;
+}
+
 export interface ApiClientOptions {
   baseUrl?: string;
   fetchImpl?: typeof fetch;
@@ -354,7 +366,16 @@ export class ApiClient {
     path: string,
     body?: unknown,
   ): Promise<T> {
-    const headers: Record<string, string> = { Accept: 'application/json' };
+    return (await this.requestRaw<T>(method, path, body)).payload;
+  }
+
+  private async requestRaw<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<{ payload: T; etag: string | null }> {
+    const headers: Record<string, string> = { Accept: 'application/json', ...extraHeaders };
     if (method !== 'GET' && method !== 'HEAD') {
       headers['Content-Type'] = 'application/json';
       headers[REQUEST_HEADER] = '1';
@@ -414,7 +435,7 @@ export class ApiClient {
         retryAfter,
       );
     }
-    return payload as T;
+    return { payload: payload as T, etag: response.headers?.get?.('ETag') ?? null };
   }
 
   version(): Promise<VersionInfo> {
@@ -477,8 +498,29 @@ export class ApiClient {
     return this.request<Record<string, unknown>>('GET', '/api/config');
   }
 
-  updateConfig(patch: Record<string, unknown>): Promise<Record<string, unknown>> {
-    return this.request<Record<string, unknown>>('PUT', '/api/config', patch);
+  /** The configuration together with the generation it was read at (ETag). */
+  async configSnapshot(): Promise<ConfigSnapshot> {
+    const { payload, etag } = await this.requestRaw<Record<string, unknown>>(
+      'GET',
+      '/api/config',
+    );
+    return { config: payload, generation: parseGeneration(etag) };
+  }
+
+  /**
+   * Merge patch for the configuration.  With `generation` the daemon rejects the
+   * write (412 `stale_config`) when the configuration changed since it was read.
+   */
+  async updateConfig(
+    patch: Record<string, unknown>,
+    options: { generation?: number | null } = {},
+  ): Promise<Record<string, unknown>> {
+    const extra: Record<string, string> = {};
+    if (options.generation !== undefined && options.generation !== null) {
+      extra['If-Match'] = `"${options.generation}"`;
+    }
+    return (await this.requestRaw<Record<string, unknown>>('PUT', '/api/config', patch, extra))
+      .payload;
   }
 
   validateConfig(patch: Record<string, unknown>): Promise<Record<string, unknown>> {

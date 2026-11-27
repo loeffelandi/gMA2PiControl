@@ -41,7 +41,7 @@ from ..network import (
     PendingExists as NetworkPendingExists,
 )
 from ..recovery import RecoveryError, RecoveryService, RecoveryValidationError
-from ..runtime import ApplyBusy, ConfigStore
+from ..runtime import ApplyBusy, ConfigStore, StaleConfig
 from .devices import detect_devices
 from .events import EventBus, events_handler
 from .serialize import redacted_config
@@ -278,6 +278,20 @@ def learn_event(result) -> dict[str, Any]:
     return {"type": "learn", "data": asdict(result)}
 
 
+def _etag(generation: int) -> str:
+    return f'"{generation}"'
+
+
+def _parse_etag(value: str) -> int | None:
+    """Parse an ``If-Match`` value such as ``"3"`` into a generation."""
+
+    text = value.strip()
+    if text.startswith("W/"):
+        text = text[2:]
+    text = text.strip('"')
+    return int(text) if text.isdigit() else None
+
+
 def _json_error(status: int, error: str, detail: str = "") -> web.Response:
     payload: dict[str, Any] = {"error": error}
     if detail:
@@ -327,7 +341,10 @@ def _apply_error(exc: BaseException) -> web.Response:
     """Map configuration/connection failures to JSON without leaking secrets."""
 
     if isinstance(exc, ConfigError):
-        return _json_error(422, "validation_error", str(exc))
+        payload: dict[str, Any] = {"error": "validation_error", "detail": str(exc)}
+        if exc.path:
+            payload["field"] = exc.path
+        return web.json_response(payload, status=422)
     if isinstance(exc, (LoginError, HandshakeError, ConnectionClosed, asyncio.TimeoutError)):
         return _json_error(422, "connection_failed", str(exc))
     if isinstance(exc, OSError):
@@ -510,7 +527,9 @@ def create_app(
         store = request.app.get(CONFIG_STORE_KEY)
         if store is None:
             return _json_error(503, "config_store_unavailable", "Kein Config-Store aktiv")
-        return web.json_response(redacted_config(store.config))
+        response = web.json_response(redacted_config(store.config))
+        response.headers["ETag"] = _etag(store.generation)
+        return response
 
     def _sanitize_web_config_patch(body: dict[str, Any]) -> dict[str, Any]:
         cleaned = dict(body)
@@ -535,10 +554,26 @@ def create_app(
             return _json_error(422, "invalid_request", "password muss eine Zeichenkette sein")
         prev_pin = (store.config.web.pin_enabled, store.config.web.pin)
         sanitized = _sanitize_web_config_patch(body)
+        apply_kwargs: dict[str, Any] = {"password": password}
+        if_match = request.headers.get("If-Match")
+        if if_match is not None:
+            expected = _parse_etag(if_match)
+            if expected is None:
+                return _json_error(400, "invalid_if_match", "If-Match muss eine Generation sein")
+            apply_kwargs["expected_generation"] = expected
         try:
-            config = await store.apply(sanitized, password=password)
+            config = await store.apply(sanitized, **apply_kwargs)
         except ApplyBusy as exc:
             return _json_error(409, "apply_busy", str(exc))
+        except StaleConfig as exc:
+            return web.json_response(
+                {
+                    "error": "stale_config",
+                    "detail": str(exc),
+                    "generation": exc.current,
+                },
+                status=412,
+            )
         except Exception as exc:
             return _apply_error(exc)
         bus.publish(
@@ -547,6 +582,7 @@ def create_app(
         response = web.json_response(
             {"generation": store.generation, "config": redacted_config(config)}
         )
+        response.headers["ETag"] = _etag(store.generation)
         if (config.web.pin_enabled, config.web.pin) != prev_pin:
             sessions = request.app[PIN_SESSIONS_KEY]
             sessions.clear()

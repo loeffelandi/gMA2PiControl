@@ -898,46 +898,91 @@ bleiben gesperrt. Der Dienst läuft weiterhin unprivilegiert;
 
 ### Geräte und Mapping
 
-Die Seite **Geräte/Mapping** zeigt alle konfigurierten Geräte mit ihren
-logischen Controls; bei MIDI-Geräten erscheinen absolute Fader und Encoder mit
-Note und Art. Die Tabellen bearbeiten:
+Die Tabs **Geräte** und **Mapping** bearbeiten dasselbe Zuweisungsmodell. Beide
+laden Konfiguration und Geräteliste über einen gemeinsamen Zustand: Eine in
+einem Tab gespeicherte Änderung ist im anderen sofort sichtbar, Gerät und Bank
+bleiben beim Tabwechsel erhalten und nur aktuell erkannte Geräte werden
+angeboten. Dieselbe Aktion auf demselben Control und demselben Scope erzeugt in
+beiden Tabs exakt dieselbe Konfiguration.
 
-* **Tasten** – Control, Aktion (Hardkey, Command, Screen-Modus, Screen,
-  Encoder-Druck) und Wert.
-* **Encoder** – Ziel-Slot oder festes Attribut sowie der Screen-Encoder 5–10.
-* **Modifier** – Hardkey, der beim Halten mitgesendet wird.
-* **Playback-Ziele** – Control, Art (`Button` oder `Fader`), Page, Executor und
-  bei Buttons die Nummer 1–3. Page und Executor sind wie in der MA 1-basiert;
-  als Page ist auch `current` erlaubt, dann folgt das Ziel der aktiven
-  Master-Page.
-  Ein Fader-Ziel hat keinen Button. Absolute Controls sind bereits als
-  deaktivierte Zeile vorhanden; „Aktiv“ setzt das Ziel, „Deaktivieren“ entfernt
-  es wieder.
+**Controls.** Beide Tabs bilden die Control-Liste aus derselben Quelle:
+Inventar, Noten, absolute Werte, Encoder und die Noten aller Bänke. Ein Control,
+das nur das Inventar oder nur eine Bank kennt, ist daher in beiden Tabs wählbar.
 
-Die Oberfläche prüft Page, Executor und Button vor dem Speichern und markiert
-ungültige Felder. Serverseitig gelten dieselben Regeln. Ein Control mit
-Playback-Ziel löst keinen zusätzlichen Hardkey oder Command aus. Ein
-Executor-Feedback gibt es für Button-Ziele mit LED-fähiger Note über
+* Der Tab **Geräte** zeigt die schematische Fläche aus `[layouts.*]` (ohne
+  Layout eine Tabelle). Ein Klick wählt ein Control, mehrere Klicks sammeln eine
+  Auswahl in Klick-Reihenfolge; **Zuweisen** öffnet den Dialog. Der Dialog
+  verteilt Executor-Nummern fortlaufend (Startwert und Schrittweite, Vorschau).
+* Der Tab **Mapping** zeigt dieselben Controls als Tabelle mit effektiver
+  Belegung und Herkunft; **Bearbeiten** öffnet für ein Control denselben Dialog.
+  Bankgröße, Kanal und MA-Page der gewählten Bank erscheinen dort nur lesend und
+  werden im Tab **Geräte** bearbeitet.
+
+**Aktionen im Dialog.** Hardkey, Command, Screen-Modus, Screen wählen,
+Encoder-Klick, Playback-Ziel (Page, Art `Button`/`Fader`, Executor, Button 1–3,
+Transport und bei absoluten Encodern **Beschleunigt**), Attribut-Encoder (Slot
+oder Attributname, bei den Slots 1–4 zusätzlich ein Screen-Encoder 5–10 oder
+„keiner“) und Modifier (Hardkey oder lokal). Ungenutzte Felder einer Aktion
+werden beim Speichern entfernt; ein Wechsel von Hardkey auf Command hinterlässt
+also kein Hardkey-Feld. Page und Executor sind wie in der MA 1-basiert, als Page
+ist auch `current` erlaubt. Der Transport `MIDI-Remote` gilt nur für Buttons und
+setzt `[midi_remote] enabled = true` voraus; ein Fader-Ziel speichert keinen
+Transport.
+
+**Scope und Herkunft.** Jede Zuweisung hat einen Scope: **Global (alle Bänke)**
+oder **Nur diese Bank** (Override in `[mapping.device_banks]`). Die Oberfläche
+zeigt die Herkunft der effektiven Belegung: *Bank-Eintrag*, *global*, *geerbt
+(global)* oder *geerbt mit Bank-Offset* (z. B. globaler Executor 1 erscheint auf
+Bank 2 bei Bankgröße 5 als Executor 6). Der Dialog startet dort, wo der Eintrag
+liegt: ein geerbtes Ziel wird nie stillschweigend als expliziter Bank-Eintrag
+gespeichert, „Nur diese Bank“ ist eine bewusste Entscheidung und folgt danach
+nicht mehr dem Bank-Offset. Bei Bank 1 gilt dieselbe Regel: Existiert ein
+Layer-Eintrag, wird er geändert, sonst die globale Ebene. Beim Speichern im
+globalen Scope zeigt der Dialog den Rohwert, der ohne Offset gespeichert wird.
+
+**Entfernen.** **Belegung entfernen** löscht den Eintrag im gewählten Scope. Ein
+entfernter Bank-Eintrag macht die geerbte globale Belegung wieder sichtbar; ein
+entfernter globaler Eintrag verschwindet in allen Bänken ohne Override.
+Einträge, deren Control kein verbundenes Gerät anbietet, stehen im Tab
+**Mapping** unter „Einträge ohne verbundenes Gerät“ und lassen sich dort
+entfernen.
+
+**Vorrang.** Ein Abzeichen **Vorrang** mit Erklärung markiert Controls, deren
+Belegungen sich gegenseitig verdecken, wie es der Daemon auflöst: Bei Tasten
+gewinnt ein Layer-Key (`device_banks[...].keys`) vor dem Playback-Ziel, ein
+Playback-Ziel vor globalem Key und Modifier, ein Modifier vor jedem Key. Wert-
+und Encoder-Controls kennen keinen Layer-Key-Vorrang und zeigen kein Abzeichen.
+Gespeichert wird weiterhin alles; das Abzeichen verhindert nur, dass eine
+wirkungslose Belegung für aktiv gehalten wird.
+
+**Fehler und Konflikte.** Ein vom Daemon abgelehnter Wert (Page, Executor,
+Transport, Screen-Encoder …) erscheint am betroffenen Eingabefeld, die bisherige
+Konfiguration bleibt aktiv. Wurde die Konfiguration inzwischen an anderer Stelle
+geändert, meldet das Speichern einen Konflikt und überschreibt nichts; **Neu
+laden** übernimmt den neuen Stand, **Verwerfen** schließt den Entwurf.
+
+Ein Control mit Playback-Ziel löst keinen zusätzlichen Hardkey oder Command aus.
+Ein Executor-Feedback gibt es für Button-Ziele mit LED-fähiger Note über
 `[feedback]`; Fader bleiben ohne Rückmeldung und ohne PickUp: Nach einem
 Seitenwechsel springt ein Executor beim nächsten Faderwert auf die physische
 Position.
 
-Die Seite **Geräte** zeigt die schematische Fläche aus `[layouts.*]`, sofern für
-das Profil eine hinterlegt ist; sonst bleibt die Tabelle sichtbar. Über die
-Bankauswahl oben rechts wird die bearbeitete Bank gewählt. Ein Klick auf ein
-Control öffnet die Zuweisung; mehrere Klicks sammeln eine Auswahl in
-Klick-Reihenfolge. Der Dialog verteilt Executor-Nummern fortlaufend (Startwert
-und Schrittweite, Vorschau vor dem Speichern) und schreibt bei Bank 1 in
-`[mapping.keys]`/`[mapping.playbacks]`, bei höheren Bänken in die jeweilige
-`[mapping.device_banks]`-Ebene. Der Schalter **Beschleunigt** erscheint nur für
-absolute Encoder mit Fader-Ziel und nutzt dasselbe `accelerated`-Feld wie der
-Mapping-Editor.
+**Zwei Lernwege, ein Status.** Beide Tabs bieten beide Wege an und zeigen den
+Status der jeweils laufenden Sitzung; es läuft immer nur eine.
 
-Der Learn-Modus auf der Geräte-Seite führt durch die noch ungebundenen Controls
-der gewählten Bank. Das physische Bedienen liefert die Note; Ereignisse auf einem
-anderen Kanal werden gemeldet und nicht übernommen. Erst **Speichern** schreibt
-die gelernten Noten atomar in das Profil, **Abbrechen** verwirft sie. Bankgröße,
-Kanal und optionale MA-Page der gewählten Bank lassen sich darunter bearbeiten.
+* **Control erkennen** (`Taste erkennen` / `Encoder erkennen`) liefert das
+  logische Control der nächsten Eingabe. Das Ergebnis wird in beiden Tabs
+  markiert, **Zuweisen** öffnet den Dialog dafür. Es wird nichts gespeichert.
+* **Noten anlernen** führt durch die noch ungebundenen Controls der gewählten
+  Bank des Geräts. Das physische Bedienen liefert die Note; Ereignisse auf einem
+  anderen Kanal werden gemeldet und nicht übernommen. Erst **Speichern**
+  schreibt die gelernten Noten atomar in das Profil, **Abbrechen** verwirft sie.
+  Aus dem Tab **Mapping** lässt sich die Sitzung für Gerät und Bank starten;
+  **Zum Geräte-Tab** springt zum Fortschritt.
+
+Timeout und Abbruch setzen den Status in beiden Tabs zurück; die Schaltflächen
+sind danach wieder bedienbar. Der Status kommt über den WebSocket
+(`learn`- und `device_learn`-Ereignisse), nicht über Polling.
 
 ### Änderungen anwenden
 

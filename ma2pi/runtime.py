@@ -43,6 +43,18 @@ class ApplyBusy(RuntimeError):
     """Another configuration apply is already running."""
 
 
+class StaleConfig(RuntimeError):
+    """The caller edited an older configuration generation than the active one."""
+
+    def __init__(self, expected: int, current: int) -> None:
+        self.expected = expected
+        self.current = current
+        super().__init__(
+            f"Konfiguration wurde inzwischen geändert (Generation {current}, "
+            f"Entwurf basiert auf {expected})"
+        )
+
+
 def _secret(ma2: Ma2Settings) -> str | None:
     try:
         return ma2.read_password()
@@ -281,11 +293,21 @@ class ConfigStore:
             return await action()
 
     async def apply(
-        self, patch: Mapping[str, Any], *, password: str | None = None
+        self,
+        patch: Mapping[str, Any],
+        *,
+        password: str | None = None,
+        expected_generation: int | None = None,
     ) -> AppConfig:
-        """Validate, test, persist and activate ``patch`` as a new generation."""
+        """Validate, test, persist and activate ``patch`` as a new generation.
+
+        ``expected_generation`` rejects the write with :class:`StaleConfig` when
+        the active configuration moved on since the caller read it.
+        """
 
         async def run() -> AppConfig:
+            if expected_generation is not None and expected_generation != self._generation:
+                raise StaleConfig(expected_generation, self._generation)
             prepared = prepare_patch(
                 self._paths,
                 self._clean_patch(patch, password),

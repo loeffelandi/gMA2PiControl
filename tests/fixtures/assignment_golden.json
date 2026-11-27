@@ -1,0 +1,125 @@
+{
+  "description": "Golden cases shared by tests/test_assignment_golden.py (daemon) and web/src/lib/assignment.test.ts (UI resolver). `mapping` uses the canonical config shape of GET /api/config.",
+  "device": "midicraft-enc",
+  "bank_size": 5,
+  "cases": [
+    {
+      "name": "global target, no device_banks entry: no offset",
+      "mapping": {
+        "playbacks": {"mc_click_1": {"page": 1, "executor": 1, "kind": "button", "button": 1}},
+        "device_banks": {}
+      },
+      "queries": [
+        {"bank": 1, "control": "mc_click_1", "playback": {"page": 1, "executor": 1, "kind": "button", "button": 1, "accelerated": false, "transport": "web"}},
+        {"bank": 2, "control": "mc_click_1", "playback": {"page": 1, "executor": 1, "kind": "button", "button": 1, "accelerated": false, "transport": "web"}}
+      ]
+    },
+    {
+      "name": "bank offset on inherited target",
+      "mapping": {
+        "playbacks": {"mc_click_1": {"page": 1, "executor": 1, "kind": "button", "button": 1}},
+        "device_banks": {"midicraft-enc": {"bank_size": 5}}
+      },
+      "queries": [
+        {"bank": 1, "control": "mc_click_1", "playback": {"page": 1, "executor": 1, "kind": "button", "button": 1, "accelerated": false, "transport": "web"}},
+        {"bank": 2, "control": "mc_click_1", "playback": {"page": 1, "executor": 6, "kind": "button", "button": 1, "accelerated": false, "transport": "web"}},
+        {"bank": 3, "control": "mc_click_1", "playback": {"page": 1, "executor": 11, "kind": "button", "button": 1, "accelerated": false, "transport": "web"}}
+      ]
+    },
+    {
+      "name": "MA page binding disables the offset of that bank",
+      "mapping": {
+        "playbacks": {"mc_click_1": {"page": 1, "executor": 1, "kind": "button", "button": 1}},
+        "device_banks": {"midicraft-enc": {"bank_size": 5, "2": {"ma_page": 3}}}
+      },
+      "queries": [
+        {"bank": 2, "control": "mc_click_1", "playback": {"page": 1, "executor": 1, "kind": "button", "button": 1, "accelerated": false, "transport": "web"}},
+        {"bank": 3, "control": "mc_click_1", "playback": {"page": 1, "executor": 11, "kind": "button", "button": 1, "accelerated": false, "transport": "web"}}
+      ]
+    },
+    {
+      "name": "explicit layer executor is not shifted",
+      "mapping": {
+        "playbacks": {"mc_click_1": {"page": 1, "executor": 1, "kind": "button", "button": 1}},
+        "device_banks": {"midicraft-enc": {"bank_size": 5, "2": {"playbacks": {"mc_click_1": {"executor": 20}}}}}
+      },
+      "queries": [
+        {"bank": 2, "control": "mc_click_1", "playback": {"page": 1, "executor": 20, "kind": "button", "button": 1, "accelerated": false, "transport": "web"}},
+        {"bank": 3, "control": "mc_click_1", "playback": {"page": 1, "executor": 11, "kind": "button", "button": 1, "accelerated": false, "transport": "web"}}
+      ]
+    },
+    {
+      "name": "partial layer override keeps the inherited offset",
+      "mapping": {
+        "playbacks": {"mc_encoder_1": {"page": 1, "executor": 1, "kind": "fader"}},
+        "device_banks": {"midicraft-enc": {"bank_size": 5, "2": {"playbacks": {"mc_encoder_1": {"accelerated": true}}}}}
+      },
+      "queries": [
+        {"bank": 1, "control": "mc_encoder_1", "playback": {"page": 1, "executor": 1, "kind": "fader", "button": 1, "accelerated": false, "transport": "web"}},
+        {"bank": 2, "control": "mc_encoder_1", "playback": {"page": 1, "executor": 6, "kind": "fader", "button": 1, "accelerated": true, "transport": "web"}}
+      ]
+    },
+    {
+      "name": "bank 1 layer wins over the global layer",
+      "mapping": {
+        "playbacks": {"mc_click_1": {"page": 1, "executor": 1, "kind": "button", "button": 1}},
+        "device_banks": {"midicraft-enc": {"bank_size": 5, "1": {"playbacks": {"mc_click_1": {"executor": 9, "button": 2}}}}}
+      },
+      "queries": [
+        {"bank": 1, "control": "mc_click_1", "playback": {"page": 1, "executor": 9, "kind": "button", "button": 2, "accelerated": false, "transport": "web"}},
+        {"bank": 2, "control": "mc_click_1", "playback": {"page": 1, "executor": 6, "kind": "button", "button": 1, "accelerated": false, "transport": "web"}}
+      ]
+    },
+    {
+      "name": "layer-only target without a global entry",
+      "mapping": {
+        "playbacks": {},
+        "device_banks": {"midicraft-enc": {"bank_size": 5, "2": {"playbacks": {"mc_click_2": {"page": 2, "executor": 4, "kind": "button", "button": 3}}}}}
+      },
+      "queries": [
+        {"bank": 1, "control": "mc_click_2", "playback": null},
+        {"bank": 2, "control": "mc_click_2", "playback": {"page": 2, "executor": 4, "kind": "button", "button": 3, "accelerated": false, "transport": "web"}}
+      ]
+    },
+    {
+      "name": "explicit transport and MIDI remote default",
+      "midi_remote_enabled": true,
+      "mapping": {
+        "playbacks": {
+          "mc_click_1": {"page": 1, "executor": 1, "kind": "button", "button": 1},
+          "mc_click_2": {"page": 1, "executor": 2, "kind": "button", "button": 1, "transport": "web"},
+          "mc_fader_1": {"page": 1, "executor": 1, "kind": "fader"}
+        },
+        "device_banks": {}
+      },
+      "queries": [
+        {"bank": 1, "control": "mc_click_1", "playback": {"page": 1, "executor": 1, "kind": "button", "button": 1, "accelerated": false, "transport": "midi"}},
+        {"bank": 1, "control": "mc_click_2", "playback": {"page": 1, "executor": 2, "kind": "button", "button": 1, "accelerated": false, "transport": "web"}},
+        {"bank": 1, "control": "mc_fader_1", "playback": {"page": 1, "executor": 1, "kind": "fader", "button": 1, "accelerated": false, "transport": "web"}}
+      ]
+    },
+    {
+      "name": "layer key wins, global key is inherited",
+      "mapping": {
+        "keys": {"mc_click_2": {"hardkey": "GOTO"}},
+        "device_banks": {"midicraft-enc": {"bank_size": 5, "2": {"keys": {"mc_click_2": {"command": "Go+"}}}}}
+      },
+      "queries": [
+        {"bank": 1, "control": "mc_click_2", "key": {"hardkey": "GOTO"}},
+        {"bank": 2, "control": "mc_click_2", "key": {"command": "Go+"}},
+        {"bank": 3, "control": "mc_click_2", "key": {"hardkey": "GOTO"}}
+      ]
+    },
+    {
+      "name": "bank 1 layer key",
+      "mapping": {
+        "keys": {"mc_click_2": {"hardkey": "GOTO"}},
+        "device_banks": {"midicraft-enc": {"1": {"keys": {"mc_click_2": {"screen": 3}}}}}
+      },
+      "queries": [
+        {"bank": 1, "control": "mc_click_2", "key": {"screen": 3}},
+        {"bank": 2, "control": "mc_click_2", "key": {"hardkey": "GOTO"}}
+      ]
+    }
+  ]
+}

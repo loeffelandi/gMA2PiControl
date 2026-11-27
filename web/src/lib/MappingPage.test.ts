@@ -1,835 +1,280 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ApiError, type ApiClient, type DeviceEntry, type LearnResult } from './api';
+import DevicesPage from './DevicesPage.svelte';
 import MappingPage from './MappingPage.svelte';
-import type { StatusStore } from './status';
+import { ConfigStore } from './configStore.svelte';
+import type { DeviceEntry } from './api';
+import { baseConfig, fakeDaemon, fakeStatus, midicraft } from './testing';
 
-const devices = [
-  {
-    name: 'cherry',
-    backend: 'evdev',
-    profile: 'cherry-g86',
-    vendor_id: 0x046a,
-    product_id: 0,
-    vendor_product: '046a:0000',
-    name_contains: 'Cherry',
-    detected: { path: '/dev/input/event0' },
-    controls: {
-      keys: [
-        { code: 'KEY_HOME', control: 'fix' },
-        { code: 'KEY_HANGUEL', control: 'store_big' },
-        { code: 'KEY_F1', control: 'fine_mod' },
-      ],
-      notes: [],
-      encoders: [],
-      midi_encoders: [],
-      values: [],
-      inventory: [
-        { id: 'fix', kind: 'button', label: null },
-        { id: 'store_big', kind: 'button', label: null },
-        { id: 'fine_mod', kind: 'button', label: null },
-      ],
-      banks: [],
-      logical: ['fine_mod', 'fix', 'store_big'],
-    },
-  },
-  {
-    name: 'asl',
-    backend: 'midi',
-    profile: 'asl-mk2-e4b3',
-    vendor_id: 0x04d8,
-    product_id: 0xe817,
-    vendor_product: '04d8:e817',
-    name_contains: 'ASL MK2',
-    detected: { path: '/dev/snd/midiC1D0' },
-    controls: {
-      keys: [],
-      notes: [{ note: 5, control: 'asl_click_1' }],
-      encoders: [],
-      midi_encoders: [
-        { id: 1, control: 'encoder.1', note: 1 },
-        { id: 2, control: 'encoder.2', note: 2 },
-        { id: 3, control: 'encoder.3', note: 3 },
-        { id: 4, control: 'encoder.4', note: 4 },
-      ],
-      values: [],
-      inventory: [
-        { id: 'asl_click_1', kind: 'button', label: null },
-        { id: 'encoder.1', kind: 'relative-encoder', label: null },
-        { id: 'encoder.2', kind: 'relative-encoder', label: null },
-        { id: 'encoder.3', kind: 'relative-encoder', label: null },
-        { id: 'encoder.4', kind: 'relative-encoder', label: null },
-      ],
-      banks: [],
-      logical: ['asl_click_1', 'encoder.1', 'encoder.2', 'encoder.3', 'encoder.4'],
-    },
-  },
-  {
-    name: 'midicraft',
-    backend: 'midi',
-    profile: 'midicraft-enc',
-    vendor_id: 0x04d8,
-    product_id: 0xe78c,
-    vendor_product: '04d8:e78c',
-    name_contains: 'MIDICRAFT ENC',
-    detected: { path: '/dev/snd/midiC4D0' },
-    controls: {
-      keys: [],
-      notes: [],
-      encoders: [],
-      midi_encoders: [],
-      values: [],
-      inventory: [
-        { id: 'mc_click_1', kind: 'button', label: 'B1' },
-        { id: 'mc_fader_1', kind: 'fader', label: 'F1' },
-        { id: 'mc_encoder_1', kind: 'encoder', label: 'E1' },
-      ],
-      banks: [
-        {
-          number: 1,
-          channel: 1,
-          notes: {
-            '55': 'mc_click_1',
-            '60': 'mc_encoder_1',
-            '70': 'mc_fader_1',
-          },
-        },
-        { number: 2, channel: 2, notes: {} },
-      ],
-      logical: ['mc_click_1', 'mc_encoder_1', 'mc_fader_1'],
-    },
-  },
-] as unknown as DeviceEntry[];
-
-const config = {
-  mapping: {
-    keys: {
-      fix: { hardkey: 'Fix' },
-      oops: { command: 'Clear' },
-    },
-    encoders: [
-      { id: 1, slot: 1 },
-      { id: 2, slot: 2 },
-      { id: 3, slot: 3 },
-      { id: 4, slot: 4 },
-    ],
-    modifiers: {
-      ma: { hardkey: 'MA' },
-      fine_mod: { local: true },
-    },
-    screen_encoders: { '1': 5, '2': 6, '3': 7, '4': 8 },
-    playbacks: {
-      mc_fader_1: { page: 1, executor: 2, kind: 'fader' },
-      mc_click_1: { page: 1, executor: 1, kind: 'button', button: 2 },
-    },
-  },
-};
-
-function fakeApi() {
-  return {
-    config: vi.fn(async () => structuredClone(config)),
-    devices: vi.fn(async () => structuredClone(devices)),
-    updateConfig: vi.fn(async () => ({ generation: 1 })),
-    startLearn: vi.fn(async () => ({ kind: 'key', status: 'active' })),
-    cancelLearn: vi.fn(async () => ({ cancelled: true, learn: null })),
-  } as unknown as ApiClient;
+function row(id: string): HTMLElement {
+  const found = document.querySelector<HTMLElement>(`tr[data-control="${id}"]`);
+  if (!found) throw new Error(`row ${id} missing`);
+  return found;
 }
 
-async function renderPage(api: ApiClient) {
-  render(MappingPage, { props: { api } });
-  await waitFor(() => {
-    expect(screen.getByDisplayValue('Fix')).toBeTruthy();
-  });
+async function mount(
+  config = baseConfig(),
+  options: { bank?: number; devices?: DeviceEntry[] } = {},
+) {
+  const live = fakeStatus();
+  const daemon = fakeDaemon(config, options.devices ?? [midicraft]);
+  const configStore = new ConfigStore(daemon.api, live.status);
+  const onOpenDevices = vi.fn();
+  const view = render(MappingPage, { props: { api: daemon.api, configStore, onOpenDevices } });
+  await waitFor(() => expect(configStore.loaded).toBe(true));
+  if (options.bank) configStore.selectBank(options.bank);
+  return { daemon, configStore, onOpenDevices, view, ...live };
 }
 
-function playbackRow(control: string): HTMLTableRowElement {
-  const row = document.querySelector(`tr[data-control="${control}"]`);
-  if (!(row instanceof HTMLTableRowElement)) {
-    throw new Error(`Playback-Zeile für ${control} nicht gefunden`);
-  }
-  return row;
-}
-
-describe('MappingPage', () => {
-  it('edits a key mapping and tracks unsaved changes', async () => {
-    const api = fakeApi();
-    await renderPage(api);
-
-    const value = screen.getByDisplayValue('Fix') as HTMLInputElement;
-    await fireEvent.input(value, { target: { value: 'Store' } });
-
-    expect(screen.getByTestId('dirty')).toBeTruthy();
-    await fireEvent.click(screen.getByText('Speichern'));
-
-    await waitFor(() => {
-      expect(screen.getByRole('status').textContent).toContain('Mapping gespeichert');
-    });
-    expect(api.updateConfig).toHaveBeenCalledWith({
-      mapping: expect.objectContaining({
-        keys: expect.objectContaining({
-          fix: {
-            hardkey: 'Store',
-            command: null,
-            screen_mode: null,
-            encoder_press: null,
-            screen: null,
-          },
-        }),
-      }),
-    });
-    expect(screen.queryByTestId('dirty')).toBeNull();
+describe('MappingPage control source', () => {
+  it('lists inventory controls and the controls bound only in another bank', async () => {
+    const { configStore } = await mount();
+    for (const id of ['mc_click_1', 'mc_fader_1', 'mc_encoder_1', 'encoder.1']) {
+      expect(row(id)).toBeTruthy();
+    }
+    configStore.selectBank(3);
+    await waitFor(() => expect(row('mc_bank3_only')).toBeTruthy());
+    expect(row('mc_bank3_only').textContent).not.toContain('nicht in Bank 3 gebunden');
+    expect(row('mc_click_1').textContent).toContain('nicht in Bank 3 gebunden');
   });
 
-  it('emits null tombstones on union switches for keys, playbacks, and modifiers', async () => {
-    const api = fakeApi();
-    await renderPage(api);
-
-    // Switch key `fix` from `hardkey` to `command`
-    const keyKinds = screen.getAllByTestId('key-kind') as HTMLSelectElement[];
-    await fireEvent.change(keyKinds[0], { target: { value: 'command' } });
-    const keyValues = screen.getAllByTestId('key-value') as HTMLInputElement[];
-    await fireEvent.input(keyValues[0], { target: { value: 'Macro 1' } });
-
-    // Switch playback `mc_click_1` from `button` to `fader`
-    const clickRow = playbackRow('mc_click_1');
-    await fireEvent.change(within(clickRow).getByTestId('playback-kind'), {
-      target: { value: 'fader' },
-    });
-
-    // Enable `mc_encoder_1` and switch it to `button` (must emit accelerated: null)
-    const encRow = playbackRow('mc_encoder_1');
-    await fireEvent.click(within(encRow).getByTestId('playback-enabled'));
-    await fireEvent.change(within(encRow).getByTestId('playback-kind'), {
-      target: { value: 'button' },
-    });
-    await fireEvent.input(within(encRow).getByTestId('playback-page'), {
-      target: { value: '1' },
-    });
-    await fireEvent.input(within(encRow).getByTestId('playback-executor'), {
-      target: { value: '5' },
-    });
-
-    await fireEvent.click(screen.getByText('Speichern'));
-
-    await waitFor(() => expect(api.updateConfig).toHaveBeenCalledTimes(1));
-    expect(api.updateConfig).toHaveBeenCalledWith({
-      mapping: expect.objectContaining({
-        keys: expect.objectContaining({
-          fix: {
-            hardkey: null,
-            command: 'Macro 1',
-            screen_mode: null,
-            encoder_press: null,
-            screen: null,
-          },
-        }),
-        modifiers: {
-          ma: { hardkey: 'MA', local: null },
-          fine_mod: { local: true, hardkey: null },
-        },
-        playbacks: expect.objectContaining({
-          mc_click_1: {
-            page: 1,
-            executor: 1,
-            kind: 'fader',
-            button: null,
-            accelerated: null,
-            transport: null,
-          },
-          mc_encoder_1: {
-            page: 1,
-            executor: 5,
-            kind: 'button',
-            button: 1,
-            accelerated: null,
-            transport: null,
-          },
-        }),
-      }),
-    });
-  });
-
-  it('refreshes original sets after save so add -> save -> delete -> save emits null deletions', async () => {
-    const api = fakeApi();
-    await renderPage(api);
-
-    // Add a new key row `store_big` -> `Store`
-    await fireEvent.click(screen.getByText('Taste hinzufügen'));
-    const keySelects = screen
-      .getAllByTestId('key-kind')
-      .map((el) => el.closest('tr')!.querySelector('select') as HTMLSelectElement);
-    await fireEvent.change(keySelects[2], { target: { value: 'store_big' } });
-    const keyValues = screen.getAllByTestId('key-value') as HTMLInputElement[];
-    await fireEvent.input(keyValues[2], { target: { value: 'Store' } });
-
-    // Enable fixed playback row `mc_encoder_1`
-    const encRow = playbackRow('mc_encoder_1');
-    await fireEvent.click(within(encRow).getByTestId('playback-enabled'));
-    await fireEvent.input(within(encRow).getByTestId('playback-page'), {
-      target: { value: '1' },
-    });
-    await fireEvent.input(within(encRow).getByTestId('playback-executor'), {
-      target: { value: '9' },
-    });
-
-    await fireEvent.click(screen.getByText('Speichern'));
-    await waitFor(() => expect(api.updateConfig).toHaveBeenCalledTimes(1));
-
-    // Now delete the newly added key row and deactivate `mc_encoder_1`, then save again
-    const addedKeyRow = keySelects[2].closest('tr')!;
-    await fireEvent.click(within(addedKeyRow).getByText('Entfernen'));
-    await fireEvent.click(within(encRow).getByTestId('playback-remove'));
-
-    await fireEvent.click(screen.getByText('Speichern'));
-    await waitFor(() => expect(api.updateConfig).toHaveBeenCalledTimes(2));
-
-    expect(api.updateConfig).toHaveBeenNthCalledWith(2, {
-      mapping: expect.objectContaining({
-        keys: expect.objectContaining({
-          store_big: null,
-        }),
-        playbacks: expect.objectContaining({
-          mc_encoder_1: null,
-        }),
-      }),
-    });
-  });
-
-  it('edits an encoder slot', async () => {
-    const api = fakeApi();
-    await renderPage(api);
-
-    const value = screen.getAllByTestId('encoder-value')[0] as HTMLInputElement;
-    await fireEvent.input(value, { target: { value: '3' } });
-    await fireEvent.click(screen.getByText('Speichern'));
-
-    await waitFor(() => {
-      expect(api.updateConfig).toHaveBeenCalledWith({
-        mapping: expect.objectContaining({
-          encoders: expect.arrayContaining([
-            expect.objectContaining({ id: 1, slot: 3 }),
-          ]),
-        }),
-      });
-    });
-  });
-
-  it('edits the screen target per physical encoder without duplicating options 9 and 10', async () => {
-    const api = fakeApi();
-    (api.config as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...config,
-      mapping: {
-        ...config.mapping,
-        screen_encoders: { '1': 9, '2': 10, '3': 7, '4': 8 },
-      },
-    });
-    await renderPage(api);
-
-    const targets = screen.getAllByTestId(
-      'screen-encoder-target',
-    ) as HTMLSelectElement[];
-    expect(targets[0].value).toBe('9');
-    expect(targets[1].value).toBe('10');
-    // Ensure option 9 and 10 appear only once each
-    expect(Array.from(targets[0].options).filter((o) => o.value === '9')).toHaveLength(1);
-    expect(Array.from(targets[1].options).filter((o) => o.value === '10')).toHaveLength(1);
-
-    await fireEvent.change(targets[3], { target: { value: '' } });
-    await fireEvent.click(screen.getByText('Speichern'));
-
-    await waitFor(() => {
-      expect(api.updateConfig).toHaveBeenCalledWith({
-        mapping: expect.objectContaining({
-          screen_encoders: { '1': 9, '2': 10, '3': 7, '4': null },
-        }),
-      });
-    });
-  });
-
-  it('shows a server validation error for an invalid wheel', async () => {
-    const api = fakeApi();
-    (api.updateConfig as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new ApiError(
-        422,
-        'validation_error',
-        'mapping.encoders[0].slot: muss zwischen 1 und 8 liegen',
-      ),
+  it('offers the same controls as the device tab', async () => {
+    const daemon = fakeDaemon(baseConfig(), [midicraft]);
+    const configStore = new ConfigStore(daemon.api);
+    const mapping = render(MappingPage, { props: { api: daemon.api, configStore } });
+    const devices = render(DevicesPage, { props: { api: daemon.api, configStore } });
+    await waitFor(() => expect(configStore.loaded).toBe(true));
+    for (const id of ['mc_fader_1', 'mc_encoder_1', 'encoder.1']) {
+      expect(within(mapping.container).getByText(id, { exact: false })).toBeTruthy();
+      expect(within(devices.container).getByRole('button', { name: id })).toBeTruthy();
+    }
+    configStore.selectBank(3);
+    await waitFor(() =>
+      expect(within(devices.container).getByRole('button', { name: 'mc_bank3_only' })).toBeTruthy(),
     );
-    await renderPage(api);
-
-    const value = screen.getAllByTestId('encoder-value')[0] as HTMLInputElement;
-    await fireEvent.input(value, { target: { value: '11' } });
-    await fireEvent.click(screen.getByText('Speichern'));
-
-    await waitFor(() => {
-      expect(screen.getByRole('alert').textContent).toContain(
-        'muss zwischen 1 und 8 liegen',
-      );
-    });
-    expect(screen.getByTestId('dirty')).toBeTruthy();
+    expect(within(mapping.container).getByText('mc_bank3_only', { exact: false })).toBeTruthy();
   });
 
-  it('starts learn for a key and an encoder, keeping stable row uid across row deletion', async () => {
-    const api = fakeApi();
-    const listeners = new Set<() => void>();
-    const learnStore = {
-      state: { learn: null as LearnResult | null },
-      subscribe(listener: () => void) {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
+  it('hides a configured but disconnected device', async () => {
+    const offline: DeviceEntry = { ...midicraft, name: 'offline', detected: null };
+    await mount(baseConfig(), { devices: [midicraft, offline] });
+    expect(screen.queryByText('offline')).toBeNull();
+    expect(screen.getAllByText('midicraft').length).toBeGreaterThan(0);
+  });
+});
+
+describe('MappingPage effective assignment', () => {
+  const inherited = () =>
+    baseConfig({ playbacks: { mc_click_1: { page: 1, executor: 1, kind: 'button', button: 1 } } });
+
+  it('shows the inherited executor of bank 2 with its offset', async () => {
+    await mount(inherited(), { bank: 2 });
+    await waitFor(() => expect(row('mc_click_1').textContent).toContain('Exec 6 Btn 1'));
+    expect(within(row('mc_click_1')).getByTestId('source-badge').textContent).toBe(
+      'geerbt mit Bank-Offset (Offset +5)',
+    );
+  });
+
+  it('shows an explicit bank entry as such and leaves global untouched', async () => {
+    const config = baseConfig({
+      playbacks: { mc_click_1: { page: 1, executor: 1, kind: 'button', button: 1 } },
+      device_banks: {
+        midicraft: {
+          bank_size: 5,
+          '2': { playbacks: { mc_click_1: { page: 1, executor: 20, kind: 'button', button: 1 } } },
+        },
       },
-    };
-    render(MappingPage, {
-      props: { api, learnStore: learnStore as unknown as StatusStore },
     });
-    await waitFor(() => {
-      expect(screen.getByDisplayValue('Fix')).toBeTruthy();
+    await mount(config, { bank: 2 });
+    await waitFor(() => expect(row('mc_click_1').textContent).toContain('Exec 20 Btn 1'));
+    expect(within(row('mc_click_1')).getByTestId('source-badge').textContent).toBe('Bank-Eintrag');
+  });
+
+  it('shows the same bank settings read-only', async () => {
+    const { configStore } = await mount(inherited(), { bank: 2 });
+    const readonly = await screen.findByTestId('bank-settings-readonly');
+    expect(readonly.textContent).toContain('5');
+    expect(readonly.textContent).toContain('2');
+    expect(screen.queryByText('Einstellungen speichern')).toBeNull();
+    expect(configStore.bank).toBe(2);
+  });
+});
+
+describe('MappingPage editing through the shared dialog', () => {
+  it('removes a bank override and shows the inherited target again', async () => {
+    const config = baseConfig({
+      playbacks: { mc_click_1: { page: 1, executor: 1, kind: 'button', button: 1 } },
+      device_banks: {
+        midicraft: {
+          bank_size: 5,
+          '2': { playbacks: { mc_click_1: { page: 1, executor: 20, kind: 'button', button: 1 } } },
+        },
+      },
     });
+    const { daemon } = await mount(config, { bank: 2 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Bearbeiten mc_click_1' }));
+    await fireEvent.click(screen.getByText('Belegung entfernen'));
+    await waitFor(() => expect(row('mc_click_1').textContent).toContain('Exec 6 Btn 1'));
+    expect(daemon.config().mapping.playbacks.mc_click_1.executor).toBe(1);
+  });
 
-    // Start learn on the SECOND key row (`oops` -> `Clear`), then delete the FIRST key row (`fix`)
-    await fireEvent.click(screen.getAllByTestId('key-learn')[1]);
-    expect(api.startLearn).toHaveBeenNthCalledWith(1, 'key', undefined);
+  it('removes a global entry', async () => {
+    const { daemon } = await mount(baseConfig({ keys: { mc_click_1: { hardkey: 'GO' } } }));
+    await waitFor(() => expect(row('mc_click_1').textContent).toContain('GO'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Bearbeiten mc_click_1' }));
+    await fireEvent.click(screen.getByText('Belegung entfernen'));
+    await waitFor(() => expect(daemon.config().mapping.keys.mc_click_1).toBeUndefined());
+    await waitFor(() => expect(row('mc_click_1').textContent).toContain('–'));
+  });
 
-    const firstRow = screen.getByDisplayValue('Fix').closest('tr')!;
-    await fireEvent.click(within(firstRow).getByText('Entfernen'));
+  it('switches hardkey to command without leftovers', async () => {
+    const { daemon } = await mount(baseConfig({ keys: { mc_click_1: { hardkey: 'GO' } } }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Bearbeiten mc_click_1' }));
+    await fireEvent.change(screen.getByLabelText('Aktion'), { target: { value: 'command' } });
+    await fireEvent.input(screen.getByLabelText('Command'), { target: { value: 'Go+' } });
+    await fireEvent.click(screen.getByText('Speichern'));
+    await waitFor(() => expect(daemon.config().mapping.keys.mc_click_1).toEqual({ command: 'Go+' }));
+    await waitFor(() => expect(row('mc_click_1').textContent).toContain('Go+'));
+  });
 
-    learnStore.state.learn = {
+  it('overrides an inherited target only after choosing the bank scope', async () => {
+    const config = baseConfig({
+      playbacks: { mc_click_1: { page: 1, executor: 1, kind: 'button', button: 1 } },
+    });
+    const { daemon } = await mount(config, { bank: 2 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Bearbeiten mc_click_1' }));
+    await fireEvent.change(screen.getByLabelText('Geltungsbereich'), { target: { value: 'bank' } });
+    await fireEvent.input(screen.getByLabelText('Executor'), { target: { value: '9' } });
+    await fireEvent.click(screen.getByText('Speichern'));
+    await waitFor(() =>
+      expect(daemon.config().mapping.device_banks.midicraft['2'].playbacks.mc_click_1.executor).toBe(9),
+    );
+    expect(daemon.config().mapping.playbacks.mc_click_1.executor).toBe(1);
+    await waitFor(() =>
+      expect(within(row('mc_click_1')).getByTestId('source-badge').textContent).toBe('Bank-Eintrag'),
+    );
+  });
+
+  it('removes entries of a device that is not connected', async () => {
+    const config = baseConfig({ keys: { ghost_key: { hardkey: 'GO' } } });
+    const { daemon } = await mount(config);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Entfernen ghost_key' }));
+    await waitFor(() => expect(daemon.config().mapping.keys.ghost_key).toBeUndefined());
+  });
+});
+
+describe('MappingPage acceleration and transport', () => {
+  const config = () => ({
+    ...baseConfig({
+      playbacks: {
+        mc_encoder_1: { page: 1, executor: 3, kind: 'fader', accelerated: true },
+        mc_click_1: { page: 1, executor: 1, kind: 'button', button: 1, transport: 'midi' },
+      },
+    }),
+    midi_remote: { enabled: true },
+  });
+
+  it('shows the active acceleration checkbox for an inventory encoder', async () => {
+    await mount(config());
+    await fireEvent.click(screen.getByRole('button', { name: 'Bearbeiten mc_encoder_1' }));
+    expect((screen.getByLabelText('Beschleunigt') as HTMLInputElement).checked).toBe(true);
+    expect(row('mc_encoder_1').textContent).toContain('acc');
+  });
+
+  it('shows a midi button target and saves a changed transport', async () => {
+    const { daemon } = await mount(config());
+    expect(row('mc_click_1').textContent).toContain('Exec 1 Btn 1 · midi');
+    await fireEvent.click(screen.getByRole('button', { name: 'Bearbeiten mc_click_1' }));
+    expect((screen.getByLabelText('Transport') as HTMLSelectElement).value).toBe('midi');
+    await fireEvent.change(screen.getByLabelText('Transport'), { target: { value: 'web' } });
+    await fireEvent.click(screen.getByText('Speichern'));
+    await waitFor(() => expect(daemon.config().mapping.playbacks.mc_click_1.transport).toBe('web'));
+  });
+});
+
+describe('MappingPage learn', () => {
+  it('starts note learning for device and bank, shows progress and links to the device tab', async () => {
+    const { daemon, push, onOpenDevices } = await mount(baseConfig(), { bank: 2 });
+    await fireEvent.click(screen.getByText('Noten anlernen (Bank 2)'));
+    expect(daemon.api.startDeviceLearn).toHaveBeenCalledWith('midicraft', 2);
+
+    push('device_learn', {
+      active: true,
+      device: 'midicraft',
+      bank: 2,
+      channel: 2,
+      current: 'mc_fader_1',
+      total: 3,
+      index: 0,
+    });
+    const status = await screen.findByTestId('note-learn-active');
+    expect(status.textContent).toContain('mc_fader_1');
+    await fireEvent.click(within(status).getByText('Zum Geräte-Tab'));
+    expect(onOpenDevices).toHaveBeenCalled();
+  });
+
+  it('shows a control detected elsewhere and offers to assign it', async () => {
+    const { push } = await mount();
+    push('learn', {
       kind: 'key',
       status: 'captured',
-      control: 'mc_click_1',
+      control: 'mc_click_2',
       device: 'midicraft',
-      raw: '55',
-      direction: 0,
-      detents: 0,
-      elapsed: 0.1,
-      timed_out: false,
-    };
-    for (const listener of listeners) listener();
-
-    // Remaining row should have updated its control to `mc_click_1`, and resolving deviceForControl works for banked inventory!
-    await fireEvent.click(screen.getAllByTestId('key-learn')[0]);
-    expect(api.startLearn).toHaveBeenNthCalledWith(2, 'key', 'midicraft');
-
-    learnStore.state.learn = {
-      kind: 'key',
-      status: 'cancelled',
-      control: null,
-      device: 'midicraft',
-      raw: null,
-      direction: 0,
-      detents: 0,
-      elapsed: 0.2,
-      timed_out: false,
-    };
-    for (const listener of listeners) listener();
-
-    await fireEvent.click(screen.getAllByTestId('encoder-learn')[0]);
-    expect(api.startLearn).toHaveBeenNthCalledWith(3, 'encoder', 'asl');
+    });
+    const detected = await screen.findByTestId('learn-detected');
+    expect(detected.textContent).toContain('mc_click_2');
+    expect(row('mc_click_2').className).toContain('detected');
+    await fireEvent.click(within(detected).getByText('Zuweisen'));
+    expect(screen.getByText(/mc_click_2 · Bank 1/)).toBeTruthy();
   });
 
-  it('handles learn timeout, manual Abbrechen button, and cancelLearn on unmount', async () => {
-    const api = fakeApi();
-    const listeners = new Set<() => void>();
-    const learnStore = {
-      state: { learn: null as LearnResult | null },
-      subscribe(listener: () => void) {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
-    };
-    const { unmount } = render(MappingPage, {
-      props: { api, learnStore: learnStore as unknown as StatusStore },
-    });
-    await waitFor(() => {
-      expect(screen.getByDisplayValue('Fix')).toBeTruthy();
-    });
+  it('resets after a timeout without touching the configuration', async () => {
+    const { daemon, push } = await mount();
+    await fireEvent.click(screen.getByText('Taste erkennen'));
+    expect(daemon.api.startLearn).toHaveBeenCalledWith('key', 'midicraft');
+    push('learn', { kind: 'key', status: 'active', control: null, device: 'midicraft' });
+    await screen.findByTestId('learn-active');
+    expect((screen.getByText('Encoder erkennen') as HTMLButtonElement).disabled).toBe(true);
 
-    const learnButtons = () => screen.getAllByTestId('key-learn') as HTMLButtonElement[];
-    await fireEvent.click(learnButtons()[0]);
-    expect(learnButtons()[0].disabled).toBe(true);
-    expect(screen.getByTestId('learn-cancel')).toBeTruthy();
-
-    // Timeout resets pendingLearn, re-enables Lernen buttons, and shows a status message
-    learnStore.state.learn = {
-      kind: 'key',
-      status: 'timeout',
-      control: null,
-      device: 'cherry',
-      raw: null,
-      direction: 0,
-      detents: 0,
-      elapsed: 5.0,
-      timed_out: true,
-    };
-    for (const listener of listeners) listener();
-
-    await waitFor(() => {
-      expect(learnButtons()[0].disabled).toBe(false);
-    });
-    expect(screen.queryByTestId('learn-cancel')).toBeNull();
-    expect(screen.getByRole('status').textContent).toContain('Learn');
-
-    // Manual Abbrechen calls cancelLearn and resets pendingLearn
-    await fireEvent.click(learnButtons()[0]);
-    expect(learnButtons()[0].disabled).toBe(true);
-    await fireEvent.click(screen.getByText('Abbrechen'));
-    await waitFor(() => {
-      expect(api.cancelLearn).toHaveBeenCalledTimes(1);
-      expect(learnButtons()[0].disabled).toBe(false);
-    });
-
-    // Unmounting while learn is active triggers cancelLearn in onDestroy
-    await fireEvent.click(learnButtons()[0]);
-    expect(learnButtons()[0].disabled).toBe(true);
-    unmount();
-    expect(api.cancelLearn).toHaveBeenCalledTimes(2);
+    push('learn', { kind: 'key', status: 'timeout', control: null, device: 'midicraft' });
+    await screen.findByTestId('learn-ended');
+    expect((screen.getByText('Encoder erkennen') as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByText('Taste erkennen') as HTMLButtonElement).disabled).toBe(false);
+    expect(daemon.patches()).toEqual([]);
   });
 
-  it('enables an absolute banked inventory control as a fader playback target', async () => {
-    const api = fakeApi();
-    await renderPage(api);
-
-    const row = playbackRow('mc_encoder_1');
-    expect(within(row).queryByTestId('playback-button')).toBeNull();
-    await fireEvent.click(within(row).getByTestId('playback-enabled'));
-    await fireEvent.input(within(row).getByTestId('playback-page'), {
-      target: { value: '2' },
-    });
-    await fireEvent.input(within(row).getByTestId('playback-executor'), {
-      target: { value: '4' },
-    });
-    await fireEvent.click(screen.getByText('Speichern'));
-
-    await waitFor(() => {
-      expect(api.updateConfig).toHaveBeenCalledWith({
-        mapping: expect.objectContaining({
-          playbacks: expect.objectContaining({
-            mc_encoder_1: {
-              page: 2,
-              executor: 4,
-              kind: 'fader',
-              button: null,
-              accelerated: false,
-              transport: null,
-            },
-          }),
-        }),
-      });
-    });
+  it('refuses a second session while one runs', async () => {
+    const { daemon, push } = await mount();
+    push('device_learn', { active: true, device: 'midicraft', bank: 1, current: 'mc_click_1' });
+    await screen.findByTestId('note-learn-active');
+    expect((screen.getByText('Taste erkennen') as HTMLButtonElement).disabled).toBe(true);
+    expect(daemon.api.startLearn).not.toHaveBeenCalled();
   });
+});
 
-  it('saves current as a page-relative playback target', async () => {
-    const api = fakeApi();
-    await renderPage(api);
-
-    const row = playbackRow('mc_encoder_1');
-    await fireEvent.click(within(row).getByTestId('playback-enabled'));
-    await fireEvent.input(within(row).getByTestId('playback-page'), {
-      target: { value: 'current' },
-    });
-    await fireEvent.input(within(row).getByTestId('playback-executor'), {
-      target: { value: '4' },
-    });
-    await fireEvent.click(screen.getByText('Speichern'));
-
-    await waitFor(() => {
-      expect(api.updateConfig).toHaveBeenCalledWith({
-        mapping: expect.objectContaining({
-          playbacks: expect.objectContaining({
-            mc_encoder_1: {
-              page: 'current',
-              executor: 4,
-              kind: 'fader',
-              button: null,
-              accelerated: false,
-              transport: null,
-            },
-          }),
-        }),
-      });
-    });
-  });
-
-  it('shows acceleration only for absolute encoders including banked inventory encoders', async () => {
-    const api = fakeApi();
-    await renderPage(api);
-
-    expect(
-      within(playbackRow('mc_encoder_1')).getByTestId('playback-accelerated'),
-    ).toBeTruthy();
-    expect(
-      within(playbackRow('mc_fader_1')).queryByTestId('playback-accelerated'),
-    ).toBeNull();
-    expect(
-      within(playbackRow('mc_click_1')).queryByTestId('playback-accelerated'),
-    ).toBeNull();
-  });
-
-  it('loads the saved acceleration state', async () => {
-    const api = fakeApi();
-    (api.config as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...config,
-      mapping: {
-        ...config.mapping,
-        playbacks: {
-          ...config.mapping.playbacks,
-          mc_encoder_1: {
-            page: 1,
-            executor: 2,
-            kind: 'fader',
-            accelerated: true,
-          },
-        },
+describe('MappingPage priority', () => {
+  it('flags a layer key that shadows a playback target, with the layers involved', async () => {
+    const config = baseConfig({
+      playbacks: { mc_click_1: { page: 1, executor: 1, kind: 'button', button: 1 } },
+      device_banks: {
+        midicraft: { bank_size: 5, '1': { keys: { mc_click_1: { hardkey: 'GO' } } } },
       },
     });
-    await renderPage(api);
-
-    const checkbox = within(playbackRow('mc_encoder_1')).getByTestId(
-      'playback-accelerated',
-    ) as HTMLInputElement;
-    expect(checkbox.checked).toBe(true);
-  });
-
-  it('saves acceleration for a banked inventory encoder', async () => {
-    const api = fakeApi();
-    await renderPage(api);
-
-    const row = playbackRow('mc_encoder_1');
-    await fireEvent.click(within(row).getByTestId('playback-enabled'));
-    await fireEvent.click(within(row).getByTestId('playback-accelerated'));
-    await fireEvent.input(within(row).getByTestId('playback-page'), {
-      target: { value: '1' },
-    });
-    await fireEvent.input(within(row).getByTestId('playback-executor'), {
-      target: { value: '2' },
-    });
-    await fireEvent.click(screen.getByText('Speichern'));
-
-    await waitFor(() => {
-      expect(api.updateConfig).toHaveBeenCalledWith({
-        mapping: expect.objectContaining({
-          playbacks: expect.objectContaining({
-            mc_encoder_1: {
-              page: 1,
-              executor: 2,
-              kind: 'fader',
-              button: null,
-              accelerated: true,
-              transport: null,
-            },
-          }),
-        }),
-      });
-    });
-  });
-
-  it('loads transport from the config and saves midi, web, or null for Standard', async () => {
-    const api = fakeApi();
-    (api.config as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...config,
-      midi_remote: { enabled: true, port: 5004, channels: [16], sync: 'auto', telnet_port: 30000 },
-      mapping: {
-        ...config.mapping,
-        playbacks: {
-          mc_fader_1: { page: 1, executor: 2, kind: 'fader', transport: 'web' },
-          mc_click_1: { page: 1, executor: 1, kind: 'button', button: 2 },
-        },
-      },
-    });
-    await renderPage(api);
-
-    const clickSelect = within(playbackRow('mc_click_1')).getByTestId(
-      'playback-transport',
-    ) as HTMLSelectElement;
-    const faderSelect = within(playbackRow('mc_fader_1')).getByTestId(
-      'playback-transport',
-    ) as HTMLSelectElement;
-    expect(clickSelect.value).toBe('');
-    expect(clickSelect.selectedOptions[0].textContent?.trim()).toBe('Standard (MIDI)');
-    expect(faderSelect.value).toBe('web');
-    expect(Array.from(faderSelect.options).map((option) => option.value)).toEqual(['', 'web']);
-
-    await fireEvent.change(clickSelect, { target: { value: 'midi' } });
-    await fireEvent.change(faderSelect, { target: { value: '' } });
-    await fireEvent.click(screen.getByText('Speichern'));
-
-    await waitFor(() => expect(api.updateConfig).toHaveBeenCalledTimes(1));
-    expect(api.updateConfig).toHaveBeenCalledWith({
-      mapping: expect.objectContaining({
-        playbacks: expect.objectContaining({
-          mc_click_1: {
-            page: 1,
-            executor: 1,
-            kind: 'button',
-            button: 2,
-            accelerated: null,
-            transport: 'midi',
-          },
-          mc_fader_1: {
-            page: 1,
-            executor: 2,
-            kind: 'fader',
-            button: null,
-            accelerated: null,
-            transport: null,
-          },
-        }),
-      }),
-    });
-  });
-
-  it('disables MIDI-Remote when midi_remote is off and keeps web when switching to fader', async () => {
-    const api = fakeApi();
-    (api.config as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...config,
-      midi_remote: { enabled: false, port: 5004, channels: [16], sync: 'auto', telnet_port: 30000 },
-      mapping: {
-        ...config.mapping,
-        playbacks: {
-          ...config.mapping.playbacks,
-          mc_click_1: { page: 1, executor: 1, kind: 'button', button: 2, transport: 'web' },
-        },
-      },
-    });
-    await renderPage(api);
-
-    const row = playbackRow('mc_click_1');
-    const select = within(row).getByTestId('playback-transport') as HTMLSelectElement;
-    expect(select.value).toBe('web');
-    expect(select.options[0].textContent?.trim()).toBe('Standard (Web)');
-    const midi = Array.from(select.options).find((option) => option.value === 'midi');
-    expect(midi?.disabled).toBe(true);
-
-    await fireEvent.change(within(row).getByTestId('playback-kind'), {
-      target: { value: 'fader' },
-    });
-    await fireEvent.click(screen.getByText('Speichern'));
-
-    await waitFor(() => expect(api.updateConfig).toHaveBeenCalledTimes(1));
-    expect(api.updateConfig).toHaveBeenCalledWith({
-      mapping: expect.objectContaining({
-        playbacks: expect.objectContaining({
-          mc_click_1: {
-            page: 1,
-            executor: 1,
-            kind: 'fader',
-            button: null,
-            accelerated: null,
-            transport: 'web',
-          },
-        }),
-      }),
-    });
-  });
-
-  it('blocks saving an invalid playback page', async () => {
-    const api = fakeApi();
-    await renderPage(api);
-
-    const row = playbackRow('mc_encoder_1');
-    await fireEvent.click(within(row).getByTestId('playback-enabled'));
-    await fireEvent.input(within(row).getByTestId('playback-page'), {
-      target: { value: '0' },
-    });
-    await fireEvent.click(screen.getByText('Speichern'));
-
-    await waitFor(() => {
-      expect(screen.getByRole('alert').textContent).toContain('Zahl ab 1 oder "current"');
-    });
-    expect(api.updateConfig).not.toHaveBeenCalled();
-  });
-
-  it('rejects empty hardkey modifier, deduplicates stale learnStore, and resolves custom encoder_id', async () => {
-    const { StatusStore } = await import('./status');
-    let socket: { onopen: (() => void) | null; onmessage: ((ev: { data: string }) => void) | null; close: () => void } | null = null;
-    const store = new StatusStore({
-      factory: () => {
-        socket = { onopen: null, onmessage: null, close: vi.fn() };
-        return socket as never;
-      },
-    });
-    store.connect();
-    socket!.onopen?.();
-    // Pre-populate store with a stale cancelled learn result
-    store.receive(JSON.stringify({ type: 'learn', data: { kind: 'encoder', status: 'cancelled' } }));
-
-    const api = fakeApi();
-    (api.devices as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
-      ...structuredClone(devices),
-      {
-        name: 'custom-wheel',
-        backend: 'midi',
-        profile: 'custom-wheel',
-        vendor_id: 0x1234,
-        product_id: 0x5678,
-        vendor_product: '1234:5678',
-        name_contains: null,
-        detected: { path: '/dev/snd/midiC9D0' },
-        controls: {
-          keys: [],
-          notes: [],
-          encoders: [],
-          midi_encoders: [],
-          values: [],
-          inventory: [
-            { id: 'wheel_pan', kind: 'relative-encoder', label: 'Pan', encoder_id: 8 },
-            { id: 'unbound_fader', kind: 'fader', label: 'UF' },
-          ],
-          banks: [{ number: 1, channel: 1, notes: { '40': 'wheel_pan' } }],
-          logical: ['wheel_pan', 'unbound_fader'],
-        },
-        layout: null,
-        bank_size: 1,
-      },
-    ]);
-
-    render(MappingPage, { props: { api, learnStore: store } });
-    await waitFor(() => expect(screen.getByDisplayValue('Fix')).toBeTruthy());
-
-    // Unbound value control must NOT display fake note 0
-    expect(screen.getByText(/unbound_fader \(fader\)/)).toBeTruthy();
-
-    // Start encoder learn -> regular status event must NOT cancel via stale learnStore.state.learn
-    const encLearnBtns = screen.getAllByTestId('encoder-learn');
-    await fireEvent.click(encLearnBtns[0]);
-    store.receive(
-      JSON.stringify({
-        type: 'status',
-        data: {
-          connected: true,
-          authenticated: true,
-          session: 1,
-          queue_depth: 0,
-          rate: 0,
-          screen_mode: false,
-          frames_sent: 0,
-          last_frame_types: [],
-          reconnects: 0,
-          last_error: null,
-          generation: 1,
-          busy: false,
-        },
-      }),
+    await mount(config);
+    const badge = await within(row('mc_click_1')).findByTestId('conflict-badge');
+    expect(badge.getAttribute('title')).toBe('Bank-Taste hat Vorrang vor dem Playback-Ziel.');
+    expect(within(row('mc_click_1')).getByTestId('conflict-explanation').textContent).toBe(
+      'Bank-Taste hat Vorrang vor dem Playback-Ziel.',
     );
-    expect((encLearnBtns[0] as HTMLButtonElement).disabled).toBe(true);
+  });
 
-    // Custom-named relative-encoder capture resolves encoder_id = 8
-    store.receive(
-      JSON.stringify({
-        type: 'learn',
-        data: { kind: 'encoder', status: 'captured', control: 'wheel_pan' },
-      }),
-    );
-    await waitFor(() => expect((encLearnBtns[0] as HTMLButtonElement).disabled).toBe(false));
-
-    // Empty hardkey modifier must block save
-    await fireEvent.click(screen.getByText('Modifier hinzufügen'));
-    await fireEvent.click(screen.getByText('Speichern'));
-    await waitFor(() => {
-      expect(screen.getByRole('alert').textContent).toContain('Hardkey angeben');
+  it('shows no conflict badge for an encoder with a playback target', async () => {
+    const config = baseConfig({
+      playbacks: { 'encoder.1': { page: 1, executor: 1, kind: 'fader' } },
+      encoders: [{ id: 1, slot: 1 }],
     });
-    expect(api.updateConfig).not.toHaveBeenCalled();
-    store.disconnect();
+    await mount(config);
+    expect(within(row('encoder.1')).queryByTestId('conflict-badge')).toBeNull();
   });
 });

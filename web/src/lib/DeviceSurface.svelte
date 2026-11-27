@@ -1,9 +1,12 @@
 <script lang="ts">
   import type { DeviceLayout, LayoutCell } from './api';
+  import AssignmentBadges from './AssignmentBadges.svelte';
 
   interface Props {
     layout: DeviceLayout;
     assignments?: Record<string, string>;
+    /** Origin and conflict text per control, shown as badges. */
+    markers?: Record<string, { source: string | null; conflict: string | null }>;
     selected?: string[];
     activeControl?: string | null;
     activeKind?: string | null;
@@ -14,6 +17,7 @@
   let {
     layout,
     assignments = {},
+    markers = {},
     selected = [],
     activeControl = null,
     activeKind = null,
@@ -148,6 +152,15 @@
       {#if assignment !== null}
         <span class="assignment">{assignment}</span>
       {/if}
+      {#if cell.control !== null && markers[cell.control]}
+        <span class="markers">
+          <AssignmentBadges
+            source={markers[cell.control].source}
+            conflict={markers[cell.control].conflict}
+            compact
+          />
+        </span>
+      {/if}
       {#if cell.control !== null && cell.control === activeControl}
         <span class="active-hint">{hintFor(activeKind)}</span>
       {/if}
@@ -247,6 +260,13 @@
     line-height: 1.15;
     overflow-wrap: normal;
     word-break: normal;
+  }
+
+  .markers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2rem;
+    margin-top: 0.2rem;
   }
 
   .assignment {

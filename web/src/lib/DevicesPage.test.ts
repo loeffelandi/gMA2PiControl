@@ -65,6 +65,7 @@ function fakeApi(devices: DeviceEntry[], cfg: Record<string, unknown> = config) 
   return {
     devices: vi.fn().mockResolvedValue(devices),
     config: vi.fn().mockResolvedValue(cfg),
+    configSnapshot: vi.fn().mockResolvedValue({ config: cfg, generation: 1 }),
     updateConfig: vi.fn().mockResolvedValue({}),
     deviceLearnStatus: vi.fn().mockResolvedValue({ active: false }),
     startDeviceLearn: vi.fn(),
@@ -72,6 +73,12 @@ function fakeApi(devices: DeviceEntry[], cfg: Record<string, unknown> = config) 
     cancelDeviceLearn: vi.fn().mockResolvedValue({}),
     finishDeviceLearn: vi.fn(),
   } as unknown as ApiClient;
+}
+
+/** Merge patch of the last `updateConfig` call. */
+function sentPatch(api: ApiClient): unknown {
+  const calls = vi.mocked(api.updateConfig).mock.calls;
+  return calls[calls.length - 1]?.[0];
 }
 
 describe('DevicesPage', () => {
@@ -188,7 +195,7 @@ describe('DevicesPage encoder assignments', () => {
     await fireEvent.change(screenSelect, { target: { value: '7' } });
     await fireEvent.click(screen.getByText('Speichern'));
     await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
-    expect(api.updateConfig).toHaveBeenCalledWith({
+    expect(sentPatch(api)).toEqual({
       mapping: {
         encoders: [{ id: 1, slot: 1 }],
         screen_encoders: { '1': 7 },
@@ -208,7 +215,7 @@ describe('DevicesPage encoder assignments', () => {
     await fireEvent.click(screen.getByText('Speichern'));
 
     await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
-    expect(api.updateConfig).toHaveBeenCalledWith({
+    expect(sentPatch(api)).toEqual({
       mapping: {
         encoders: [{ id: 1, slot: 1 }],
         screen_encoders: { '1': null },
@@ -232,7 +239,7 @@ describe('DevicesPage encoder assignments', () => {
     await fireEvent.click(screen.getByText('Speichern'));
 
     await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
-    expect(api.updateConfig).toHaveBeenCalledWith({
+    expect(sentPatch(api)).toEqual({
       mapping: {
         encoders: [{ id: 1, attribute: 'Dimmer' }],
         screen_encoders: { '1': null },
@@ -274,7 +281,7 @@ describe('DevicesPage encoder assignments', () => {
     await fireEvent.click(screen.getByText('Speichern'));
 
     await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
-    expect(api.updateConfig).toHaveBeenCalledWith({
+    expect(sentPatch(api)).toEqual({
       mapping: {
         device_banks: {
           banktest: {
@@ -302,7 +309,7 @@ describe('DevicesPage special key assignments and deletion', () => {
     await fireEvent.change(select, { target: { value: 'screen_mode' } });
     await fireEvent.click(screen.getByText('Speichern'));
     await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
-    expect(api.updateConfig).toHaveBeenCalledWith({
+    expect(sentPatch(api)).toEqual({
       mapping: {
         keys: {
           bt_button: {
@@ -318,17 +325,17 @@ describe('DevicesPage special key assignments and deletion', () => {
     });
   });
 
-  it('deletes a global assignment on Bank 1 via Belegung löschen', async () => {
+  it('deletes a global assignment on Bank 1 via Belegung entfernen', async () => {
     const api = fakeApi([device]);
     render(DevicesPage, { props: { api } });
     await waitFor(() => expect(screen.getByText('B')).toBeTruthy());
 
     await fireEvent.click(screen.getByText('B'));
     await fireEvent.click(screen.getByText('Zuweisen'));
-    await fireEvent.click(screen.getByText('Belegung löschen'));
+    await fireEvent.click(screen.getByText('Belegung entfernen'));
 
     await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
-    expect(api.updateConfig).toHaveBeenCalledWith({
+    expect(sentPatch(api)).toEqual({
       mapping: {
         keys: { bt_button: null },
         playbacks: { bt_button: null },
@@ -365,10 +372,10 @@ describe('DevicesPage special key assignments and deletion', () => {
 
     await fireEvent.click(screen.getByText('F'));
     await fireEvent.click(screen.getByText('Zuweisen'));
-    await fireEvent.click(screen.getByText('Belegung löschen'));
+    await fireEvent.click(screen.getByText('Belegung entfernen'));
 
     await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
-    expect(api.updateConfig).toHaveBeenCalledWith({
+    expect(sentPatch(api)).toEqual({
       mapping: {
         device_banks: {
           banktest: {
@@ -382,8 +389,8 @@ describe('DevicesPage special key assignments and deletion', () => {
     });
   });
 
-  it('clears stale Bank 1 layer override when saving a global Bank 1 assignment', async () => {
-    const withStaleBank1 = {
+  it('edits an existing Bank 1 layer entry instead of writing a global entry beside it', async () => {
+    const withBank1Layer = {
       ...config,
       mapping: {
         ...config.mapping,
@@ -397,39 +404,55 @@ describe('DevicesPage special key assignments and deletion', () => {
         },
       },
     };
-    const api = fakeApi([device], withStaleBank1);
+    const api = fakeApi([device], withBank1Layer);
     render(DevicesPage, { props: { api } });
     await waitFor(() => expect(screen.getByText('Store')).toBeTruthy());
 
     await fireEvent.click(screen.getByText('B'));
     await fireEvent.click(screen.getByText('Zuweisen'));
+    expect((screen.getByLabelText('Geltungsbereich') as HTMLSelectElement).value).toBe('bank');
     await fireEvent.input(screen.getByLabelText('Hardkey'), {
       target: { value: 'Clear' },
     });
     await fireEvent.click(screen.getByText('Speichern'));
 
     await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
-    expect(api.updateConfig).toHaveBeenCalledWith({
+    expect(sentPatch(api)).toEqual({
       mapping: {
-        keys: {
-          bt_button: {
-            hardkey: 'Clear',
-            command: null,
-            screen_mode: null,
-            encoder_press: null,
-            screen: null,
-          },
-        },
-        playbacks: { bt_button: null },
         device_banks: {
           banktest: {
             '1': {
-              keys: { bt_button: null },
+              keys: {
+                bt_button: {
+                  hardkey: 'Clear',
+                  command: null,
+                  screen_mode: null,
+                  encoder_press: null,
+                  screen: null,
+                },
+              },
+              playbacks: { bt_button: null },
             },
           },
         },
       },
     });
+  });
+
+  it('writes the global entry on Bank 1 without a layer and replaces a layer on explicit global scope', async () => {
+    const api = fakeApi([device]);
+    render(DevicesPage, { props: { api } });
+    await waitFor(() => expect(screen.getByText('B')).toBeTruthy());
+    await fireEvent.click(screen.getByText('B'));
+    await fireEvent.click(screen.getByText('Zuweisen'));
+    expect((screen.getByLabelText('Geltungsbereich') as HTMLSelectElement).value).toBe('global');
+    await fireEvent.input(screen.getByLabelText('Hardkey'), { target: { value: 'Clear' } });
+    await fireEvent.click(screen.getByText('Speichern'));
+    await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
+    expect(sentPatch(api)).toMatchObject({
+      mapping: { keys: { bt_button: { hardkey: 'Clear' } } },
+    });
+    expect((sentPatch(api) as any).mapping.device_banks).toBeUndefined();
   });
 });
 
@@ -453,7 +476,9 @@ describe('DevicesPage bank offset', () => {
 
     await fireEvent.click(screen.getByText('F'));
     await fireEvent.click(screen.getByText('Zuweisen'));
-    expect(screen.getByText('Geerbt von Bank 1 (inkl. Bank-Offset)')).toBeTruthy();
+    expect(screen.getByTestId('assignment-source').textContent).toContain(
+      'geerbt mit Bank-Offset (Offset +5)',
+    );
 
     const execInput = screen.getByLabelText('Executor') as HTMLInputElement;
     expect(execInput.value).toBe('6');
@@ -461,7 +486,7 @@ describe('DevicesPage bank offset', () => {
     await fireEvent.click(screen.getByText('Speichern'));
 
     await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
-    expect(api.updateConfig).toHaveBeenCalledWith({
+    expect(sentPatch(api)).toEqual({
       mapping: {
         keys: { bt_fader: null },
         playbacks: {
@@ -543,7 +568,7 @@ describe('DevicesPage playback transport', () => {
     await fireEvent.click(screen.getByText('Speichern'));
 
     await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
-    expect(api.updateConfig).toHaveBeenCalledWith({
+    expect(sentPatch(api)).toEqual({
       mapping: {
         keys: { bt_button: null },
         playbacks: {
@@ -582,7 +607,7 @@ describe('DevicesPage playback transport', () => {
     await fireEvent.click(screen.getByText('Speichern'));
 
     await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
-    expect(api.updateConfig).toHaveBeenCalledWith({
+    expect(sentPatch(api)).toEqual({
       mapping: {
         keys: { bt_button: null },
         playbacks: {
@@ -680,18 +705,20 @@ describe('DevicesPage learn highlight', () => {
     await fireEvent.input(screen.getByLabelText('Slot'), { target: { value: '3' } });
     await fireEvent.click(screen.getByText('Speichern'));
     await waitFor(() => expect(api.updateConfig).toHaveBeenCalledTimes(1));
-    expect(api.updateConfig).toHaveBeenLastCalledWith({
+    expect(sentPatch(api)).toEqual({
       mapping: {
         encoders: expect.arrayContaining([{ id: 8, slot: 3 }]),
       },
     });
 
+    await waitFor(() => expect(document.querySelector('dialog')).toBeNull());
+
     // Clear modifier on Bank 1 -> emits modifiers.bt_button = null
     await fireEvent.click(screen.getByText('B'));
     await fireEvent.click(screen.getByText('Zuweisen'));
-    await fireEvent.click(screen.getByText('Belegung löschen'));
+    await fireEvent.click(screen.getByText('Belegung entfernen'));
     await waitFor(() => expect(api.updateConfig).toHaveBeenCalledTimes(2));
-    expect(api.updateConfig).toHaveBeenLastCalledWith({
+    expect(sentPatch(api)).toEqual({
       mapping: {
         keys: { bt_button: null },
         playbacks: { bt_button: null },
