@@ -13,26 +13,6 @@ remotes (see [`[midi_remote]`](#midi_remote-executor-buttons-over-ma-midi-remote
 so that Store, Assign and similar commands work like on a console. There is no
 OSC or Showcockpit path to onPC, and no parameter unlock.
 
-> **Name:** the product is called **gMA2PiControl**. The Python package, the
-> `ma2pi` command and the systemd unit keep their technical name so existing
-> installations keep working.
->
-> **Design:** the web interface follows the palette and typography of
-> [sustain-vt.de](https://www.sustain-vt.de) — Bebas Neue for headings, DM Sans
-> for text, both under the SIL Open Font License and bundled locally in
-> `web/public/fonts/`.
-
-> Status: the software is implemented and the test suite runs on the
-> development machine and on the Pi. The ASL has been identified as a USB-MIDI
-> device, its MIDI backend is implemented, and its note/velocity layout has been
-> verified on the hardware. The MIDICRAFT ENC (note layout of bank 1, absolute
-> faders/encoders, LED output) is verified on the device; PUSH², FADE², TURN²,
-> MIX² and SPOT ship as profiles whose notes are taught in with the learn mode.
-> Remaining acceptance steps (controlled Cherry
-> capture, live Web Remote login, ASL LED protocol, Raspberry Pi service
-> installation and hardware smoke/stress tests) are still open. See
-> [Open hardware acceptance](#open-hardware-acceptance).
-
 ## Contents
 
 - [How it works](#how-it-works)
@@ -40,7 +20,7 @@ OSC or Showcockpit path to onPC, and no parameter unlock.
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Configuration reference](#configuration-reference)
-- [Web-Oberfläche](#web-oberfläche)
+- [Web interface](#web-interface)
 - [JSON-API](docs/api.md)
 - [Command line](#command-line)
 - [Dry-run: expected frame sequence](#dry-run-expected-frame-sequence)
@@ -74,8 +54,8 @@ MIDICRAFT ────────┴─ MIDI ──┘                         
 * `ma2pi/ma2_client.py` — handshake, login, keepalive, reconnect, one global
   send queue with control priority, token bucket and backpressure guard.
 * `ma2pi/frames.py` — exact JSON frame builders.
-* `ma2pi/wheel_protocol.py` — historischer Wheel-Builder; die Encoder nutzen
-  heute ausschließlich das native Attribut-Format.
+* `ma2pi/wheel_protocol.py` — historical wheel builder; the encoders now use
+  only the native attribute format.
 
 Releases and commands are never dropped. Encoder frames are coalesced per
 target. On a connection loss the local key state is cleared and no stale
@@ -108,9 +88,9 @@ with `backend = "midi"`. Supported models:
    therefore declares its control inventory and one note map per bank
    (channel = bank number). Bank 1 of the ENC is shipped with measured notes;
    all other banks and the other models are filled by the **learn mode** in the
-   web interface (**Geräte** tab → *Noten anlernen*), which asks you to operate
+   web interface (**Devices** tab → *Learn notes*), which asks you to operate
    each still unbound control. The bank in use is selected in the UI.
-3. **Mapping.** Controls are assigned to grandMA2 executors in the **Geräte**
+3. **Mapping.** Controls are assigned to grandMA2 executors in the **Devices**
    or **Mapping** tab: faders and encoders to executor faders, buttons to
    executor buttons 1–3, or to hardkeys and commands. A target with
    `page = "current"` follows the active master page. Higher banks reuse the
@@ -157,7 +137,7 @@ reader of its `/dev/snd/midiC*` node.
 * grandMA2 onPC reachable over the network with Web Remote enabled.
 * A non-root system user `ma2pi` with read access to `/dev/input/event*` and
   `/dev/snd/midiC*` through the supplied udev rules.
-* NetworkManager with `nmcli` and Polkit for the **Netzwerk** page. The
+* NetworkManager with `nmcli` and Polkit for the **Network** page. The
   installer grants `ma2pi` only the NetworkManager actions needed to change and
   activate a system connection and to share WiFi as an access point (recovery hotspot).
 * The Cherry keyboard, the ASL panel and/or MIDICRAFT controllers connected by
@@ -267,10 +247,10 @@ The password and its MD5 hash are never logged.
 | `pin_enabled` | bool | `false` | PIN gate for the UI and every non-public API path. |
 | `pin` | string | `""` | 4–12 digits; empty means no PIN. Set one to protect the UI. |
 
-### Web-Oberfläche und Offline-Betrieb
+### Web interface and offline operation
 
-Die Oberfläche wird als statisches Svelte-Bundle aus `web/dist` vom Daemon
-ausgeliefert. Gebaut wird sie auf dem Entwicklungsrechner oder in CI:
+The interface is served by the daemon as a static Svelte bundle from
+`web/dist`. It is built on the development machine or in CI:
 
 ```bash
 cd web
@@ -279,13 +259,13 @@ npm run build
 npm run check:offline
 ```
 
-`npm run check:offline` prüft den Build auf externe `src`-/`href`-Ziele,
-`url()`-Referenzen, absolute `fetch`-/WebSocket-Adressen sowie CDN-, Font- und
-Telemetrie-Hosts. Der Build enthält nur relative Asset-Pfade. Zusätzlich wurde
-die gebaute Oberfläche in einem Browser gegen einen reinen Dateiserver geladen:
-alle Anfragen gingen an denselben lokalen Host (HTML, JavaScript, CSS); es gab
-keine externen Netzwerkaufrufe. Die fehlenden API-Antworten in diesem Aufbau
-sind erwartet und betreffen nur die Live-Daten, nicht das Laden der Oberfläche.
+`npm run check:offline` checks the build for external `src`/`href` targets,
+`url()` references, absolute `fetch`/WebSocket addresses and CDN, font and
+telemetry hosts. The build contains only relative asset paths. In addition, the
+built interface was loaded in a browser against a plain file server: all
+requests went to the same local host (HTML, JavaScript, CSS) and there were no
+external network calls. The missing API responses in this setup are expected
+and only affect the live data, not loading the interface.
 
 ### `[led]`
 
@@ -875,12 +855,15 @@ Normal (native `encoder` frame with `resolution`) instead of sending the encoder
 press. The daemon reads the attribute model once on connect and shortly after
 each change; screen encoders have no resolution and only log a warning.
 
-## Web-Oberfläche
+## Web interface
 
-### Zugriff im LAN
+The web interface is currently in German. This README names its pages and
+buttons in English and gives the German label on first use.
 
-Der Daemon liefert die Oberfläche und die JSON-API im selben Prozess aus.
-Standard ist `0.0.0.0:8080`; beides steht in der `[web]`-Sektion:
+### LAN access
+
+The daemon serves the interface and the JSON API from the same process. The
+default is `0.0.0.0:8080`; both values are set in the `[web]` section:
 
 ```toml
 [web]
@@ -889,222 +872,215 @@ port = 8080
 pin_enabled = false
 ```
 
-Nach dem Start ist die Oberfläche unter `http://<pi-adresse>:8080/` erreichbar.
-Änderungen an `bind` oder `port` werden erst nach einem Dienstneustart wirksam;
-die Oberfläche weist darauf hin. Die Firewall des Pi wird vom Installer nicht
-verändert – der Port muss im LAN erreichbar sein, sollte aber nicht aus dem
-Internet weitergeleitet werden.
+After startup the interface is available at `http://<pi-address>:8080/`.
+Changes to `bind` or `port` only take effect after a service restart; the
+interface points this out. The installer does not change the Pi's firewall. The
+port must be reachable in the LAN but should not be forwarded to the internet.
 
-### Netzwerk
+### Network
 
-Die Seite **Netzwerk** verwaltet die kabelgebundene IPv4-Schnittstelle über
-NetworkManager. Sie zeigt Schnittstelle, Verbindungszustand, Modus, aktuelle
-Adresse, Subnetzmaske, Gateway und DNS. **DHCP** und **Statisch** lassen sich
-umschalten; im statischen Modus werden Adresse, Subnetzmaske, Gateway und DNS
-bearbeitet. Die Subnetzmaske wird in Punktnotation eingegeben (z. B.
-`255.255.255.0`). Gateway und DNS dürfen leer bleiben; die Oberfläche warnt
-dann, dass keine Standardroute bzw. kein DNS-Server gesetzt ist.
+The **Network** page (*Netzwerk*) manages the wired IPv4 interface through
+NetworkManager. It shows the interface, connection state, mode, current address,
+subnet mask, gateway and DNS. You can switch between **DHCP** and **Static**
+(*Statisch*); in static mode you edit address, subnet mask, gateway and DNS. The
+subnet mask is entered in dotted notation (for example `255.255.255.0`). Gateway
+and DNS may stay empty; the interface then warns that no default route or DNS
+server is set.
 
-Vor dem Anwenden prüft der Daemon Adresse, Maske, Gateway, DNS und die lokale
-Doppelbelegung. Danach wird die neue Konfiguration **sofort** aktiviert – ein
-Dienst- oder Pi-Neustart ist dafür nicht nötig. Die Verbindung kann dabei
-abbrechen. Die Oberfläche nennt die Ziel-URL und verlangt, dass du sie öffnest
-und dich dort erneut mit der PIN anmeldest; erst diese neue Sitzung bestätigt
-die Änderung. Wird nicht innerhalb von 180 Sekunden bestätigt, stellt der Daemon
-automatisch die vorherige Konfiguration wieder her. Kurze
-Verbindungsabbrüche oder ein WebSocket-Reconnect lösen keinen sofortigen
-Rollback aus. Der Pending-Zustand liegt unter
-`/var/lib/ma2pi/network-pending.json` und überlebt einen Dienstneustart.
+Before applying, the daemon checks address, mask, gateway, DNS and local
+address conflicts. The new configuration is then activated **immediately**; no
+service or Pi restart is needed. The connection may drop in the process. The
+interface shows the target URL and requires you to open it and log in again with
+the PIN; only this new session confirms the change. If it is not confirmed
+within 180 seconds, the daemon automatically restores the previous
+configuration. Short connection drops or a WebSocket reconnect do not trigger an
+immediate rollback. The pending state is stored in
+`/var/lib/ma2pi/network-pending.json` and survives a service restart.
 
-Schlägt auch die Wiederherstellung der vorherigen Konfiguration fehl, setzt der
-Daemon die **Notfall-Adresse `192.168.178.254/24`** ohne Gateway und DNS. Sie
-ist im Netz `192.168.178.0/24` gültig, sofern sie nicht bereits belegt ist. Ein
-Client braucht für den Zugriff eine Adresse aus diesem Subnetz; in einem
-anderen Netz ist die Notfall-Adresse ohne Client-Umkonfiguration nicht
-erreichbar. Einen manuellen Notfall-Knopf gibt es nicht.
+If restoring the previous configuration fails as well, the daemon sets the
+**emergency address `192.168.178.254/24`** without gateway and DNS. It is valid
+in the network `192.168.178.0/24` as long as it is not already in use. A client
+needs an address from this subnet to reach it; in any other network the
+emergency address is unreachable without reconfiguring the client. There is no
+manual emergency button.
 
-Unterstützt wird genau eine kabelgebundene IPv4-Schnittstelle. WLAN, IPv6,
-VLAN, Bonding und mehrere gleichzeitig verwaltete Schnittstellen sind für die
-Netzwerkseite nicht enthalten. Die Netzwerkeinstellungen stehen ausschließlich
-bei NetworkManager und nicht in `config.toml`.
+Exactly one wired IPv4 interface is supported. WiFi, IPv6, VLAN, bonding and
+several simultaneously managed interfaces are not part of the network page. The
+network settings live exclusively in NetworkManager and not in `config.toml`.
 
-#### Rettungs-WLAN
+#### Recovery WiFi
 
-Für den Fall, dass das Kabelnetz ausfällt, spannt der Pi einen eigenen WLAN-
-Hotspot auf. Die Einstellungen liegen auf der Netzwerkseite unter
-**Rettungs-WLAN**:
+If the wired network fails, the Pi opens its own WiFi hotspot. The settings are
+on the network page under **Recovery WiFi** (*Rettungs-WLAN*):
 
-* SSID (Standard `ma2pi-recovery`) und Passwort (Standard `ma2pi-recovery`,
-  8–63 Zeichen) sind änderbar. Das Standardpasswort sollte im Betrieb geändert
-  werden.
-* Der Hotspot ist standardmäßig aus. Er läuft mit WPA2 auf `wlan0`, vergibt
-  Adressen aus `192.168.50.0/24` und ist unter `http://192.168.50.1:8080/`
-  erreichbar. Die PIN-Sperre gilt auch dort.
-* **Automatik**: Ist das Kabelnetz länger als 60 Sekunden ohne nutzbare
-  Adresse oder liegt die Schnittstelle auf der Notfall-Adresse, schaltet der
-  Pi den Hotspot ein. Nach 60 Sekunden stabilem Kabelnetz schaltet er ihn
-  wieder aus. Ein manuell eingeschalteter Hotspot bleibt, bis du ihn ausschaltest.
-* Der Hotspot trennt eine bestehende WLAN-Verbindung auf `wlan0`. Das ist
-  beabsichtigt.
+* SSID (default `ma2pi-recovery`) and password (default `ma2pi-recovery`, 8–63
+  characters) can be changed. Change the default password in production.
+* The hotspot is off by default. It runs with WPA2 on `wlan0`, hands out
+  addresses from `192.168.50.0/24` and is reachable at
+  `http://192.168.50.1:8080/`. The PIN lock applies there as well.
+* **Automatic mode**: if the wired network has had no usable address for more
+  than 60 seconds, or the interface is on the emergency address, the Pi turns
+  the hotspot on. After 60 seconds of stable wired network it turns it off
+  again. A manually enabled hotspot stays on until you turn it off.
+* The hotspot disconnects an existing WiFi connection on `wlan0`. This is
+  intentional.
 
-Unterstützt wird genau eine kabelgebundene IPv4-Schnittstelle. WLAN, IPv6,
-VLAN, Bonding und mehrere gleichzeitig verwaltete Schnittstellen sind nicht
-enthalten. Die Netzwerkeinstellungen stehen ausschließlich bei NetworkManager
-und nicht in `config.toml`.
+Permissions are defined in `/etc/polkit-1/rules.d/50-ma2pi-network.rules`. The
+user `ma2pi` may change system profiles, activate connections and share WiFi in
+access-point mode only (`wifi.share.open`, `wifi.share.protected`, required for
+the recovery hotspot). WiFi scans and other NetworkManager actions remain
+blocked. The service still runs unprivileged; `ProtectSystem=strict` and
+`NoNewPrivileges` stay active.
 
-Die Berechtigung regelt `/etc/polkit-1/rules.d/50-ma2pi-network.rules`. Der
-Benutzer `ma2pi` darf Systemprofile ändern, Verbindungen aktivieren und WLAN
-nur im Access-Point-Modus freigeben (`wifi.share.open`, `wifi.share.protected`,
-nötig für den Rettungs-Hotspot). WLAN-Scan und andere NetworkManager-Aktionen
-bleiben gesperrt. Der Dienst läuft weiterhin unprivilegiert;
-`ProtectSystem=strict` und `NoNewPrivileges` bleiben aktiv.
+### Security model (v1)
 
-### Sicherheitsmodell (v1)
+* A simple PIN lock can protect the interface and the API. It is **off** by
+  default and must be set in the configuration or on the **Advanced** page
+  (*Erweitert*). As long as no PIN is set, the interface shows a warning banner
+  at the top. The PIN is a LAN protection, not a replacement for TLS or user
+  management.
+* Writing API calls must carry `Content-Type: application/json` and the header
+  `X-Ma2pi-Request: 1`. Plain form POSTs are rejected; this is CSRF protection,
+  not a replacement for authentication.
+* The MA2 password is write-only. Responses, logs and error messages contain
+  neither the password nor its hash; the interface only shows whether a
+  password is set. The PIN is never returned either.
+* No CORS release: the interface is served same-origin.
+* No external assets, fonts, CDNs or telemetry. The build is checked with
+  `npm run check:offline` (see above).
+* The PIN is held as an HTTP cookie session. After a service restart you have
+  to log in again.
 
-* Eine einfache PIN-Sperre kann Oberfläche und API schützen. Sie ist
-  standardmäßig **aus** und muss in der Konfiguration oder auf der Seite
-  **Erweitert** gesetzt werden. Solange keine PIN gesetzt ist, zeigt die
-  Oberfläche oben einen Warnbanner. Die PIN ist ein LAN-Schutz, kein Ersatz für
-  TLS oder eine Benutzerverwaltung.
-* Schreibende API-Aufrufe müssen `Content-Type: application/json` und den
-  Header `X-Ma2pi-Request: 1` tragen. Einfache Formular-POSTs werden abgelehnt;
-  das ist ein CSRF-Schutz, kein Ersatz für Authentifizierung.
-* Das MA2-Passwort ist ausschließlich schreibbar. Antworten, Logs und
-  Fehlermeldungen enthalten weder das Passwort noch dessen Hash; die Oberfläche
-  zeigt nur, ob ein Passwort gesetzt ist. Die PIN wird ebenfalls nie
-  zurückgegeben.
-* Keine CORS-Freigabe: Die Oberfläche wird same-origin ausgeliefert.
-* Keine externen Assets, Fonts, CDNs oder Telemetrie. Der Build wird mit
-  `npm run check:offline` geprüft (siehe oben).
-* Die PIN wird als HTTP-Cookie-Session gehalten. Nach einem Neustart des
-  Dienstes ist eine erneute Anmeldung nötig.
+### Devices and mapping
 
-### Geräte und Mapping
+The **Devices** (*Geräte*) and **Mapping** tabs edit the same assignment model.
+Both load configuration and device list through a shared state: a change saved
+in one tab is immediately visible in the other, device and bank are kept when
+switching tabs, and only currently detected devices are offered. The same action
+on the same control and the same scope produces exactly the same configuration
+in both tabs.
 
-Die Tabs **Geräte** und **Mapping** bearbeiten dasselbe Zuweisungsmodell. Beide
-laden Konfiguration und Geräteliste über einen gemeinsamen Zustand: Eine in
-einem Tab gespeicherte Änderung ist im anderen sofort sichtbar, Gerät und Bank
-bleiben beim Tabwechsel erhalten und nur aktuell erkannte Geräte werden
-angeboten. Dieselbe Aktion auf demselben Control und demselben Scope erzeugt in
-beiden Tabs exakt dieselbe Konfiguration.
+**Controls.** Both tabs build the control list from the same source: inventory,
+notes, absolute values, encoders and the notes of all banks. A control that is
+known only to the inventory or to a single bank can therefore be selected in
+both tabs.
 
-**Controls.** Beide Tabs bilden die Control-Liste aus derselben Quelle:
-Inventar, Noten, absolute Werte, Encoder und die Noten aller Bänke. Ein Control,
-das nur das Inventar oder nur eine Bank kennt, ist daher in beiden Tabs wählbar.
+* The **Devices** tab shows the schematic surface from `[layouts.*]` (a table
+  without a layout). One click selects a control, several clicks collect a
+  selection in click order; **Assign** (*Zuweisen*) opens the dialog. The
+  dialog distributes executor numbers consecutively (start value and step, with
+  a preview).
+* The **Mapping** tab shows the same controls as a table with the effective
+  assignment and its origin; **Edit** (*Bearbeiten*) opens the same dialog for a
+  control. Bank size, channel and MA page of the selected bank are read-only
+  there and are edited in the **Devices** tab.
 
-* Der Tab **Geräte** zeigt die schematische Fläche aus `[layouts.*]` (ohne
-  Layout eine Tabelle). Ein Klick wählt ein Control, mehrere Klicks sammeln eine
-  Auswahl in Klick-Reihenfolge; **Zuweisen** öffnet den Dialog. Der Dialog
-  verteilt Executor-Nummern fortlaufend (Startwert und Schrittweite, Vorschau).
-* Der Tab **Mapping** zeigt dieselben Controls als Tabelle mit effektiver
-  Belegung und Herkunft; **Bearbeiten** öffnet für ein Control denselben Dialog.
-  Bankgröße, Kanal und MA-Page der gewählten Bank erscheinen dort nur lesend und
-  werden im Tab **Geräte** bearbeitet.
+**Actions in the dialog.** Hardkey, command, screen mode, select screen, encoder
+click, playback target (page, kind `Button`/`Fader`, executor, button 1–3,
+transport and, for absolute encoders, **Accelerated** (*Beschleunigt*)),
+attribute encoder (slot or attribute name; for slots 1–4 additionally a screen
+encoder 5–10 or "none") and modifier (hardkey or local). Unused fields of an
+action are removed on save, so switching from hardkey to command leaves no
+hardkey field behind. Page and executor are 1-based as in the MA, and `current`
+is also allowed as a page. The transport `MIDI-Remote` only applies to buttons
+and requires `[midi_remote] enabled = true`; a fader target does not store a
+transport.
 
-**Aktionen im Dialog.** Hardkey, Command, Screen-Modus, Screen wählen,
-Encoder-Klick, Playback-Ziel (Page, Art `Button`/`Fader`, Executor, Button 1–3,
-Transport und bei absoluten Encodern **Beschleunigt**), Attribut-Encoder (Slot
-oder Attributname, bei den Slots 1–4 zusätzlich ein Screen-Encoder 5–10 oder
-„keiner“) und Modifier (Hardkey oder lokal). Ungenutzte Felder einer Aktion
-werden beim Speichern entfernt; ein Wechsel von Hardkey auf Command hinterlässt
-also kein Hardkey-Feld. Page und Executor sind wie in der MA 1-basiert, als Page
-ist auch `current` erlaubt. Der Transport `MIDI-Remote` gilt nur für Buttons und
-setzt `[midi_remote] enabled = true` voraus; ein Fader-Ziel speichert keinen
-Transport.
+**Scope and origin.** Every assignment has a scope: **Global (all banks)**
+(*Global (alle Bänke)*) or **Only this bank** (*Nur diese Bank*, an override in
+`[mapping.device_banks]`). The interface shows the origin of the effective
+assignment: *bank entry*, *global*, *inherited (global)* or *inherited with bank
+offset* (for example, global executor 1 appears on bank 2 with bank size 5 as
+executor 6). The dialog starts where the entry lives: an inherited target is
+never silently saved as an explicit bank entry, "Only this bank" is a
+deliberate decision and no longer follows the bank offset afterwards. The same
+rule applies to bank 1: if a layer entry exists, it is changed, otherwise the
+global level. When saving in the global scope, the dialog shows the raw value
+that is stored without an offset.
 
-**Scope und Herkunft.** Jede Zuweisung hat einen Scope: **Global (alle Bänke)**
-oder **Nur diese Bank** (Override in `[mapping.device_banks]`). Die Oberfläche
-zeigt die Herkunft der effektiven Belegung: *Bank-Eintrag*, *global*, *geerbt
-(global)* oder *geerbt mit Bank-Offset* (z. B. globaler Executor 1 erscheint auf
-Bank 2 bei Bankgröße 5 als Executor 6). Der Dialog startet dort, wo der Eintrag
-liegt: ein geerbtes Ziel wird nie stillschweigend als expliziter Bank-Eintrag
-gespeichert, „Nur diese Bank“ ist eine bewusste Entscheidung und folgt danach
-nicht mehr dem Bank-Offset. Bei Bank 1 gilt dieselbe Regel: Existiert ein
-Layer-Eintrag, wird er geändert, sonst die globale Ebene. Beim Speichern im
-globalen Scope zeigt der Dialog den Rohwert, der ohne Offset gespeichert wird.
+**Removing.** **Remove assignment** (*Belegung entfernen*) deletes the entry in
+the selected scope. A removed bank entry makes the inherited global assignment
+visible again; a removed global entry disappears in all banks without an
+override. Entries whose control no connected device offers are listed in the
+**Mapping** tab under "Entries without a connected device" and can be removed
+there.
 
-**Entfernen.** **Belegung entfernen** löscht den Eintrag im gewählten Scope. Ein
-entfernter Bank-Eintrag macht die geerbte globale Belegung wieder sichtbar; ein
-entfernter globaler Eintrag verschwindet in allen Bänken ohne Override.
-Einträge, deren Control kein verbundenes Gerät anbietet, stehen im Tab
-**Mapping** unter „Einträge ohne verbundenes Gerät“ und lassen sich dort
-entfernen.
+**Precedence.** A **Precedence** badge (*Vorrang*) with an explanation marks
+controls whose assignments hide each other, as the daemon resolves them: for
+keys a layer key (`device_banks[...].keys`) wins over the playback target, a
+playback target over a global key and modifier, a modifier over any key. Value
+and encoder controls have no layer-key precedence and show no badge. Everything
+is still saved; the badge only prevents an ineffective assignment from being
+mistaken for an active one.
 
-**Vorrang.** Ein Abzeichen **Vorrang** mit Erklärung markiert Controls, deren
-Belegungen sich gegenseitig verdecken, wie es der Daemon auflöst: Bei Tasten
-gewinnt ein Layer-Key (`device_banks[...].keys`) vor dem Playback-Ziel, ein
-Playback-Ziel vor globalem Key und Modifier, ein Modifier vor jedem Key. Wert-
-und Encoder-Controls kennen keinen Layer-Key-Vorrang und zeigen kein Abzeichen.
-Gespeichert wird weiterhin alles; das Abzeichen verhindert nur, dass eine
-wirkungslose Belegung für aktiv gehalten wird.
+**Errors and conflicts.** A value rejected by the daemon (page, executor,
+transport, screen encoder …) appears at the affected input field, and the
+previous configuration stays active. If the configuration was changed elsewhere
+in the meantime, saving reports a conflict and overwrites nothing; **Reload**
+(*Neu laden*) adopts the new state, **Discard** (*Verwerfen*) closes the draft.
 
-**Fehler und Konflikte.** Ein vom Daemon abgelehnter Wert (Page, Executor,
-Transport, Screen-Encoder …) erscheint am betroffenen Eingabefeld, die bisherige
-Konfiguration bleibt aktiv. Wurde die Konfiguration inzwischen an anderer Stelle
-geändert, meldet das Speichern einen Konflikt und überschreibt nichts; **Neu
-laden** übernimmt den neuen Stand, **Verwerfen** schließt den Entwurf.
+A control with a playback target does not trigger an additional hardkey or
+command. Executor feedback exists for button targets with an LED-capable note
+via `[feedback]`; faders have no feedback and no PickUp: after a page change an
+executor jumps to the physical position on the next fader value.
 
-Ein Control mit Playback-Ziel löst keinen zusätzlichen Hardkey oder Command aus.
-Ein Executor-Feedback gibt es für Button-Ziele mit LED-fähiger Note über
-`[feedback]`; Fader bleiben ohne Rückmeldung und ohne PickUp: Nach einem
-Seitenwechsel springt ein Executor beim nächsten Faderwert auf die physische
-Position.
+**Two learn modes, one status.** Both tabs offer both modes and show the status
+of the running session; only one runs at a time.
 
-**Zwei Lernwege, ein Status.** Beide Tabs bieten beide Wege an und zeigen den
-Status der jeweils laufenden Sitzung; es läuft immer nur eine.
+* **Detect control** (*Taste erkennen* / *Encoder erkennen*) returns the logical
+  control of the next input. The result is highlighted in both tabs; **Assign**
+  opens the dialog for it. Nothing is saved.
+* **Learn notes** (*Noten anlernen*) walks through the still unbound controls of
+  the device's selected bank. Operating the control physically supplies the
+  note; events on a different channel are reported and not adopted. Only
+  **Save** (*Speichern*) writes the learned notes atomically into the profile;
+  **Cancel** (*Abbrechen*) discards them. From the **Mapping** tab the session
+  can be started for a device and bank; **To Devices tab** (*Zum Geräte-Tab*)
+  jumps to the progress.
 
-* **Control erkennen** (`Taste erkennen` / `Encoder erkennen`) liefert das
-  logische Control der nächsten Eingabe. Das Ergebnis wird in beiden Tabs
-  markiert, **Zuweisen** öffnet den Dialog dafür. Es wird nichts gespeichert.
-* **Noten anlernen** führt durch die noch ungebundenen Controls der gewählten
-  Bank des Geräts. Das physische Bedienen liefert die Note; Ereignisse auf einem
-  anderen Kanal werden gemeldet und nicht übernommen. Erst **Speichern**
-  schreibt die gelernten Noten atomar in das Profil, **Abbrechen** verwirft sie.
-  Aus dem Tab **Mapping** lässt sich die Sitzung für Gerät und Bank starten;
-  **Zum Geräte-Tab** springt zum Fortschritt.
+Timeout and cancellation reset the status in both tabs; the buttons are usable
+again afterwards. The status arrives over the WebSocket (`learn` and
+`device_learn` events), not by polling.
 
-Timeout und Abbruch setzen den Status in beiden Tabs zurück; die Schaltflächen
-sind danach wieder bedienbar. Der Status kommt über den WebSocket
-(`learn`- und `device_learn`-Ereignisse), nicht über Polling.
+### Applying changes
 
-### Änderungen anwenden
+The **MA2**, **Devices/Mapping**, **Backups** and **Advanced** pages write
+through the API. The **Network** page writes through NetworkManager and not to
+`config.toml`; its change only becomes permanent after confirmation. Every
+configuration change is validated on the server with the same rules as the
+daemon start. On success the daemon writes the configuration atomically to
+`/var/lib/ma2pi/config.toml`, releases held keys in reverse order, discards
+pending encoder deltas and swaps the mapping without a service restart. If
+credentials change, the daemon tests them first; an existing session stays
+connected for pure mapping changes.
 
-Die Seiten **MA2**, **Geräte/Mapping**, **Backups** und **Erweitert** schreiben
-über die API. Die Seite **Netzwerk** schreibt über NetworkManager und nicht in
-`config.toml`; ihre Änderung wird erst nach der Bestätigung dauerhaft
-gespeichert. Jede Konfigurationsänderung wird serverseitig mit denselben Regeln
-wie der Daemon-Start validiert. Bei Erfolg schreibt der Daemon die Konfiguration atomar
-nach `/var/lib/ma2pi/config.toml`, gibt gehaltene Tasten in umgekehrter
-Reihenfolge frei, verwirft offene Encoder-Deltas und tauscht das Mapping ohne
-Dienstneustart. Werden Zugangsdaten geändert, testet der Daemon sie vorher; eine
-bestehende Session bleibt bei reinen Mapping-Änderungen verbunden.
+### Backups and restore
 
-### Backups und Wiederherstellung
+Backups are stored in `/var/lib/ma2pi/backups/`:
 
-Backups liegen unter `/var/lib/ma2pi/backups/`:
+* `config-<timestamp>.toml` – created automatically before every write and on
+  demand in the interface, rotated to the last 20 files.
+* `last-good.toml` – the previously active configuration before the current
+  one.
 
-* `config-<zeitstempel>.toml` – automatisch vor jedem Schreiben und auf Knopf
-  in der Oberfläche, Rotation auf die letzten 20 Dateien.
-* `last-good.toml` – die zuletzt aktive Konfiguration vor dem aktuellen Stand.
+The **Backups** page lists the files, creates new ones and restores them after a
+confirmation step. A restore is validated first; a damaged or schema-invalid
+backup leaves the active configuration unchanged. After a restore with
+different credentials the daemon tries to reconnect with the restored
+credentials.
 
-Die Seite **Backups** listet die Dateien, legt neue an und stellt sie nach einem
-Bestätigungsschritt wieder her. Eine Wiederherstellung wird zuerst validiert;
-ein beschädigtes oder schemawidriges Backup lässt die aktive Konfiguration
-unverändert. Nach einer Wiederherstellung mit anderen Zugangsdaten versucht der
-Daemon den Reconnect mit den wiederhergestellten Daten.
-
-Die vollständige Endpunkt-, Payload- und Fehlerreferenz steht in
+The full endpoint, payload and error reference is in
 [`docs/api.md`](docs/api.md).
 
-### Migration und Rollback
+### Migration and rollback
 
-Bei der Installation wird eine vorhandene `/etc/ma2pi/config.toml` einmalig nach
-`/var/lib/ma2pi/config.toml` übernommen und vorher gesichert. Die Datei unter
-`/etc/ma2pi` bleibt liegen, wird aber nicht mehr beschrieben. Die systemd-Unit
-nutzt `StateDirectory=ma2pi` und `ReadWritePaths=/var/lib/ma2pi`; nur dieser
-Pfad ist unter `ProtectSystem=strict` beschreibbar.
+On installation an existing `/etc/ma2pi/config.toml` is adopted once into
+`/var/lib/ma2pi/config.toml` and backed up beforehand. The file in `/etc/ma2pi`
+is left in place but is no longer written. The systemd unit uses
+`StateDirectory=ma2pi` and `ReadWritePaths=/var/lib/ma2pi`; only this path is
+writable under `ProtectSystem=strict`.
 
-Rollback auf die alte Version:
+Rollback to the old version:
 
 ```bash
 sudo systemctl stop ma2pi.service
@@ -1112,9 +1088,9 @@ sudo install -m 0640 -o root -g ma2pi /etc/ma2pi/config.toml /var/lib/ma2pi/conf
 sudo systemctl start ma2pi.service
 ```
 
-Die Backups unter `/var/lib/ma2pi/backups` bleiben dabei erhalten. Alternativ
-kann die vorherige Version der Unit und des Codes eingespielt werden; die
-Konfiguration unter `/etc/ma2pi` bleibt als Ausgangspunkt vorhanden.
+The backups in `/var/lib/ma2pi/backups` are kept. Alternatively, the previous
+version of the unit and the code can be restored; the configuration in
+`/etc/ma2pi` remains available as a starting point.
 
 ## Command line
 
@@ -1127,7 +1103,7 @@ python -m ma2pi --config /etc/ma2pi/config.toml --dry-run
 python -m ma2pi --config /etc/ma2pi/config.toml --log-level DEBUG
 ```
 
-* `--check-config` validates and exits 0, or prints `datei:schlüssel: Ursache`
+* `--check-config` validates and exits 0, or prints `file:key: cause`
   and exits 2.
 * `--list-devices` prints path, name, vendor/product and capabilities for every
   `/dev/input/event*`. It needs Linux and `evdev`.
@@ -1193,36 +1169,37 @@ group `audio` and mode `0660`.
 
 ## Encoder protocol notes
 
-Slot-Encoder sprechen wie ShowCockpit die Hardware-Encoder der onPC an
-(per Mitschnitt verifiziert):
+Like ShowCockpit, slot encoders address the hardware encoders of the onPC
+(verified by capture):
 
 ```json
 {"requestType": "command", "command": "LUA 'gma.canbus.encoder(0,1,nil)'"}
 {"requestType": "command", "command": "LUA 'gma.canbus.encoder(0,0,true)'"}
 ```
 
-* Index = Encoder-Nummer − 1: Attribut-Encoder 1–4 → 0–3, Screen-Encoder 5–10 → 4–9.
-* Die zweite Zahl sind ganzzahlige Schritte; Reste unter einem Schritt werden
-  pro Slot vorgetragen. `(n,0,true)`/`(n,0,false)` ist der Encoder-Druck.
-* Die onPC routet die Encoder 0–3 selbst auf das aktuelle Feature/Fenster; es
-  gibt kein `presetTypes`-Dauer-Polling und keinen lokalen Bankzähler; die Seite wird
-  nur beim Verbinden und kurz nach einem Auflösungswechsel gelesen.
-* Ein Klick sendet den Encoder-Druck der onPC. Ist `asl_button_2` gehalten,
-  schaltet der Klick stattdessen die Auflösung des Attributs in der onPC um
-  (`encoder`-Frame mit `resolution`); Screen-Encoder haben keine Auflösung.
-* Feste Attribut-Encoder (`attribute`) nutzen weiter den nativen
-  `{"requestType": "encoder", "name": "PAN", "value": …}`-Request.
-* Die Taste `screen_mode` schaltet auf die Screen-Encoder aus
-  `[mapping.screen_encoders]` (Standard: Slot 1 → 8 … Slot 4 → 5).
-* MA halten (Cherry-Logo) und dabei einen Encoder drehen oder drücken
-  adressiert vorübergehend dieselben Screen-Encoder.
+* Index = encoder number − 1: attribute encoders 1–4 → 0–3, screen encoders
+  5–10 → 4–9.
+* The second number is whole steps; remainders below one step are carried over
+  per slot. `(n,0,true)`/`(n,0,false)` is the encoder press.
+* The onPC routes encoders 0–3 to the current feature/window itself; there is
+  no continuous `presetTypes` polling and no local bank counter; the page is
+  only read on connect and shortly after a resolution change.
+* A click sends the encoder press to the onPC. While `asl_button_2` is held,
+  the click instead cycles the attribute's resolution in the onPC (`encoder`
+  frame with `resolution`); screen encoders have no resolution.
+* Fixed attribute encoders (`attribute`) keep using the native
+  `{"requestType": "encoder", "name": "PAN", "value": …}` request.
+* The `screen_mode` key switches to the screen encoders from
+  `[mapping.screen_encoders]` (default: slot 1 → 8 … slot 4 → 5).
+* Holding MA (Cherry logo) while turning or pressing an encoder temporarily
+  addresses the same screen encoders.
 
-Die ASL-LEDs werden bereits über das verifizierte MIDI-Protokoll angesteuert
-(siehe `[led]`).
+The ASL LEDs are already driven through the verified MIDI protocol (see
+[`[led]`](#led)).
 
-Mitschnitt-Vorgehen wie oben: DevTools öffnen, `?ma=1` filtern, Messages
-leeren, die Aktion ausführen, die vollständigen JSON-Objekte kopieren und als
-Fixture ablegen. Ergebnis in einem Nachfolge-ADR zu ADR-0002/0015 festhalten.
+Capture procedure: open DevTools, filter for `?ma=1`, clear the messages,
+perform the action, copy the complete JSON objects and store them as a fixture.
+Record the result in a follow-up ADR to ADR-0002/0015.
 
 ## Tests
 
@@ -1254,7 +1231,7 @@ journalctl -u ma2pi -n 50 --no-pager
 
 `install.sh` replaces the code and venv contents but leaves
 `/etc/ma2pi/config.toml` and `/etc/ma2pi/ma2pi.password` untouched. It also
-installs `/etc/polkit-1/rules.d/50-ma2pi-network.rules` for the **Netzwerk**
+installs `/etc/polkit-1/rules.d/50-ma2pi-network.rules` for the **Network**
 page; the rule can be removed independently if the page is not needed.
 
 Rollback:
@@ -1277,19 +1254,19 @@ sudo groupdel ma2pi
 | Symptom | Check |
 | --- | --- |
 | `Keine Leserechte` / `Permission denied` | udev rules installed, group `ma2pi`, user in that group, `udevadm control --reload-rules`, replug device. For `/dev/snd/midiC*` also check membership in the `audio` group. |
-| `Konfiguriertes Gerät … nicht gefunden` | `--list-devices`; compare `backend`, `vendor_id`, `product_id`, `name_contains`; the daemon retries with backoff. |
-| `Konfiguriertes MIDI-Gerät … nicht gefunden` | The ASL exposes `/dev/snd/midiC3D0`; check `lsusb` for `04d8:e817` and the udev rule for the `sound` subsystem. |
-| `Profil … referenziert nicht unterstützte Controls` | The selected interface lacks a key/axis from the profile; choose the keyboard interface or correct the profile. |
+| Log: `Konfiguriertes Gerät … nicht gefunden` ("configured device not found") | `--list-devices`; compare `backend`, `vendor_id`, `product_id`, `name_contains`; the daemon retries with backoff. |
+| Log: `Konfiguriertes MIDI-Gerät … nicht gefunden` ("configured MIDI device not found") | The ASL exposes `/dev/snd/midiC3D0`; check `lsusb` for `04d8:e817` and the udev rule for the `sound` subsystem. |
+| Log: `Profil … referenziert nicht unterstützte Controls` ("profile references unsupported controls") | The selected interface lacks a key/axis from the profile; choose the keyboard interface or correct the profile. |
 | Login fails | `password_file`/`password_env`, exact onPC user name, Web Remote enabled, `forceLogin`; an empty password is valid and must still be sent as the MD5 of the empty string. |
 | onPC not reachable | The daemon stays alive and reconnects with exponential backoff; check `journalctl`. |
 | Frames visible in dry-run but nothing happens | Check the exact `keyname` spelling (log at `DEBUG`) and that Web Remote accepts commands. |
 | Encoder direction reversed | Set `direction = -1` in the profile encoder entry. |
 | Encoder moves too far | Hold ASL button 2 and click the encoder to cycle Fine/Ultra in the onPC, or lower `mapping.encoder_resolution.attribute`. |
-| **Netzwerk** zeigt „nicht verfügbar“ | `nmcli` installiert, `systemctl status NetworkManager`, Polkit-Regel unter `/etc/polkit-1/rules.d/` vorhanden; Log mit `journalctl -u ma2pi`. |
-| Keine kabelgebundene Schnittstelle | `nmcli device status`; nur `type ethernet` wird verwaltet, WLAN und virtuelle Geräte nicht. |
-| Bestätigung nach IP-Wechsel schlägt fehl | Neue Ziel-URL öffnen, dort PIN erneut eingeben; das alte Cookie gilt nur für die alte Adresse. Nach 180 s rollt der Pi automatisch zurück. |
-| Auch die alte IP ist nicht erreichbar | Der Daemon setzt `192.168.178.254/24` ohne Gateway/DNS. Client auf `192.168.178.x` stellen und die Adresse im Browser öffnen; die Notfall-IP darf nicht bereits belegt sein. |
-| Netzwerkänderung bleibt hängen | `/var/lib/ma2pi/network-pending.json` prüfen; ein abgelaufener oder unterbrochener Zustand wird beim Dienststart zurückgerollt. |
+| **Network** page shows "not available" | `nmcli` installed, `systemctl status NetworkManager`, Polkit rule present in `/etc/polkit-1/rules.d/`; check the log with `journalctl -u ma2pi`. |
+| No wired interface | `nmcli device status`; only `type ethernet` is managed, not WiFi or virtual devices. |
+| Confirmation after an IP change fails | Open the new target URL and enter the PIN again there; the old cookie is only valid for the old address. After 180 s the Pi rolls back automatically. |
+| The old IP is unreachable too | The daemon sets `192.168.178.254/24` without gateway/DNS. Set the client to `192.168.178.x` and open the address in the browser; the emergency IP must not already be in use. |
+| Network change gets stuck | Check `/var/lib/ma2pi/network-pending.json`; an expired or interrupted state is rolled back on service start. |
 
 ## Open hardware acceptance
 
