@@ -269,6 +269,21 @@
     margin-top: 0.2rem;
   }
 
+  /* Keycaps haben feste, helle Hintergrundfarben; die Themen-Tokens der Badges
+     (hell auf dunkel) wären dort kaum lesbar. Die Badges bringen deshalb ihren
+     eigenen dunklen Grund mit. */
+  .markers :global(.badge.source),
+  .markers :global(.badge.conflict) {
+    border-color: transparent;
+    background: rgba(0, 0, 0, 0.78);
+    color: #f4f4f4;
+    font-weight: 500;
+  }
+
+  .markers :global(.badge.conflict) {
+    color: #ffd166;
+  }
+
   .assignment {
     margin-top: 0.2rem;
     font-size: 0.66rem;
