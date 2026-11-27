@@ -768,16 +768,24 @@ Setup on the onPC computer:
    `Setup → Console → Remote Inputs`, tab *MIDI Remotes*, `Enabled` and *CLI*
    must be on (Telnet: `cd 36`, `cd 2` shows `MidiRemotes 2 Enabled=On CLI=On`).
 4. Save the show after the first sync; otherwise a show reload drops the
-   remotes and `ma2pi` recreates them on the next sync.
+   remotes. `ma2pi` recreates them on the next sync, which runs once per Web
+   Remote connect, once after a config apply, or on demand via **Remotes
+   ausrollen** on the Status page. It never repeats on a timer.
 
 The Status page shows the RTP-MIDI session (state, latency) and the last sync
-(synced/targets, created, changed, removed, failed, time, error). A button is
-only sent while the session is up and its remote is confirmed; otherwise it is
-dropped and logged once per outage and target. `ma2pi` does not fall back to
-the Web Remote, because that would fire the executor instead of feeding the
-command line. Every Note-Off is repeated once after 20 ms, as RTP-MIDI runs
-without recovery journal. A MIDI target on a covered slot of a wide executor is
-not redirected: the MA treats it like the console key of that column.
+(synced/targets, created, changed, removed, failed, time, error). **Remotes
+ausrollen** calls `POST /api/midi-remote/sync` and is hidden when `sync = "off"`
+or the session is a dry-run. A sync reads the table once; `auto` writes missing
+remotes, `check` only reports them. Only a Telnet error (console not reachable
+yet) is retried with a 1–10 s backoff; an incomplete `auto` run is logged and
+waits for the next connect or the button. Confirmed remotes keep sending until
+that read-back. A button is only sent
+while the session is up and its remote is confirmed; otherwise it is dropped
+and logged once per outage and target. `ma2pi` does not fall back to the Web
+Remote, because that would fire the executor instead of feeding the command
+line. Every Note-Off is repeated once after 20 ms, as RTP-MIDI runs without
+recovery journal. A MIDI target on a covered slot of a wide executor is not
+redirected: the MA treats it like the console key of that column.
 
 ### `[mapping]`: wide executors
 

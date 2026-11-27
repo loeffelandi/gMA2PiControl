@@ -62,6 +62,18 @@ describe('ApiClient', () => {
     expect((init.headers as Record<string, string>)[REQUEST_HEADER]).toBe('1');
   });
 
+  it('retriggers MIDI-remote sync', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response({ enabled: true }));
+    const client = new ApiClient({ fetchImpl });
+
+    await client.retriggerMidiSync();
+
+    const [path, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe('/api/midi-remote/sync');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe('{}');
+  });
+
   it('reports a version mismatch', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       response({ api: '2', package: '0.2.0', ui: 'x' }),

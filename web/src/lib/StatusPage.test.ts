@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import StatusPage from './StatusPage.svelte';
@@ -443,6 +443,131 @@ describe('StatusPage', () => {
         `245/245 abgeglichen · zuletzt ${time} · +3 ~0 −1`,
       );
       expect(screen.queryByTestId('midi-remote-error')).toBeNull();
+      expect(screen.queryByTestId('midi-remote-retrigger')).toBeNull();
+      store.disconnect();
+    });
+
+    it('retriggers the MIDI-remote sync from the status page', async () => {
+      const retriggerMidiSync = vi.fn().mockResolvedValue({ enabled: true });
+      const store = new StatusStore({
+        factory: (url) => new FakeSocket(url),
+        reconnectBaseMs: 10,
+      });
+      render(StatusPage, {
+        props: {
+          store,
+          devicesLoader: async () => [],
+          retriggerMidiSync,
+        },
+      });
+      store.connect();
+      FakeSocket.last!.emitOpen();
+      FakeSocket.last!.emitMessage({
+        type: 'status',
+        data: {
+          ...status,
+          midi_remote: { enabled: true, session: midiSession, sync: midiSync },
+        },
+      });
+
+      const button = await screen.findByTestId('midi-remote-retrigger');
+      expect(button.textContent?.trim()).toBe('Remotes ausrollen');
+      await fireEvent.click(button);
+      expect(retriggerMidiSync).toHaveBeenCalledTimes(1);
+      store.disconnect();
+    });
+
+    it('shows an incomplete sync and disables the retrigger while running', async () => {
+      const retriggerMidiSync = vi.fn();
+      const store = new StatusStore({
+        factory: (url) => new FakeSocket(url),
+        reconnectBaseMs: 10,
+      });
+      render(StatusPage, {
+        props: {
+          store,
+          devicesLoader: async () => [],
+          retriggerMidiSync,
+        },
+      });
+      store.connect();
+      FakeSocket.last!.emitOpen();
+      FakeSocket.last!.emitMessage({
+        type: 'status',
+        data: {
+          ...status,
+          midi_remote: {
+            enabled: true,
+            session: midiSession,
+            sync: { ...midiSync, synced: 240, failed: 5, running: true },
+          },
+        },
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('midi-remote-incomplete').textContent).toContain(
+          '5 von 245 fehlen',
+        );
+      });
+      expect(screen.getByTestId('midi-remote-incomplete').textContent).toContain(
+        'Abgleich läuft',
+      );
+      expect(
+        (screen.getByTestId('midi-remote-retrigger') as HTMLButtonElement).disabled,
+      ).toBe(true);
+      store.disconnect();
+    });
+
+    it('hides the retrigger when sync is off or the session is dry-run', async () => {
+      const retriggerMidiSync = vi.fn();
+      const store = new StatusStore({
+        factory: (url) => new FakeSocket(url),
+        reconnectBaseMs: 10,
+      });
+      render(StatusPage, {
+        props: {
+          store,
+          devicesLoader: async () => [],
+          retriggerMidiSync,
+        },
+      });
+      store.connect();
+      FakeSocket.last!.emitOpen();
+      FakeSocket.last!.emitMessage({
+        type: 'status',
+        data: {
+          ...status,
+          midi_remote: {
+            enabled: true,
+            session: { ...midiSession, state: 'dry-run', latency_ms: null },
+            sync: midiSync,
+          },
+        },
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId('midi-remote-session').textContent?.trim()).toBe(
+          'Dry-Run',
+        );
+      });
+      expect(screen.queryByTestId('midi-remote-retrigger')).toBeNull();
+
+      FakeSocket.last!.emitMessage({
+        type: 'status',
+        data: {
+          ...status,
+          midi_remote: {
+            enabled: true,
+            session: midiSession,
+            sync: { ...midiSync, mode: 'off' },
+          },
+        },
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId('midi-remote-sync').textContent?.trim()).toBe(
+          'aus (alle Ziele aktiv)',
+        );
+      });
+      expect(screen.queryByTestId('midi-remote-retrigger')).toBeNull();
       store.disconnect();
     });
 

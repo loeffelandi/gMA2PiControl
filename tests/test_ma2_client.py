@@ -317,6 +317,17 @@ def _client(config, transport, **kwargs) -> Ma2Client:
     return Ma2Client(config, transport=transport, jitter_source=lambda: 0.5, **kwargs)
 
 
+async def test_connect_once_notifies_established_callbacks(small_config):
+    transport = MockTransport()
+    feed_handshake(transport, session=7)
+    client = _client(small_config, transport)
+    seen: list[int] = []
+    client.add_connection_established_callback(lambda: seen.append(client.session or 0))
+    await client.connect_once()
+    assert seen == [7]
+    await client.shutdown()
+
+
 async def test_connect_once_success(small_config):
     transport = MockTransport()
     feed_handshake(transport, session=7)

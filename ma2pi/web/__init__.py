@@ -30,6 +30,7 @@ from ..config_store import BackupError, ConfigWriteError
 from ..device_learn import DeviceLearnError
 from ..learn import LearnBusy, LearnManager
 from ..ma2_client import ConnectionClosed, HandshakeError, LoginError
+from ..midi_remote_service import MidiRemoteService
 from ..network import (
     ApplyBusy as NetworkApplyBusy,
     LinkDown as NetworkLinkDown,
@@ -175,6 +176,9 @@ DEVICE_LEARN_KEY: web.AppKey[Any] = web.AppKey("device_learn", Any)
 NETWORK_KEY: web.AppKey[NetworkService] = web.AppKey("network", NetworkService)
 RECOVERY_KEY: web.AppKey[RecoveryService] = web.AppKey("recovery", RecoveryService)
 POWER_KEY: web.AppKey[PowerService] = web.AppKey("power", PowerService)
+MIDI_REMOTE_KEY: web.AppKey[MidiRemoteService] = web.AppKey(
+    "midi_remote", MidiRemoteService
+)
 DIST_KEY: web.AppKey[Path] = web.AppKey("dist_dir", Path)
 BUS_KEY: web.AppKey[EventBus] = web.AppKey("bus", EventBus)
 PIN_SESSIONS_KEY: web.AppKey[PinSessions] = web.AppKey("pin_sessions", PinSessions)
@@ -420,6 +424,7 @@ def create_app(
     network_service: NetworkService | None = None,
     recovery_service: RecoveryService | None = None,
     power_service: PowerService | None = None,
+    midi_remote_service: MidiRemoteService | None = None,
     pin_clock: Callable[[], float] = time.monotonic,
     event_queue_size: int | None = None,
 ) -> web.Application:
@@ -450,6 +455,8 @@ def create_app(
             recovery_service.publish = bus.publish
     if power_service is not None:
         app[POWER_KEY] = power_service
+    if midi_remote_service is not None:
+        app[MIDI_REMOTE_KEY] = midi_remote_service
 
     async def auth_status(request: web.Request) -> web.Response:
         current = _current_config(request.app)
@@ -962,6 +969,25 @@ def create_app(
             return _json_error(500, "shutdown_failed", str(exc))
         return web.json_response(service.status(), status=202)
 
+    async def midi_remote_sync(request: web.Request) -> web.Response:
+        service = request.app.get(MIDI_REMOTE_KEY)
+        if service is None:
+            return _json_error(
+                503, "midi_remote_unavailable", "MIDI-Remote-Dienst nicht aktiv"
+            )
+        status = service.status()
+        if not status.get("enabled"):
+            return _json_error(
+                409, "midi_remote_disabled", "MIDI-Remotes sind nicht aktiv"
+            )
+        mode = (status.get("sync") or {}).get("mode")
+        if mode == "off":
+            return _json_error(
+                409, "midi_remote_sync_off", "MIDI-Remote-Abgleich ist aus"
+            )
+        service.request_sync()
+        return web.json_response(service.status(), status=202)
+
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/version", version)
     app.router.add_get("/api/auth/status", auth_status)
@@ -993,6 +1019,7 @@ def create_app(
     app.router.add_put("/api/recovery", put_recovery)
     app.router.add_get("/api/power", get_power)
     app.router.add_post("/api/power/shutdown", power_shutdown)
+    app.router.add_post("/api/midi-remote/sync", midi_remote_sync)
 
     _mount_static(app, dist)
     return app

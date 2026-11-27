@@ -493,6 +493,7 @@ class Ma2Client:
         self._keepalive_task: asyncio.Task[None] | None = None
         self._backpressure_task: asyncio.Task[None] | None = None
         self._connection_lost_callbacks: list[Callable[[], None]] = []
+        self._connection_established_callbacks: list[Callable[[], None]] = []
         self._playback_responses: asyncio.Queue[dict[str, Any]] = asyncio.Queue(
             maxsize=16
         )
@@ -550,6 +551,9 @@ class Ma2Client:
 
     def add_connection_lost_callback(self, callback: Callable[[], None]) -> None:
         self._connection_lost_callbacks.append(callback)
+
+    def add_connection_established_callback(self, callback: Callable[[], None]) -> None:
+        self._connection_established_callbacks.append(callback)
 
     @property
     def playback_responses(self) -> "asyncio.Queue[dict[str, Any]]":
@@ -793,6 +797,7 @@ class Ma2Client:
         self._authenticated = True
         self.last_error = None
         LOGGER.info("MA2-Session %d authentifiziert", session)
+        self._notify_connection_established()
         await self._send_raw(frames.preset_types_frame("full", session), "encoderPage")
         self._keepalive_task = asyncio.create_task(
             self._keepalive_loop(session), name="ma2pi-keepalive"
@@ -888,6 +893,13 @@ class Ma2Client:
                     callback()
                 except Exception:
                     LOGGER.exception("Connection-Lost-Callback fehlgeschlagen")
+
+    def _notify_connection_established(self) -> None:
+        for callback in list(self._connection_established_callbacks):
+            try:
+                callback()
+            except Exception:
+                LOGGER.exception("Connection-Established-Callback fehlgeschlagen")
 
     # -- sending ----------------------------------------------------------
 

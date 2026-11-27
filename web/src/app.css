@@ -284,6 +284,11 @@ h1 {
   font-size: 1.05rem;
 }
 
+.midi-sync-cell button {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+}
+
 /* Hardware-LEDs: Farben bilden die realen Anzeigen ab. */
 .led {
   display: inline-block;

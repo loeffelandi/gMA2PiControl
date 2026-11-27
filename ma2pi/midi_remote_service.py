@@ -88,8 +88,10 @@ class MidiRemoteService:
     # -- lifecycle ------------------------------------------------------------
 
     def start(self) -> None:
+        """Open the session.  The table sync waits for the Web Remote connect."""
+
         self._started = True
-        self.set_config(self._config)
+        self._apply(self._config, sync=False)
 
     async def close(self) -> None:
         self._started = False
@@ -100,6 +102,9 @@ class MidiRemoteService:
     def set_config(self, config: AppConfig) -> None:
         """Take a newly activated config; changed targets wait for the sync."""
 
+        self._apply(config, sync=True)
+
+    def _apply(self, config: AppConfig, *, sync: bool) -> None:
         self._config = config
         if not self._started:
             return
@@ -127,14 +132,16 @@ class MidiRemoteService:
             asyncio.ensure_future(self._stop_sync())
             return
         self._output.set_table(addresses, unchanged)
-        self.request_sync()
+        if sync:
+            self.request_sync()
 
     def request_sync(self) -> None:
-        """Sync again, e.g. after the MA session was lost and may have a new show."""
+        """Sync once: on (re)connect, after a config change, or a UI retrigger."""
 
         settings = self._config.midi_remote
         if not self._started or not settings.enabled or settings.sync == "off" or self._dry_run:
             return
+        self._syncing = True
         self._wake.set()
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._sync_loop(), name="ma2pi-midi-sync")
@@ -208,6 +215,7 @@ class MidiRemoteService:
             await session.close()
 
     async def _stop_sync(self) -> None:
+        self._syncing = False
         task, self._task = self._task, None
         if task is not None and task is not asyncio.current_task():
             task.cancel()
@@ -234,15 +242,28 @@ class MidiRemoteService:
             finally:
                 self._syncing = False
             if config is not self._config or self._wake.is_set():
-                # A newer config arrived meanwhile; its sync runs next.
+                # A newer config or retrigger arrived; its sync runs next.
+                if self._wake.is_set():
+                    self._syncing = True
                 continue
             self._result = result
             self._output.set_table(self._addresses, result.synced)
-            if result.error is None:
-                delay = SYNC_RETRY_MIN
+            if result.error is not None:
+                # The console was not reachable: try again until it is.
+                await self._wait_for_wake(delay)
+                delay = min(SYNC_RETRY_MAX, delay * 2)
                 continue
-            try:
-                await asyncio.wait_for(self._wake.wait(), delay)
-            except asyncio.TimeoutError:
-                self._wake.set()
-            delay = min(SYNC_RETRY_MAX, delay * 2)
+            delay = SYNC_RETRY_MIN
+            if result.failed and result.mode == "auto":
+                LOGGER.warning(
+                    "MIDI-Remote-Abgleich unvollständig (%d/%d); "
+                    "nächster Versuch beim nächsten Connect oder per Knopf",
+                    result.failed,
+                    result.targets,
+                )
+
+    async def _wait_for_wake(self, timeout: float) -> None:
+        try:
+            await asyncio.wait_for(self._wake.wait(), timeout)
+        except asyncio.TimeoutError:
+            self._wake.set()

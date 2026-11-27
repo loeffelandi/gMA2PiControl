@@ -15,6 +15,8 @@ Related to [0016. Hardkey-Injection über gma.canbus.hardkey im Command-Line-Mod
 
 Related to [0021. Executor-Feedback über Playback-Polling und MIDI-Duplex-Ausgabe](0021-executor-feedback-ueber-playback-polling-und-midi-duplex-ausgabe.md)
 
+Related to [0027. MIDI-Remote-Abgleich einmal je Connect und Retrigger](0027-midi-remote-abgleich-einmal-je-connect.md)
+
 ## Kontext und Problemstellung
 
 Auf der Cherry werden Store, Assign und Edit als LUA-Hardkeys gedrückt
@@ -53,8 +55,9 @@ wird nach 20 ms einmal wiederholt. **Fader und Encoder** bleiben beim Web Remote
 Jedes Tastenziel `(page, executor, button)` bekommt aus reservierten Kanälen
 (`[midi_remote].channels`, Default 16) eine feste Adresse, sortiert und damit
 stabil. `ma2pi` gleicht die Remote-Tabelle der MA per Telnet ab: nach jeder
-Konfigurationsaktivierung, nach Verlust der Web-Remote-Sitzung und bis zum
-Erfolg mit Backoff bis 10 s. Besitzmarke ist allein der Kanal; Einträge auf
+Konfigurationsaktivierung, einmal je (Wieder-)Aufbau der Web-Remote-Sitzung und
+auf den Status-Knopf **Remotes ausrollen** (ADR-0027), nie periodisch. Nur ein
+Telnet-Fehler wird mit Backoff bis 10 s wiederholt. Besitzmarke ist allein der Kanal; Einträge auf
 anderen Kanälen werden nie verändert. Weil die MA ungültige `assign`-Befehle
 still schluckt und nach `delete` nachnummeriert, liest der Abgleich nach dem
 Schreiben zurück und löscht zuletzt und absteigend. Eine Taste geht nur raus,
@@ -118,6 +121,7 @@ Fader weiter über den Web Remote (Task 6.2 von `add-midi-remote-executors`).
 ## Weitere Informationen
 
 * Verwandt: ADR-0016 (LUA-Hardkeys), ADR-0019 (Executor-Ziele über den Web
-  Remote, für Fader und Encoder weiter gültig), ADR-0021 (Feedback)
+  Remote, für Fader und Encoder weiter gültig), ADR-0021 (Feedback),
+  ADR-0027 (Abgleich einmal je Connect, Retrigger)
 * Change: `add-midi-remote-executors`
 * Messung: `openspec/changes/add-midi-remote-executors/verification.md`

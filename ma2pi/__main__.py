@@ -432,6 +432,7 @@ async def _start_web(
         network_service=network,
         recovery_service=recovery,
         power_service=power,
+        midi_remote_service=midi_remote,
     )
     runner = aiohttp_web.AppRunner(app, access_log=None)
     await runner.setup()
@@ -539,8 +540,9 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
         config, client, midi, dry_run=dry_run, topology=topology
     )
     client.add_connection_lost_callback(feedback.reset)
-    # A lost Web Remote session may mean a restarted MA or another show.
-    client.add_connection_lost_callback(midi_remote.request_sync)
+    # The MIDI remotes are rolled out once per Web Remote connect (a restarted MA
+    # or another show comes with a new session), never periodically.
+    client.add_connection_established_callback(midi_remote.request_sync)
     led_holder: dict = {}
     store.add_activate_hook(midi_remote.set_config)
     store.add_activate_hook(power.set_config)
@@ -566,6 +568,9 @@ async def run_daemon(config: AppConfig, dry_run: bool) -> int:
 
     await client.start()
     midi_remote.start()
+    if client.authenticated:
+        # Logged in before the service was up: that connect still gets its sync.
+        midi_remote.request_sync()
     led_task = asyncio.create_task(
         _led_loop(engine, client, midi, led_holder, feedback.resend_device),
         name="ma2pi-led",

@@ -558,6 +558,23 @@ Scheitert `systemctl poweroff` selbst (zum Beispiel ohne
 `/etc/polkit-1/rules.d/50-ma2pi-power.rules`), bleibt der Daemon im Zustand
 `idle`, `error` im Status nennt den Grund und das Journal enthält die Meldung.
 
+### `POST /api/midi-remote/sync`
+
+Stößt denselben MIDI-Remote-Abgleich an wie nach einer
+Konfigurationsaktivierung oder einem onPC-Reconnect. Der Daemon antwortet mit
+**202** und dem aktuellen `midi_remote`-Status (`running` wird true, sobald der
+Lauf startet). Wie bei allen Schreibaufrufen sind ein JSON-Körper (`{}`) und
+`X-Ma2pi-Request: 1` nötig.
+
+| Status | `error` | Bedeutung |
+| --- | --- | --- |
+| 409 | `midi_remote_disabled` | `[midi_remote] enabled = false` |
+| 409 | `midi_remote_sync_off` | `[midi_remote] sync = "off"` |
+| 503 | `midi_remote_unavailable` | Dienst nicht verdrahtet |
+
+Die Statusseite zeigt denselben Lauf unter *Remote-Abgleich* und den Knopf
+„Remotes ausrollen“.
+
 ## Fehler
 
 Fehler haben die Form:
@@ -575,6 +592,8 @@ Fehler haben die Form:
 | 403 | `missing_request_header` | `X-Ma2pi-Request: 1` fehlt |
 | 409 | `apply_busy` | Es läuft bereits ein Apply |
 | 409 | `learn_busy` | Es läuft bereits eine Learn-Sitzung |
+| 409 | `midi_remote_disabled` | `[midi_remote] enabled = false` |
+| 409 | `midi_remote_sync_off` | `[midi_remote] sync = "off"` |
 | 412 | `stale_config` | `If-Match` entspricht nicht der aktuellen Generation; nichts wurde geschrieben |
 | 415 | `unsupported_media_type` | Kein `application/json` bei einem Schreibaufruf |
 | 422 | `validation_error` | Konfiguration ist schemawidrig; `detail` nennt den Grund, `field` den Pfad |
@@ -589,5 +608,6 @@ Fehler haben die Form:
 | 503 | `recovery_unavailable` | Rettungs-WLAN nicht aktiv |
 | 500 | `recovery_failed` | Hotspot konnte nicht angewendet werden (z. B. fehlende Polkit-Berechtigung) |
 | 503 | `ui_not_built` | `web/dist` fehlt |
+| 503 | `midi_remote_unavailable` | MIDI-Remote-Dienst nicht aktiv |
 
 Antworten und Logs enthalten nie das MA2-Passwort oder dessen Hash.

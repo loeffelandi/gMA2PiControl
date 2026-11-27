@@ -600,6 +600,11 @@ export class ApiClient {
     return this.request<PowerStatus>('POST', '/api/power/shutdown', { confirm: true });
   }
 
+  /** Retrigger the MA MIDI-remote table sync. */
+  retriggerMidiSync(): Promise<MidiRemoteStatus> {
+    return this.request<MidiRemoteStatus>('POST', '/api/midi-remote/sync', {});
+  }
+
   startLearn(kind: 'key' | 'encoder', device?: string): Promise<LearnResult> {
     return this.request<LearnResult>('POST', '/api/learn/start', { kind, device });
   }

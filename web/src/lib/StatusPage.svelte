@@ -19,9 +19,11 @@
   let {
     store,
     devicesLoader,
+    retriggerMidiSync,
   }: {
     store: StatusStore;
     devicesLoader?: () => Promise<DeviceEntry[]>;
+    retriggerMidiSync?: () => Promise<unknown>;
   } = $props();
 
   let snapshot = $state<StatusState>(emptyStatusState());
@@ -338,6 +340,30 @@
     return info?.enabled ? info : null;
   });
 
+  const canRetriggerMidi = $derived(
+    retriggerMidiSync != null &&
+      midiRemote != null &&
+      midiRemote.sync.mode !== 'off' &&
+      midiRemote.session.state !== 'dry-run',
+  );
+
+  let retriggering = $state(false);
+  let retriggerError = $state<string | null>(null);
+
+  async function retrigger(): Promise<void> {
+    if (!retriggerMidiSync || retriggering) return;
+    retriggering = true;
+    retriggerError = null;
+    try {
+      await retriggerMidiSync();
+    } catch (error) {
+      retriggerError =
+        error instanceof Error ? error.message : 'Abgleich fehlgeschlagen';
+    } finally {
+      retriggering = false;
+    }
+  }
+
   function countsFor(name: string): ActivityDevice {
     return snapshot.activity.devices[name] ?? emptyCounts;
   }
@@ -428,9 +454,21 @@
           {midiSessionLabel(midiRemote.session)}
         </dd>
       </div>
-      <div>
+      <div class="midi-sync-cell">
         <dt>Remote-Abgleich</dt>
         <dd data-testid="midi-remote-sync">{midiSyncLabel(midiRemote.sync)}</dd>
+        {#if canRetriggerMidi}
+          <button
+            type="button"
+            data-testid="midi-remote-retrigger"
+            disabled={retriggering || midiRemote.sync.running}
+            onclick={retrigger}
+          >
+            {retriggering || midiRemote.sync.running
+              ? 'Abgleich läuft …'
+              : 'Remotes ausrollen'}
+          </button>
+        {/if}
       </div>
     {/if}
   </dl>
@@ -442,6 +480,15 @@
     <p class="error" data-testid="midi-remote-error">
       MIDI-Remote-Abgleich: {midiRemote.sync.error}
     </p>
+  {:else if midiRemote && midiRemote.sync.failed > 0 && midiRemote.sync.mode === 'auto'}
+    <p class="error" data-testid="midi-remote-incomplete">
+      MIDI-Remote-Abgleich unvollständig: {midiRemote.sync.failed} von {midiRemote.sync.targets} fehlen{midiRemote.sync.running
+        ? ' – Abgleich läuft'
+        : ' – „Remotes ausrollen“ wiederholt den Abgleich'}
+    </p>
+  {/if}
+  {#if retriggerError}
+    <p class="error" data-testid="midi-remote-retrigger-error">{retriggerError}</p>
   {/if}
 
   <div class="monitor">

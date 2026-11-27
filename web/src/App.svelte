@@ -227,7 +227,11 @@
 
   <main>
     {#if page === 'status'}
-      <StatusPage store={statusStore} devicesLoader={() => api.devices()} />
+      <StatusPage
+        store={statusStore}
+        devicesLoader={() => api.devices()}
+        retriggerMidiSync={() => api.retriggerMidiSync()}
+      />
     {:else if page === 'ma2'}
       <Ma2Page {api} />
     {:else if page === 'network'}

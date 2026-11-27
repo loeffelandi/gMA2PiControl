@@ -26,3 +26,4 @@
 * [24. Executor-Tasten über MA-MIDI-Remotes per RTP-MIDI](0024-executor-tasten-ueber-ma-midi-remotes-per-rtp-midi.md)
 * [25. Gemeinsames Zuweisungsmodell für Mapping- und Geräte-Tab](0025-gemeinsames-zuweisungsmodell-fuer-mapping-und-geraete-tab.md)
 * [26. Pi ausschalten über Web-UI und Cherry-Kombination](0026-pi-ausschalten-ueber-web-ui-und-cherry-kombination.md)
+* [27. MIDI-Remote-Abgleich einmal je Connect und Retrigger](0027-midi-remote-abgleich-einmal-je-connect.md)
