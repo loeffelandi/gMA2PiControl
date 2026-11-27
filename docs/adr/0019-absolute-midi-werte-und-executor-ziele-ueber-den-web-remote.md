@@ -17,6 +17,8 @@ Related to [0021. Executor-Feedback über Playback-Polling und MIDI-Duplex-Ausga
 
 Referenced by [22. Geraete-Baenke als MIDI-Kanaele und Bank-Offset](0022-geraete-baenke-als-midi-kanaele-und-bank-offset.md)
 
+Partly superseded by [0024. Executor-Tasten über MA-MIDI-Remotes per RTP-MIDI](0024-executor-tasten-ueber-ma-midi-remotes-per-rtp-midi.md) – Executor-Tasten gehen bei aktivem `[midi_remote]` über MIDI-Remotes; Fader und Encoder bleiben bei dieser Entscheidung.
+
 ## Kontext und Problemstellung
 
 Der MIDICRAFT ENC soll die grandMA2 über `ma2pi` steuern. Die Messung am Gerät

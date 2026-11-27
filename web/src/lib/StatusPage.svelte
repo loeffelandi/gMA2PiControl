@@ -1,7 +1,14 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
 
-  import type { ActivityDevice, ActivityEntry, DeviceEntry } from './api';
+  import type {
+    ActivityDevice,
+    ActivityEntry,
+    DeviceEntry,
+    MidiRemoteSessionState,
+    MidiRemoteSessionStatus,
+    MidiRemoteSyncStatus,
+  } from './api';
   import {
     emptyStatusState,
     LOG_LIMIT,
@@ -291,6 +298,45 @@
         : 'Attribut (rot)',
   );
 
+  const midiSessionStateLabels: Record<MidiRemoteSessionState, string> = {
+    connected: 'verbunden',
+    connecting: 'verbinde',
+    disconnected: 'getrennt',
+    'dry-run': 'Dry-Run',
+  };
+
+  function midiSessionLabel(session: MidiRemoteSessionStatus): string {
+    let label = midiSessionStateLabels[session.state] ?? session.state;
+    if (session.state === 'connected' && typeof session.latency_ms === 'number') {
+      label += ` · ${session.latency_ms.toFixed(1)} ms`;
+    }
+    if (session.state === 'disconnected' && session.detail) {
+      label += ` (${session.detail})`;
+    }
+    return label;
+  }
+
+  function midiSyncLabel(sync: MidiRemoteSyncStatus): string {
+    if (sync.mode === 'off') return 'aus (alle Ziele aktiv)';
+    const parts = [`${sync.synced}/${sync.targets} abgeglichen`];
+    if (sync.mode === 'check') parts.push('nur prüfen');
+    if (sync.running) {
+      parts.push('läuft');
+    } else if (sync.at !== null) {
+      parts.push(`zuletzt ${timeFormat.format(new Date(sync.at * 1000))}`);
+    }
+    if (sync.created || sync.changed || sync.removed || sync.failed) {
+      parts.push(`+${sync.created} ~${sync.changed} −${sync.removed}`);
+      if (sync.failed > 0) parts.push(`${sync.failed} fehlerhaft`);
+    }
+    return parts.join(' · ');
+  }
+
+  const midiRemote = $derived.by(() => {
+    const info = snapshot.status?.midi_remote;
+    return info?.enabled ? info : null;
+  });
+
   function countsFor(name: string): ActivityDevice {
     return snapshot.activity.devices[name] ?? emptyCounts;
   }
@@ -366,10 +412,27 @@
       <dt>Reconnects</dt>
       <dd>{snapshot.status?.reconnects ?? '–'}</dd>
     </div>
+    {#if midiRemote}
+      <div>
+        <dt>MIDI-Remote</dt>
+        <dd data-testid="midi-remote-session">
+          {midiSessionLabel(midiRemote.session)}
+        </dd>
+      </div>
+      <div>
+        <dt>Remote-Abgleich</dt>
+        <dd data-testid="midi-remote-sync">{midiSyncLabel(midiRemote.sync)}</dd>
+      </div>
+    {/if}
   </dl>
 
   {#if snapshot.status?.last_error}
     <p class="error">Letzter Fehler: {snapshot.status.last_error}</p>
+  {/if}
+  {#if midiRemote?.sync.error}
+    <p class="error" data-testid="midi-remote-error">
+      MIDI-Remote-Abgleich: {midiRemote.sync.error}
+    </p>
   {/if}
 
   <div class="monitor">

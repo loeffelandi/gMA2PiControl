@@ -235,6 +235,7 @@ describe('MappingPage', () => {
             kind: 'fader',
             button: null,
             accelerated: null,
+            transport: null,
           },
           mc_encoder_1: {
             page: 1,
@@ -242,6 +243,7 @@ describe('MappingPage', () => {
             kind: 'button',
             button: 1,
             accelerated: null,
+            transport: null,
           },
         }),
       }),
@@ -509,6 +511,7 @@ describe('MappingPage', () => {
               kind: 'fader',
               button: null,
               accelerated: false,
+              transport: null,
             },
           }),
         }),
@@ -540,6 +543,7 @@ describe('MappingPage', () => {
               kind: 'fader',
               button: null,
               accelerated: false,
+              transport: null,
             },
           }),
         }),
@@ -612,10 +616,110 @@ describe('MappingPage', () => {
               kind: 'fader',
               button: null,
               accelerated: true,
+              transport: null,
             },
           }),
         }),
       });
+    });
+  });
+
+  it('loads transport from the config and saves midi, web, or null for Standard', async () => {
+    const api = fakeApi();
+    (api.config as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...config,
+      midi_remote: { enabled: true, port: 5004, channels: [16], sync: 'auto', telnet_port: 30000 },
+      mapping: {
+        ...config.mapping,
+        playbacks: {
+          mc_fader_1: { page: 1, executor: 2, kind: 'fader', transport: 'web' },
+          mc_click_1: { page: 1, executor: 1, kind: 'button', button: 2 },
+        },
+      },
+    });
+    await renderPage(api);
+
+    const clickSelect = within(playbackRow('mc_click_1')).getByTestId(
+      'playback-transport',
+    ) as HTMLSelectElement;
+    const faderSelect = within(playbackRow('mc_fader_1')).getByTestId(
+      'playback-transport',
+    ) as HTMLSelectElement;
+    expect(clickSelect.value).toBe('');
+    expect(clickSelect.selectedOptions[0].textContent?.trim()).toBe('Standard (MIDI)');
+    expect(faderSelect.value).toBe('web');
+    expect(Array.from(faderSelect.options).map((option) => option.value)).toEqual(['', 'web']);
+
+    await fireEvent.change(clickSelect, { target: { value: 'midi' } });
+    await fireEvent.change(faderSelect, { target: { value: '' } });
+    await fireEvent.click(screen.getByText('Speichern'));
+
+    await waitFor(() => expect(api.updateConfig).toHaveBeenCalledTimes(1));
+    expect(api.updateConfig).toHaveBeenCalledWith({
+      mapping: expect.objectContaining({
+        playbacks: expect.objectContaining({
+          mc_click_1: {
+            page: 1,
+            executor: 1,
+            kind: 'button',
+            button: 2,
+            accelerated: null,
+            transport: 'midi',
+          },
+          mc_fader_1: {
+            page: 1,
+            executor: 2,
+            kind: 'fader',
+            button: null,
+            accelerated: null,
+            transport: null,
+          },
+        }),
+      }),
+    });
+  });
+
+  it('disables MIDI-Remote when midi_remote is off and keeps web when switching to fader', async () => {
+    const api = fakeApi();
+    (api.config as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...config,
+      midi_remote: { enabled: false, port: 5004, channels: [16], sync: 'auto', telnet_port: 30000 },
+      mapping: {
+        ...config.mapping,
+        playbacks: {
+          ...config.mapping.playbacks,
+          mc_click_1: { page: 1, executor: 1, kind: 'button', button: 2, transport: 'web' },
+        },
+      },
+    });
+    await renderPage(api);
+
+    const row = playbackRow('mc_click_1');
+    const select = within(row).getByTestId('playback-transport') as HTMLSelectElement;
+    expect(select.value).toBe('web');
+    expect(select.options[0].textContent?.trim()).toBe('Standard (Web)');
+    const midi = Array.from(select.options).find((option) => option.value === 'midi');
+    expect(midi?.disabled).toBe(true);
+
+    await fireEvent.change(within(row).getByTestId('playback-kind'), {
+      target: { value: 'fader' },
+    });
+    await fireEvent.click(screen.getByText('Speichern'));
+
+    await waitFor(() => expect(api.updateConfig).toHaveBeenCalledTimes(1));
+    expect(api.updateConfig).toHaveBeenCalledWith({
+      mapping: expect.objectContaining({
+        playbacks: expect.objectContaining({
+          mc_click_1: {
+            page: 1,
+            executor: 1,
+            kind: 'fader',
+            button: null,
+            accelerated: null,
+            transport: 'web',
+          },
+        }),
+      }),
     });
   });
 

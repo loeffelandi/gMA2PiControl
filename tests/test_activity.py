@@ -259,6 +259,11 @@ def test_status_snapshot_contains_activity() -> None:
 
     assert snapshot["activity"]["devices"]["midicraft"]["tx"] == 1
     assert snapshot["activity"]["log"][0]["summary"] == "note 70"
+    assert snapshot["midi_remote"] == {"enabled": False}
+
+    remote = SimpleNamespace(status=lambda: {"enabled": True, "session": {"state": "connected"}})
+    snapshot = _status_snapshot(client, None, tracker, midi_remote=remote)
+    assert snapshot["midi_remote"]["session"]["state"] == "connected"
 
 
 class _Engine:

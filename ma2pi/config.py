@@ -301,6 +301,9 @@ class PlaybackMapping:
     kind: str = "button"
     button: int = 1
     accelerated: bool = False
+    #: ``None`` picks the default: ``midi`` for buttons with an enabled
+    #: ``[midi_remote]``, otherwise ``web``.
+    transport: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,6 +315,7 @@ class PlaybackOverride:
     kind: str | None = None
     button: int | None = None
     accelerated: bool | None = None
+    transport: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,7 +383,20 @@ class ScreenHelperSettings:
 
     enabled: bool = False
     host: str = "192.168.0.10"
-    port: int = 5005
+    port: int = 5010
+
+
+@dataclass(frozen=True, slots=True)
+class MidiRemoteSettings:
+    """Executor buttons as MIDI notes over RTP-MIDI to MA MIDI remotes."""
+
+    enabled: bool = False
+    #: ``None`` uses the host of the MA connection.
+    host: str | None = None
+    port: int = 5004
+    channels: tuple[int, ...] = (16,)
+    sync: str = "auto"
+    telnet_port: int = 30000
 
 
 @dataclass(frozen=True, slots=True)
@@ -408,6 +425,7 @@ class AppConfig:
     led: LedSettings = field(default_factory=LedSettings)
     feedback: FeedbackSettings = field(default_factory=FeedbackSettings)
     screen_helper: ScreenHelperSettings = field(default_factory=ScreenHelperSettings)
+    midi_remote: MidiRemoteSettings = field(default_factory=MidiRemoteSettings)
     source_path: str = ""
 
     def profile_for_device(self, name: str) -> ProfileConfig:
@@ -830,10 +848,112 @@ def _parse_screen_helper(raw: Any) -> ScreenHelperSettings:
     _reject_unknown(data, {"enabled", "host", "port"}, path)
     enabled = _bool(data.get("enabled", False), f"{path}.enabled")
     host = _string(data.get("host", "192.168.0.10"), f"{path}.host")
-    port = _int(data.get("port", 5005), f"{path}.port")
+    port = _int(data.get("port", 5010), f"{path}.port")
     if not 1 <= port <= 65535:
         raise ConfigError(f"{path}.port", "muss zwischen 1 und 65535 liegen")
     return ScreenHelperSettings(enabled=enabled, host=host, port=port)
+
+
+def _parse_midi_remote(raw: Any) -> MidiRemoteSettings:
+    path = "midi_remote"
+    data = _table(raw, path)
+    _reject_unknown(
+        data, {"enabled", "host", "port", "channels", "sync", "telnet_port"}, path
+    )
+    enabled = _bool(data.get("enabled", False), f"{path}.enabled")
+    host = None
+    if "host" in data:
+        host = _string(data["host"], f"{path}.host")
+    port = _int(data.get("port", 5004), f"{path}.port")
+    if not 1 <= port <= 65534:
+        # The data port is port + 1.
+        raise ConfigError(f"{path}.port", "muss zwischen 1 und 65534 liegen")
+    raw_channels = data.get("channels", [16])
+    if not isinstance(raw_channels, list) or not raw_channels:
+        raise ConfigError(f"{path}.channels", "muss eine nicht leere Liste sein")
+    channels: list[int] = []
+    for value in raw_channels:
+        channel = _int(value, f"{path}.channels")
+        if not 1 <= channel <= 16:
+            raise ConfigError(f"{path}.channels", "Kanäle müssen zwischen 1 und 16 liegen")
+        if channel in channels:
+            raise ConfigError(f"{path}.channels", f"Kanal {channel} doppelt")
+        channels.append(channel)
+    sync = _choice(data.get("sync", "auto"), f"{path}.sync", {"auto", "check", "off"})
+    telnet_port = _int(data.get("telnet_port", 30000), f"{path}.telnet_port")
+    if not 1 <= telnet_port <= 65535:
+        raise ConfigError(f"{path}.telnet_port", "muss zwischen 1 und 65535 liegen")
+    return MidiRemoteSettings(
+        enabled=enabled,
+        host=host,
+        port=port,
+        channels=tuple(channels),
+        sync=sync,
+        telnet_port=telnet_port,
+    )
+
+
+def _transport(item: Mapping[str, Any], item_path: str) -> str | None:
+    if "transport" not in item:
+        return None
+    return _choice(item["transport"], f"{item_path}.transport", {"midi", "web"})
+
+
+def effective_transport(kind: str, transport: str | None, midi_enabled: bool) -> str:
+    """Transport of a resolved playback target (``midi`` or ``web``)."""
+
+    if transport is not None:
+        return transport
+    return "midi" if kind == "button" and midi_enabled else "web"
+
+
+def _check_playback_transports(config: AppConfig) -> None:
+    """``transport = "midi"`` needs an enabled ``[midi_remote]`` and a button."""
+
+    mapping = config.mapping
+    enabled = config.midi_remote.enabled
+    entries: list[tuple[str, str, str | None]] = []
+    for control, base in mapping.playbacks.items():
+        entries.append((f"mapping.playbacks.{control}", base.kind, base.transport))
+    for device, settings in mapping.device_banks.items():
+        for number, layer in settings.banks.items():
+            for control, override in layer.playbacks.items():
+                base = mapping.playbacks.get(control)
+                kind = override.kind or (base.kind if base is not None else "button")
+                transport = override.transport
+                if transport is None and base is not None:
+                    transport = base.transport
+                entries.append(
+                    (
+                        f"mapping.device_banks.{device}.{number}.playbacks.{control}",
+                        kind,
+                        transport,
+                    )
+                )
+    for item_path, kind, transport in entries:
+        if transport != "midi":
+            continue
+        if not enabled:
+            raise ConfigError(
+                f"{item_path}.transport",
+                'transport = "midi" braucht [midi_remote] enabled = true',
+            )
+        if kind != "button":
+            raise ConfigError(
+                f"{item_path}.transport", 'transport = "midi" nur bei kind = "button"'
+            )
+
+
+def _check_midi_address_space(config: AppConfig) -> None:
+    if not config.midi_remote.enabled:
+        return
+    from .midi_remote import AddressSpaceExhausted, assign_addresses
+    from .playback_targets import midi_button_targets
+
+    try:
+        assign_addresses(midi_button_targets(config), config.midi_remote.channels)
+    except AddressSpaceExhausted as exc:
+        raise ConfigError("midi_remote.channels", str(exc)) from exc
 
 
 def _parse_devices(raw: Any, profiles: Mapping[str, ProfileConfig]) -> Mapping[str, DeviceConfig]:
@@ -1671,7 +1791,9 @@ def _parse_mapping(
     for control, entry in playbacks_raw.items():
         item_path = f"{path}.playbacks.{control}"
         item = _table(entry, item_path)
-        _reject_unknown(item, {"page", "executor", "kind", "button", "accelerated"}, item_path)
+        _reject_unknown(
+            item, {"page", "executor", "kind", "button", "accelerated", "transport"}, item_path
+        )
         if control not in controls:
             raise ConfigError(item_path, f"Control {control!r} kommt in keinem Profil vor")
         page_raw = _require(item, "page", item_path)
@@ -1709,7 +1831,10 @@ def _parse_mapping(
                     f"{item_path}.accelerated",
                     "nur für absolute Encoder erlaubt",
                 )
-        playbacks[control] = PlaybackMapping(page, executor, kind, button, accelerated)
+        transport = _transport(item, item_path)
+        playbacks[control] = PlaybackMapping(
+            page, executor, kind, button, accelerated, transport
+        )
 
     device_banks: dict[str, DeviceBankSettings] = {}
     banks_raw = _table(data.get("device_banks", {}), f"{path}.device_banks")
@@ -1792,7 +1917,7 @@ def _parse_mapping(
                 item = _table(entry, item_path)
                 _reject_unknown(
                     item,
-                    {"page", "executor", "kind", "button", "accelerated"},
+                    {"page", "executor", "kind", "button", "accelerated", "transport"},
                     item_path,
                 )
                 if control not in layer_controls:
@@ -1865,7 +1990,7 @@ def _parse_mapping(
                 if page is None and base is None:
                     raise ConfigError(item_path, "Page fehlt und es gibt kein globales Ziel")
                 layer_playbacks[control] = PlaybackOverride(
-                    page, executor, kind, button, accelerated
+                    page, executor, kind, button, accelerated, _transport(item, item_path)
                 )
             layers[number] = DeviceBankMapping(
                 ma_page, layer_keys, layer_encoders, layer_playbacks
@@ -2016,6 +2141,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
             "led",
             "feedback",
             "screen_helper",
+            "midi_remote",
         },
         "config",
     )
@@ -2050,6 +2176,7 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
             f"(konfiguriert: {', '.join(sorted(midi_devices))})",
         )
     screen_helper_settings = _parse_screen_helper(data.get("screen_helper", {}))
+    midi_remote_settings = _parse_midi_remote(data.get("midi_remote", {}))
 
     config = AppConfig(
         schema_version=version,
@@ -2066,9 +2193,12 @@ def parse_config(raw: Any, source_path: str = "") -> AppConfig:
         led=led_settings,
         feedback=feedback_settings,
         screen_helper=screen_helper_settings,
+        midi_remote=midi_remote_settings,
         source_path=source_path,
     )
     _check_led_note_owner(config)
+    _check_playback_transports(config)
+    _check_midi_address_space(config)
     return config
 
 

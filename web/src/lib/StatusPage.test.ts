@@ -325,6 +325,167 @@ describe('StatusPage', () => {
     expect(screen.queryByText('Attribut (rot)')).toBeNull();
   });
 
+  describe('MIDI-Remote', () => {
+    const midiSession = {
+      state: 'connected',
+      detail: '192.168.178.72:5004',
+      host: '192.168.178.72',
+      port: 5004,
+      latency_ms: 2.84,
+    };
+    const midiSync = {
+      mode: 'auto',
+      running: false,
+      targets: 245,
+      synced: 245,
+      created: 3,
+      changed: 0,
+      removed: 1,
+      failed: 0,
+      deviations: 0,
+      error: null,
+      at: 1764200000.5,
+    };
+
+    function renderWithStatus(data: Record<string, unknown>): StatusStore {
+      const store = new StatusStore({
+        factory: (url) => new FakeSocket(url),
+        reconnectBaseMs: 10,
+      });
+      render(StatusPage, { props: { store, devicesLoader: async () => [] } });
+      store.connect();
+      const socket = FakeSocket.last!;
+      socket.emitOpen();
+      socket.emitMessage({ type: 'status', data });
+      return store;
+    }
+
+    it.each([
+      ['missing', status],
+      ['disabled', { ...status, midi_remote: { enabled: false } }],
+    ])('hides the MIDI-Remote entries when %s', async (_label, data) => {
+      const store = renderWithStatus(data);
+      await waitFor(() => {
+        expect(screen.getByTestId('ma2-state').textContent).toContain('Session 7');
+      });
+      expect(screen.queryByText('MIDI-Remote')).toBeNull();
+      expect(screen.queryByText('Remote-Abgleich')).toBeNull();
+      expect(screen.queryByTestId('midi-remote-session')).toBeNull();
+      expect(screen.queryByTestId('midi-remote-sync')).toBeNull();
+      expect(screen.queryByTestId('midi-remote-error')).toBeNull();
+      store.disconnect();
+    });
+
+    it('shows a connected session with latency and the sync counts', async () => {
+      const store = renderWithStatus({
+        ...status,
+        midi_remote: { enabled: true, session: midiSession, sync: midiSync },
+      });
+      const time = new Intl.DateTimeFormat('de-DE', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }).format(new Date(1764200000.5 * 1000));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('midi-remote-session').textContent?.trim()).toBe(
+          'verbunden · 2.8 ms',
+        );
+      });
+      expect(screen.getByText('MIDI-Remote')).toBeTruthy();
+      expect(screen.getByText('Remote-Abgleich')).toBeTruthy();
+      expect(screen.getByTestId('midi-remote-sync').textContent?.trim()).toBe(
+        `245/245 abgeglichen · zuletzt ${time} · +3 ~0 −1`,
+      );
+      expect(screen.queryByTestId('midi-remote-error')).toBeNull();
+      store.disconnect();
+    });
+
+    it('shows the disconnect detail and the sync error', async () => {
+      const error = 'Telnet 192.168.178.72:30000 nicht erreichbar: timeout';
+      const store = renderWithStatus({
+        ...status,
+        midi_remote: {
+          enabled: true,
+          session: {
+            ...midiSession,
+            state: 'disconnected',
+            detail: 'Connection refused',
+            latency_ms: null,
+          },
+          sync: {
+            ...midiSync,
+            synced: 0,
+            created: 0,
+            removed: 0,
+            failed: 245,
+            error,
+            at: null,
+          },
+        },
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('midi-remote-session').textContent?.trim()).toBe(
+          'getrennt (Connection refused)',
+        );
+      });
+      expect(screen.getByTestId('midi-remote-sync').textContent?.trim()).toBe(
+        '0/245 abgeglichen · +0 ~0 −0 · 245 fehlerhaft',
+      );
+      const errorLine = screen.getByTestId('midi-remote-error');
+      expect(errorLine.className).toContain('error');
+      expect(errorLine.textContent?.trim()).toBe(`MIDI-Remote-Abgleich: ${error}`);
+      store.disconnect();
+    });
+
+    it('labels check mode, running syncs and disabled sync', async () => {
+      const store = renderWithStatus({
+        ...status,
+        midi_remote: {
+          enabled: true,
+          session: { ...midiSession, state: 'dry-run', latency_ms: null },
+          sync: {
+            ...midiSync,
+            mode: 'check',
+            running: true,
+            synced: 240,
+            created: 0,
+            removed: 0,
+          },
+        },
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('midi-remote-sync').textContent?.trim()).toBe(
+          '240/245 abgeglichen · nur prüfen · läuft',
+        );
+      });
+      expect(screen.getByTestId('midi-remote-session').textContent?.trim()).toBe(
+        'Dry-Run',
+      );
+
+      FakeSocket.last!.emitMessage({
+        type: 'status',
+        data: {
+          ...status,
+          midi_remote: {
+            enabled: true,
+            session: midiSession,
+            sync: { ...midiSync, mode: 'off' },
+          },
+        },
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId('midi-remote-sync').textContent?.trim()).toBe(
+          'aus (alle Ziele aktiv)',
+        );
+      });
+      store.disconnect();
+    });
+  });
+
   it('re-fetches devices on configGeneration changes and hotplug activity', async () => {
     const store = new StatusStore({
       factory: (url) => new FakeSocket(url),

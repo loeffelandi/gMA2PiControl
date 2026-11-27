@@ -13,7 +13,7 @@ SendMode "Input"
 ; ============================================================
 
 ; ---- Konfiguration (bei Bedarf anpassen) ----
-PORT       := 5005
+PORT       := 5010           ; nicht 5004/5005: das sind die Ports der RTP-MIDI-Session
 ONPC_TITLE := "grandMA2"     ; Fenstertitel der onPC (Teilstring), nur für Screen 1.
 LOG_FILE   := A_ScriptDir "\screen-helper.log"
 ; Hinweis: WinActivate NUR bei Screen 1 (das ist das Hauptfenster, sinnvoll zum
@@ -63,12 +63,21 @@ Poll() {
                  "Int", 0, "Ptr", fromAddr.Ptr, "Ptr", fromLen.Ptr, "Int")
     if n <= 0
         return
-    msg := StrGet(recvBuf.Ptr, n, "UTF-8")
+    ; Fremde Binärpakete (z. B. RTP-MIDI) ignorieren; RegExMatch bricht bei
+    ; ungültigem Text mit einem PCRE-Fehler ab.
+    Loop n {
+        b := NumGet(recvBuf, A_Index - 1, "UChar")
+        if (b < 0x20 || b > 0x7E) {
+            LogLine("ignoriere " n " Byte ohne Textinhalt")
+            return
+        }
+    }
+    msg := StrGet(recvBuf.Ptr, n, "CP0")
     Handle(msg)
 }
 
 Handle(msg) {
-    if RegExMatch(msg, "i)screen\s+(\d+)", &m) {
+    if RegExMatch(msg, "i)^screen\s+(\d+)$", &m) {
         n := Integer(m[1])
         if (n >= 1 && n <= 6) {
             LogLine("empfange '" msg "' -> Screen " n)

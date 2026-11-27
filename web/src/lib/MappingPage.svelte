@@ -15,6 +15,7 @@
   type EncoderKind = 'slot' | 'attribute';
   type ModifierKind = 'hardkey' | 'local';
   type PlaybackKind = 'button' | 'fader';
+  type PlaybackTransport = '' | 'midi' | 'web';
 
   interface ValueControlInfo {
     control: string;
@@ -65,6 +66,7 @@
     kind: PlaybackKind;
     button: string;
     accelerated: boolean;
+    transport: PlaybackTransport;
     enabled: boolean;
     fixed: boolean;
   }
@@ -90,6 +92,7 @@
   let encoderRows = $state<EncoderRow[]>([]);
   let modifierRows = $state<ModifierRow[]>([]);
   let playbackRows = $state<PlaybackRow[]>([]);
+  let midiRemoteEnabled = $state(false);
   let originalKeys: string[] = [];
   let originalModifiers: string[] = [];
   let originalScreenSlots: string[] = [];
@@ -356,6 +359,7 @@
       kind: entry.kind === 'fader' ? 'fader' : 'button',
       button: String(entry.button ?? 1),
       accelerated: entry.accelerated === true,
+      transport: entry.transport === 'midi' || entry.transport === 'web' ? entry.transport : '',
       enabled: true,
       fixed: absolute.has(control),
     }));
@@ -370,11 +374,14 @@
         kind: 'fader',
         button: '1',
         accelerated: false,
+        transport: '',
         enabled: false,
         fixed: true,
       });
     }
     playbackRows = rows;
+    const midiRemote = (config.midi_remote ?? {}) as Record<string, unknown>;
+    midiRemoteEnabled = midiRemote.enabled === true;
   }
 
   async function loadInitial(): Promise<void> {
@@ -515,6 +522,7 @@
         kind: 'button',
         button: '1',
         accelerated: false,
+        transport: '',
         enabled: true,
         fixed: false,
       },
@@ -651,6 +659,7 @@
           kind: 'button',
           button: Number(row.button),
           accelerated: null,
+          transport: row.transport || null,
         };
       } else {
         playbacks[row.control] = {
@@ -659,6 +668,7 @@
           kind: 'fader',
           button: null,
           accelerated: encoderControls.has(row.control) ? row.accelerated : null,
+          transport: row.transport === 'web' ? 'web' : null,
         };
       }
     }
@@ -1013,6 +1023,7 @@
           <th>Executor</th>
           <th>Button</th>
           <th>Beschl.</th>
+          <th>Transport</th>
           <th></th>
         </tr>
       </thead>
@@ -1105,6 +1116,27 @@
               {:else}
                 <span class="muted">–</span>
               {/if}
+            </td>
+            <td>
+              <select
+                bind:value={
+                  () => (row.kind === 'fader' && row.transport === 'midi' ? '' : row.transport),
+                  (v) => (row.transport = v)
+                }
+                onchange={() => (dirty = true)}
+                disabled={!row.enabled}
+                data-testid="playback-transport"
+              >
+                <option value="">
+                  Standard ({row.kind === 'button' && midiRemoteEnabled ? 'MIDI' : 'Web'})
+                </option>
+                {#if row.kind === 'button'}
+                  <option value="midi" disabled={!midiRemoteEnabled}>
+                    {midiRemoteEnabled ? 'MIDI-Remote' : 'MIDI-Remote (nicht aktiviert)'}
+                  </option>
+                {/if}
+                <option value="web">Web Remote</option>
+              </select>
             </td>
             <td>
               <button

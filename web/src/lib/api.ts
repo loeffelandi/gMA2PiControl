@@ -94,7 +94,47 @@ export interface StatusInfo {
   busy: boolean;
   activity?: ActivityInfo;
   presence?: Record<string, DevicePresence>;
+  midi_remote?: MidiRemoteStatus;
 }
+
+export type MidiRemoteSessionState =
+  | 'connected'
+  | 'connecting'
+  | 'disconnected'
+  | 'dry-run';
+
+export interface MidiRemoteSessionStatus {
+  state: MidiRemoteSessionState;
+  detail: string;
+  host: string | null;
+  port: number;
+  latency_ms: number | null;
+}
+
+export type MidiRemoteSyncMode = 'auto' | 'check' | 'off';
+
+export interface MidiRemoteSyncStatus {
+  mode: MidiRemoteSyncMode;
+  running: boolean;
+  targets: number;
+  synced: number;
+  created: number;
+  changed: number;
+  removed: number;
+  failed: number;
+  deviations: number;
+  error: string | null;
+  /** Unix seconds of the last finished sync. */
+  at: number | null;
+}
+
+export type MidiRemoteStatus =
+  | { enabled: false }
+  | {
+      enabled: true;
+      session: MidiRemoteSessionStatus;
+      sync: MidiRemoteSyncStatus;
+    };
 
 export type NetworkMode = 'dhcp' | 'static';
 

@@ -11,6 +11,7 @@
     | 'encoder_press';
 
   type AssignScope = 'bank' | 'global';
+  type PlaybackTransport = 'midi' | 'web';
 
   interface InitialValues {
     action?: ActionKind;
@@ -21,6 +22,7 @@
     targetKind?: 'button' | 'fader';
     button?: number;
     accelerated?: boolean;
+    transport?: PlaybackTransport | null;
     slot?: number;
     attribute?: string;
     screen?: number;
@@ -35,6 +37,7 @@
     targetKind: 'button' | 'fader';
     button: number;
     accelerated: boolean;
+    transport: PlaybackTransport | '';
     slot: number;
     attribute: string;
     encoderMode: 'slot' | 'attribute';
@@ -53,6 +56,7 @@
     inherited?: boolean;
     hasAssignment?: boolean;
     screenEncoders?: Record<string, number | undefined>;
+    midiRemoteEnabled?: boolean;
     onSave: (values: {
       action: ActionKind;
       hardkey: string;
@@ -62,6 +66,7 @@
       targetKind: 'button' | 'fader';
       button: number;
       accelerated: boolean;
+      transport: PlaybackTransport | null;
       start: number;
       step: number;
       slot: number;
@@ -83,6 +88,7 @@
     inherited = false,
     hasAssignment = false,
     screenEncoders,
+    midiRemoteEnabled = false,
     onSave,
     onClear,
     onClose,
@@ -115,6 +121,7 @@
     targetKind: initial?.targetKind ?? defaultTargetKind(kind),
     button: initial?.button ?? 1,
     accelerated: initial?.accelerated ?? false,
+    transport: initial?.transport ?? '',
     slot: initial?.slot ?? 1,
     attribute: initial?.attribute ?? '',
     encoderMode: initial?.attribute ? 'attribute' : 'slot',
@@ -179,6 +186,13 @@
   const multi = $derived(count > 1);
   const showAcceleration = $derived(
     action === 'executor' && targetKind === 'fader' && kind === 'encoder',
+  );
+  const transport = $derived.by<PlaybackTransport | ''>(() => {
+    const value = field('transport');
+    return targetKind === 'fader' && value === 'midi' ? '' : value;
+  });
+  const defaultTransport = $derived(
+    targetKind === 'button' && midiRemoteEnabled ? 'MIDI' : 'Web',
   );
   const preview = $derived(
     multi
@@ -272,6 +286,7 @@
         targetKind,
         button: field('button'),
         accelerated: field('accelerated'),
+        transport: action === 'executor' && transport !== '' ? transport : null,
         start: executor,
         step,
         slot,
@@ -461,6 +476,18 @@
           </label>
         {/if}
       </div>
+      <label>
+        Transport
+        <select bind:value={() => transport, (v) => setField('transport', v)}>
+          <option value="">Standard ({defaultTransport})</option>
+          {#if targetKind === 'button'}
+            <option value="midi" disabled={!midiRemoteEnabled}>
+              {midiRemoteEnabled ? 'MIDI-Remote' : 'MIDI-Remote (nicht aktiviert)'}
+            </option>
+          {/if}
+          <option value="web">Web Remote</option>
+        </select>
+      </label>
       {#if multi}
         <label>
           Schrittweite

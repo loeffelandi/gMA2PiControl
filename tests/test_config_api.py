@@ -352,6 +352,32 @@ async def test_store_roundtrips_led_feedback_fields_and_keeps_others(tmp_path):
     assert again.frame_interval_ms == 50
 
 
+def test_redacted_config_roundtrips_midi_remote_and_transport(make_config):
+    def mutate(data):
+        data["midi_remote"] = {"enabled": True, "channels": [15, 16], "sync": "check"}
+        data["mapping"]["playbacks"]["mc_click_1"]["transport"] = "web"
+
+    cfg = make_config(mutate)
+    payload = redacted_config(cfg)
+    assert payload["midi_remote"] == {
+        "enabled": True,
+        "port": 5004,
+        "channels": [15, 16],
+        "sync": "check",
+        "telnet_port": 30000,
+    }
+    assert payload["mapping"]["playbacks"]["mc_click_1"]["transport"] == "web"
+    assert "transport" not in payload["mapping"]["playbacks"]["mc_click_2"]
+
+    def reapply(data):
+        data["midi_remote"] = payload["midi_remote"]
+        data["mapping"]["playbacks"] = payload["mapping"]["playbacks"]
+
+    again = make_config(reapply)
+    assert again.midi_remote == cfg.midi_remote
+    assert again.mapping.playbacks == cfg.mapping.playbacks
+
+
 def test_redacted_config_roundtrips_asl_feedback(make_config):
     def mutate(data):
         data["profiles"]["asl-mk2-e4b3"]["led_feedback"] = {

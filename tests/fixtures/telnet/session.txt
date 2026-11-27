@@ -1,0 +1,165 @@
+### banner
+[37m[2J[34mMMMMMMMM               MMMMMMMM               AAA                ****** 
+M:::::::M             M:::::::M              A:::A              ********
+M::::::::M           M::::::::M             A:::::A                   **
+M:::::::::M         M:::::::::M            A:::::::A             *******
+M::::::::::M       M::::::::::M           A:::::::::A           ******* 
+M:::::::::::M     M:::::::::::M          A:::::A:::::A          **      
+M:::::::M::::M   M::::M:::::::M         A:::::A A:::::A         ********
+M::::::M M::::M M::::M M::::::M        A:::::A   A:::::A        ********
+M::::::M  M::::M::::M  M::::::M       A:::::A     A:::::A       
+M::::::M   M:::::::M   M::::::M      A:::::AAAAAAAAA:::::A      
+M::::::M    M:::::M    M::::::M     A:::::::::::::::::::::A     
+M::::::M     MMMMM     M::::::M    A:::::AAAAAAAAAAAAA:::::A    
+M::::::M               M::::::M   A:::::A             A:::::A   
+M::::::M               M::::::M  A:::::A               A:::::A  
+M::::::M               M::::::M A:::::A                 A:::::A 
+MMMMMMMM               MMMMMMMMAAAAAAA                   AAAAAAA
+[37m
+Logged in as User 'guest'
+ [Fixture]>[KPlease login !
+ [Fixture]>[K
+### >> login "svt" ""
+Executing : [32mLogin[37m "svt" ""
+Logged in as User 'svt'
+ [Fixture]>[K
+### >> cd 36
+Executing : [32mChangeDest[37m 36
+RemoteTypes >[K
+### >> cd 2
+Executing : [32mChangeDest[37m 2
+RemoteTypes/MidiRemotes 2 >[K
+### >> list
+Executing : [32mList[37m
+[32m              Name        Note  Channel  Type  Page  Executor  Button    [31mKeycode  [32m[31mCMD  [32mInfo  [37m
+RemoteMidi  1 MIDI Input  1     1        Exec  3     162       Button 1  None
+RemoteMidi  2 MIDI Input  28    1        Exec  3     189       Button 1  None
+RemoteMidi  3 MIDI Input  2     1        Exec  3     163       Button 1  None
+RemoteMidi  4 MIDI Input  3     1        Exec  3     164       Button 1  None
+RemoteMidi  5 MIDI Input  4     1        Exec  3     165       Button 1  None
+RemoteMidi  6 MIDI Input  5     1        Exec  3     166       Button 1  None
+RemoteMidi  7 MIDI Input  6     1        Exec  3     167       Button 1  None
+RemoteMidi  8 MIDI Input  7     1        Exec  3     168       Button 1  None
+RemoteMidi  9 MIDI Input  8     1        Exec  3     169       Button 1  None
+RemoteMidi 10 MIDI Input  9     1        Exec  3     170       Button 1  None
+RemoteMidi 11 MIDI Input  10    1        Exec  3     171       Button 1  None
+RemoteMidi 12 MIDI Input  11    1        Exec  3     172       Button 1  None
+RemoteMidi 13 MIDI Input  12    1        Exec  3     173       Button 1  None
+RemoteMidi 14 MIDI Input  13    1        Exec  3     174       Button 1  None
+RemoteMidi 15 MIDI Input  14    1        Exec  3     175       Button 1  None
+RemoteMidi 16 MIDI Input  15    1        Exec  3     176       Button 1  None
+RemoteMidi 17 MIDI Input  16    1        Exec  3     177       Button 1  None
+RemoteMidi 18 MIDI Input  17    1        Exec  3     178       Button 1  None
+RemoteMidi 19 MIDI Input  18    1        Exec  3     179       Button 1  None
+RemoteMidi 20 MIDI Input  19    1        Exec  3     180       Button 1  None
+RemoteMidi 21 MIDI Input  20    1        Exec  3     181       Button 1  None
+RemoteMidi 22 MIDI Input  21    1        Exec  3     182       Button 1  None
+RemoteMidi 23 MIDI Input  22    1        Exec  3     183       Button 1  None
+RemoteMidi 24 MIDI Input  23    1        Exec  3     184       Button 1  None
+RemoteMidi 25 MIDI Input  24    1        Exec  3     185       Button 1  None
+RemoteMidi 26 MIDI Input  25    1        Exec  3     186       Button 1  None
+RemoteMidi 27 MIDI Input  26    1        Exec  3     187       Button 1  None
+RemoteMidi 28 MIDI Input  27    1        Exec  3     188       Button 1  None
+RemoteMidi 29 MIDI Input  29    1        Exec  3     190       Button 1  None
+RemoteMidi 30 MIDI Input  0     1        Exec  3     161       Button 1  None
+RemoteMidi 31 MIDI Input  33    2        Exec  3     39        Fader     None
+RemoteMidi 32 MIDI Input  35    2        Exec  3     46        Button 3  None
+RemoteMidi 33 MIDI Input  36    2        Exec  3     47        Button 3  None
+RemoteMidi 34 MIDI Input  37    2        Exec  3     48        Button 3  None
+RemoteMidi 35 MIDI Input  40    2        Exec  3     46        Fader     None
+RemoteMidi 36 MIDI Input  53    2        Exec  3     149       Button 1  None
+RemoteMidi 37 MIDI Input  52    2        Exec  3     148       Button 1  None
+RemoteMidi 38 MIDI Input  44    2        Exec  3     50        Fader     None
+RemoteMidi 39 MIDI Input  30    2        Exec  3     36        Fader     None
+RemoteMidi 40 MIDI Input  34    2        Exec  3     40        Fader     None
+RemoteMidi 41 MIDI Input  31    2        Exec  3     37        Fader     None
+RemoteMidi 42 MIDI Input  47    2        Exec  3     48        Button 2  None
+RemoteMidi 43 MIDI Input  32    2        Exec  3     38        Fader     None
+RemoteMidi 44 MIDI Input  41    2        Exec  3     47        Fader     None
+RemoteMidi 45 MIDI Input  45    2        Exec  3     46        Button 2  None
+RemoteMidi 46 MIDI Input  46    2        Exec  3     47        Button 2  None
+RemoteMidi 47 MIDI Input  39    2        Exec  3     50        Button 3  None
+RemoteMidi 48 MIDI Input  38    2        Exec  3     49        Button 3  None
+RemoteMidi 49 MIDI Input  49    2        Exec  3     50        Button 2  None
+RemoteMidi 50 MIDI Input  51    2        Exec  3     147       Button 1  None
+RemoteMidi 51 MIDI Input  50    2        Exec  3     146       Button 1  None
+RemoteMidi 52 MIDI Input  54    2        Exec  3     150       Button 1  None
+RemoteMidi 53 MIDI Input  48    2        Exec  3     49        Button 2  None
+RemoteMidi 54 MIDI Input  42    2        Exec  3     48        Fader     None
+RemoteMidi 55 MIDI Input  43    2        Exec  3     49        Fader     None
+RemoteMidi 56 MIDI Input  79    3        Exec  3     45        Button 1  None
+RemoteMidi 57 MIDI Input  80    3        Exec  3     141       Button 1  None
+RemoteMidi 58 MIDI Input  81    3        Exec  3     142       Button 1  None
+RemoteMidi 59 MIDI Input  82    3        Exec  3     143       Button 1  None
+RemoteMidi 60 MIDI Input  83    3        Exec  3     144       Button 1  None
+RemoteMidi 61 MIDI Input  84    3        Exec  3     145       Button 1  None
+RemoteMidi 62 MIDI Input  78    3        Exec  3     44        Button 1  None
+RemoteMidi 63 MIDI Input  77    3        Exec  3     43        Button 1  None
+RemoteMidi 64 MIDI Input  72    3        Exec  3     43        Fader     None
+RemoteMidi 65 MIDI Input  71    3        Exec  3     42        Fader     None
+RemoteMidi 66 MIDI Input  70    3        Exec  3     41        Fader     None
+RemoteMidi 67 MIDI Input  69    3        Exec  3     45        Button 3  None
+RemoteMidi 68 MIDI Input  68    3        Exec  3     44        Button 3  None
+RemoteMidi 69 MIDI Input  67    3        Exec  3     43        Button 3  None
+RemoteMidi 70 MIDI Input  65    3        Exec  3     41        Button 3  None
+RemoteMidi 71 MIDI Input  64    3        Exec  3     35        Fader     None
+RemoteMidi 72 MIDI Input  63    3        Exec  3     34        Fader     None
+RemoteMidi 73 MIDI Input  62    3        Exec  3     33        Fader     None
+RemoteMidi 74 MIDI Input  59    3        Exec  3     35        Button 1  None
+RemoteMidi 75 MIDI Input  58    3        Exec  3     34        Button 1  None
+RemoteMidi 76 MIDI Input  57    3        Exec  3     33        Button 1  None
+RemoteMidi 77 MIDI Input  56    3        Exec  3     32        Button 1  None
+RemoteMidi 78 MIDI Input  55    3        Exec  3     31        Button 1  None
+RemoteMidi 79 MIDI Input  76    3        Exec  3     42        Button 1  None
+RemoteMidi 80 MIDI Input  75    3        Exec  3     41        Button 1  None
+RemoteMidi 81 MIDI Input  74    3        Exec  3     45        Fader     None
+RemoteMidi 82 MIDI Input  73    3        Exec  3     44        Fader     None
+RemoteMidi 83 MIDI Input  66    3        Exec  3     42        Button 3  None
+RemoteMidi 84 MIDI Input  61    3        Exec  3     32        Fader     None
+RemoteMidi 85 MIDI Input  60    3        Exec  3     31        Fader     None
+RemoteTypes/MidiRemotes 2 >[K
+### >> store 86
+Executing : [32mStore[37m 86
+RemoteTypes/MidiRemotes 2 >[K
+### >> assign 86 /note=100 /channel=16 /type="Exec" /page=0 /executor=101 /button="Button 1"
+Executing : [32mAssign[37m 86 /note=100 /channel=16 /type="Exec" /page=0 /executor=101 /button="Button 1"
+RemoteTypes/MidiRemotes 2 >[K
+### >> list 86
+Executing : [32mList[37m 86
+[32m              Name        Note  Channel  Type  Page                    Executor  Button    [31mKeycode  [32m[31mCMD  [32mInfo  [37m
+RemoteMidi 86 MIDI Input  100   16       Exec  Current Page on Master  101       Button 1  None
+RemoteTypes/MidiRemotes 2 >[K
+### >> assign 86 /executor=99999
+Executing : [32mAssign[37m 86 /executor=99999
+[31mError : Assign 86 /executor=99999[37m
+Error #7: NUMBER TOO LONG
+RemoteTypes/MidiRemotes 2 >[K
+### >> assign 86 /button="Button 9"
+Executing : [32mAssign[37m 86 /button="Button 9"
+RemoteTypes/MidiRemotes 2 >[K
+### >> assign 86 /channel=17
+Executing : [32mAssign[37m 86 /channel=17
+[31mError : Assign 86 /channel=17[37m
+Error #9: NUMBER TOO LARGE  (max=16)
+RemoteTypes/MidiRemotes 2 >[K
+### >> assign 87 /note=1
+Executing : [32mAssign[37m 87 /note=1
+RemoteTypes/MidiRemotes 2 >[K
+### >> list 86
+Executing : [32mList[37m 86
+[32m              Name        Note  Channel  Type  Page                    Executor  Button    [31mKeycode  [32m[31mCMD  [32mInfo  [37m
+RemoteMidi 86 MIDI Input  100   16       Exec  Current Page on Master  101       Button 1  None
+RemoteTypes/MidiRemotes 2 >[K
+### >> delete 86 /noconfirm
+Executing : [32mDelete[37m 86 /noconfirm
+RemoteTypes/MidiRemotes 2 >[K
+### >> delete 86 /noconfirm
+Executing : [32mDelete[37m 86 /noconfirm
+RemoteTypes/MidiRemotes 2 >[K
+### >> list 86
+Executing : [32mList[37m 86
+[31mWARNING, NO OBJECTS FOUND FOR LIST[37m
+RemoteTypes/MidiRemotes 2 >[K
+### >> cd /
+Executing : [32mChangeDest[37m /
+ [Fixture]>[K

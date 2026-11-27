@@ -32,12 +32,12 @@ def test_disabled_sends_nothing(caplog):
 
 def test_enabled_sends_datagram():
     helper = ScreenHelper(
-        ScreenHelperSettings(enabled=True, host="192.168.178.72", port=5005)
+        ScreenHelperSettings(enabled=True, host="192.168.178.72", port=5010)
     )
     fake = FakeSocket()
     helper._sock = fake
     helper.send(3)
-    assert fake.sent == [(b"screen 3", ("192.168.178.72", 5005))]
+    assert fake.sent == [(b"screen 3", ("192.168.178.72", 5010))]
 
 
 def test_send_error_is_logged_not_raised(caplog):

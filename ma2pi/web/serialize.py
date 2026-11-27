@@ -46,6 +46,8 @@ def _serialize_playback(entry: PlaybackMapping) -> dict[str, Any]:
         out["button"] = entry.button
     elif entry.accelerated:
         out["accelerated"] = True
+    if entry.transport is not None:
+        out["transport"] = entry.transport
     return out
 
 
@@ -61,6 +63,8 @@ def _serialize_playback_override(entry: PlaybackOverride) -> dict[str, Any]:
         out["button"] = entry.button
     if entry.accelerated is not None:
         out["accelerated"] = entry.accelerated
+    if entry.transport is not None:
+        out["transport"] = entry.transport
     return out
 
 
@@ -195,6 +199,16 @@ def redacted_config(config: AppConfig) -> dict[str, Any]:
     acc = mapping.acceleration
     vacc = mapping.value_acceleration
     led = config.led
+    midi_remote = config.midi_remote
+    midi_remote_out: dict[str, Any] = {
+        "enabled": midi_remote.enabled,
+        "port": midi_remote.port,
+        "channels": list(midi_remote.channels),
+        "sync": midi_remote.sync,
+        "telnet_port": midi_remote.telnet_port,
+    }
+    if midi_remote.host is not None:
+        midi_remote_out["host"] = midi_remote.host
 
     led_out: dict[str, Any] = {
         "enabled": led.enabled,
@@ -367,4 +381,5 @@ def redacted_config(config: AppConfig) -> dict[str, Any]:
             "host": config.screen_helper.host,
             "port": config.screen_helper.port,
         },
+        "midi_remote": midi_remote_out,
     }

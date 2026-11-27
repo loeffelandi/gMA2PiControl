@@ -226,18 +226,18 @@ def test_screen_shortcut_out_of_range(make_config):
 def test_screen_helper_defaults(make_config):
     config = make_config(lambda data: data.pop("screen_helper", None))
     assert config.screen_helper.enabled is False
-    assert config.screen_helper.port == 5005
+    assert config.screen_helper.port == 5010
 
 
 def test_screen_helper_parsed(make_config):
     config = make_config(
         lambda data: data.__setitem__(
-            "screen_helper", {"enabled": True, "host": "192.168.178.72", "port": 5005}
+            "screen_helper", {"enabled": True, "host": "192.168.178.72", "port": 5010}
         )
     )
     assert config.screen_helper.enabled is True
     assert config.screen_helper.host == "192.168.178.72"
-    assert config.screen_helper.port == 5005
+    assert config.screen_helper.port == 5010
 
 
 def test_screen_helper_port_out_of_range(make_config):
@@ -245,6 +245,116 @@ def test_screen_helper_port_out_of_range(make_config):
         make_config(
             lambda data: data.__setitem__("screen_helper", {"port": 0})
         )
+
+
+def test_midi_remote_defaults(make_config):
+    config = make_config(lambda data: data.pop("midi_remote", None))
+    remote = config.midi_remote
+    assert remote.enabled is False
+    assert remote.host is None
+    assert remote.port == 5004
+    assert remote.channels == (16,)
+    assert remote.sync == "auto"
+    assert remote.telnet_port == 30000
+
+
+def test_midi_remote_parsed(make_config):
+    config = make_config(
+        lambda data: data.__setitem__(
+            "midi_remote",
+            {
+                "enabled": True,
+                "host": "192.168.178.72",
+                "port": 5104,
+                "channels": [15, 16],
+                "sync": "check",
+                "telnet_port": 30001,
+            },
+        )
+    )
+    remote = config.midi_remote
+    assert remote.enabled is True
+    assert remote.host == "192.168.178.72"
+    assert remote.port == 5104
+    assert remote.channels == (15, 16)
+    assert remote.sync == "check"
+    assert remote.telnet_port == 30001
+
+
+@pytest.mark.parametrize(
+    ("section", "match"),
+    [
+        ({"channels": [0]}, "midi_remote.channels"),
+        ({"channels": [17]}, "midi_remote.channels"),
+        ({"channels": []}, "midi_remote.channels"),
+        ({"channels": [16, 16]}, "Kanal 16 doppelt"),
+        ({"sync": "sometimes"}, "midi_remote.sync"),
+        ({"port": 65535}, "midi_remote.port"),
+        ({"telnet_port": 0}, "midi_remote.telnet_port"),
+        ({"bogus": 1}, "midi_remote"),
+    ],
+)
+def test_midi_remote_rejects_invalid(make_config, section, match):
+    with pytest.raises(ConfigError, match=match):
+        make_config(lambda data: data.__setitem__("midi_remote", section))
+
+
+def test_playback_transport_parsed(make_config):
+    def edit(data):
+        data["midi_remote"] = {"enabled": True}
+        data["mapping"]["playbacks"]["mc_click_1"]["transport"] = "web"
+        data["mapping"]["playbacks"]["mc_click_2"]["transport"] = "midi"
+
+    config = make_config(edit)
+    assert config.mapping.playbacks["mc_click_1"].transport == "web"
+    assert config.mapping.playbacks["mc_click_2"].transport == "midi"
+    assert config.mapping.playbacks["mc_click_3"].transport is None
+
+
+def test_playback_transport_unknown_value(make_config):
+    with pytest.raises(ConfigError, match="mc_click_1.transport"):
+        make_config(
+            lambda data: data["mapping"]["playbacks"]["mc_click_1"].__setitem__(
+                "transport", "rtp"
+            )
+        )
+
+
+def test_midi_transport_needs_enabled_midi_remote(make_config):
+    with pytest.raises(ConfigError, match=r"mc_click_1\.transport.*enabled = true"):
+        make_config(
+            lambda data: data["mapping"]["playbacks"]["mc_click_1"].__setitem__(
+                "transport", "midi"
+            )
+        )
+
+
+def test_midi_transport_rejected_for_faders(make_config):
+    def edit(data):
+        data["midi_remote"] = {"enabled": True}
+        data["mapping"]["playbacks"]["mc_fader_1"]["transport"] = "midi"
+
+    with pytest.raises(ConfigError, match=r"mc_fader_1\.transport.*kind = \"button\""):
+        make_config(edit)
+
+
+def test_midi_transport_checked_in_bank_layers(make_config):
+    def edit(data):
+        data["mapping"]["device_banks"] = {
+            "midicraft-enc": {"1": {"playbacks": {"mc_click_1": {"transport": "midi"}}}}
+        }
+
+    with pytest.raises(ConfigError, match=r"device_banks\.midicraft-enc\.1\.playbacks"):
+        make_config(edit)
+
+
+def test_effective_transport_defaults():
+    from ma2pi.config import effective_transport
+
+    assert effective_transport("button", None, True) == "midi"
+    assert effective_transport("button", None, False) == "web"
+    assert effective_transport("fader", None, True) == "web"
+    assert effective_transport("button", "web", True) == "web"
 
 
 def test_key_mapping_requires_exactly_one_kind(make_config):

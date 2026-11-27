@@ -1,0 +1,33 @@
+### banner
+[37m[2J[34mMMMMMMMM               MMMMMMMM               AAA                ****** 
+M:::::::M             M:::::::M              A:::A              ********
+M::::::::M           M::::::::M             A:::::A                   **
+M:::::::::M         M:::::::::M            A:::::::A             *******
+M::::::::::M       M::::::::::M           A:::::::::A           ******* 
+M:::::::::::M     M:::::::::::M          A:::::A:::::A          **      
+M:::::::M::::M   M::::M:::::::M         A:::::A A:::::A         ********
+M::::::M M::::M M::::M M::::::M        A:::::A   A:::::A        ********
+M::::::M  M::::M::::M  M::::::M       A:::::A     A:::::A       
+M::::::M   M:::::::M   M::::::M      A:::::AAAAAAAAA:::::A      
+M::::::M    M:::::M    M::::::M     A:::::::::::::::::::::A     
+M::::::M     MMMMM     M::::::M    A:::::AAAAAAAAAAAAA:::::A    
+M::::::M               M::::::M   A:::::A             A:::::A   
+M::::::M               M::::::M  A:::::A               A:::::A  
+M::::::M               M::::::M A:::::A                 A:::::A 
+MMMMMMMM               MMMMMMMMAAAAAAA                   AAAAAAA
+[37m
+Logged in as User 'guest'
+ [Fixture]>[KPlease login !
+ [Fixture]>[K
+### >> login "svt" ""
+Executing : [32mLogin[37m "svt" ""
+Logged in as User 'svt'
+ [Fixture]>[K
+### >> login "nobody" "x"
+Executing : [32mLogin[37m "nobody" "x"
+[31mError : Login "nobody" "x"[37m
+Error #72: COMMAND NOT EXECUTED
+ [Fixture]>[K
+### >> cd 36
+Executing : [32mChangeDest[37m 36
+RemoteTypes >[K

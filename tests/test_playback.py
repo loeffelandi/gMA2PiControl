@@ -577,3 +577,148 @@ def test_combined_executors_off_sends_the_mapped_executor(make_config):
     router.handle(InputEvent("key", "mc_click_1", 0, "midicraft"))
 
     assert client.buttons == [(2, 115, 1, True), (2, 115, 1, False)]
+
+
+# --- MIDI-Remote-Transport ---------------------------------------------------
+
+
+class FakeMidi:
+    def __init__(self) -> None:
+        self.connected = True
+        self.synced: set[tuple] = set()
+        self.notes: list[tuple] = []
+
+    def is_synced(self, key) -> bool:
+        return key in self.synced
+
+    def press(self, key, pressed: bool) -> bool:
+        if not self.connected or key not in self.synced:
+            return False
+        self.notes.append((*key, pressed))
+        return True
+
+
+def _midi_router(make_config, entries, *, topology=None, midi=None):
+    def mutate(data):
+        data["mapping"]["playbacks"] = entries
+        data["midi_remote"] = {"enabled": True}
+
+    config = make_config(mutate)
+    client = FakeClient()
+    midi = midi if midi is not None else FakeMidi()
+    router = PlaybackRouter(
+        MappingEngine(config, client), client, topology=topology, midi=midi
+    )
+    return router, client, midi
+
+
+def test_midi_button_goes_to_midi_and_fader_stays_web(make_config):
+    router, client, midi = _midi_router(
+        make_config,
+        {
+            "mc_click_1": {"page": 2, "executor": 7, "kind": "button", "button": 2},
+            "mc_fader_1": {"page": 2, "executor": 8, "kind": "fader"},
+            "mc_click_2": {"page": 2, "executor": 9, "kind": "button", "transport": "web"},
+        },
+    )
+    midi.synced = {(2, 7, 2)}
+    router.handle(InputEvent("key", "mc_click_1", 1, "midicraft"))
+    router.handle(InputEvent("key", "mc_click_1", 0, "midicraft"))
+    router.handle(InputEvent("value", "mc_fader_1", 0.5, "midicraft"))
+    router.handle(InputEvent("key", "mc_click_2", 1, "midicraft"))
+    assert midi.notes == [(2, 7, 2, True), (2, 7, 2, False)]
+    assert client.buttons == [(2, 9, 1, True)]
+    assert client.faders == [(2, 8, 0.5)]
+
+
+def test_midi_button_on_current_page(make_config):
+    router, client, midi = _midi_router(
+        make_config,
+        {"mc_click_1": {"page": "current", "executor": 3, "kind": "button"}},
+    )
+    midi.synced = {("current", 3, 1)}
+    router.handle(InputEvent("key", "mc_click_1", 1, "midicraft"))
+    assert midi.notes == [("current", 3, 1, True)]
+    assert client.buttons == []
+
+
+def test_midi_covered_slot_is_not_redirected(make_config):
+    router, client, midi = _midi_router(
+        make_config,
+        {"mc_click_1": {"page": 2, "executor": 115, "kind": "button", "button": 1}},
+        topology=_floating_topology(),
+    )
+    midi.synced = {(2, 115, 1)}
+    router.handle(InputEvent("key", "mc_click_1", 1, "midicraft"))
+    assert midi.notes == [(2, 115, 1, True)]
+
+
+def test_midi_follows_bank_offset(make_config):
+    def mutate(data):
+        data["midi_remote"] = {"enabled": True, "channels": [15, 16]}
+
+    config = _bank_playback_config(make_config)
+    config = dataclasses.replace(
+        config, midi_remote=make_config(mutate).midi_remote
+    )
+    client = BankingClient()
+    midi = FakeMidi()
+    midi.synced = {(1, 15, 2)}
+    router = PlaybackRouter(MappingEngine(config, client), client, midi=midi)
+    router.handle(InputEvent("key", "bt_button", 1, "banktest", 2))
+    router.handle(InputEvent("key", "bt_button", 0, "banktest", 1))
+    assert midi.notes == [(1, 15, 2, True), (1, 15, 2, False)]
+    assert client.buttons == []
+
+
+def test_unavailable_midi_target_is_dropped_with_one_warning(make_config, caplog):
+    router, client, midi = _midi_router(
+        make_config,
+        {"mc_click_1": {"page": 2, "executor": 7, "kind": "button"}},
+    )
+    midi.synced = {(2, 7, 1)}
+    midi.connected = False
+    with caplog.at_level("WARNING", logger="ma2pi.playback"):
+        for _ in range(3):
+            router.handle(InputEvent("key", "mc_click_1", 1, "midicraft"))
+            router.handle(InputEvent("key", "mc_click_1", 0, "midicraft"))
+    assert client.buttons == []
+    assert midi.notes == []
+    warnings = [record.getMessage() for record in caplog.records]
+    assert warnings == ["Executor 2.7 Button 1 verworfen: RTP-MIDI-Sitzung getrennt"]
+
+    # Back up: sends again; the next outage warns again.
+    midi.connected = True
+    router.handle(InputEvent("key", "mc_click_1", 1, "midicraft"))
+    router.handle(InputEvent("key", "mc_click_1", 0, "midicraft"))
+    midi.synced = set()
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="ma2pi.playback"):
+        router.handle(InputEvent("key", "mc_click_1", 1, "midicraft"))
+    assert midi.notes == [(2, 7, 1, True), (2, 7, 1, False)]
+    assert [record.getMessage() for record in caplog.records] == [
+        "Executor 2.7 Button 1 verworfen: MIDI-Remote in der MA nicht abgeglichen"
+    ]
+
+
+def test_midi_release_survives_web_session_loss(make_config):
+    router, client, midi = _midi_router(
+        make_config,
+        {"mc_click_1": {"page": 2, "executor": 7, "kind": "button"}},
+    )
+    midi.synced = {(2, 7, 1)}
+    router.handle(InputEvent("key", "mc_click_1", 1, "midicraft"))
+    router.on_connection_lost()
+    router.handle(InputEvent("key", "mc_click_1", 0, "midicraft"))
+    assert midi.notes == [(2, 7, 1, True), (2, 7, 1, False)]
+
+
+def test_cleanup_releases_midi_even_without_web_session(make_config):
+    router, client, midi = _midi_router(
+        make_config,
+        {"mc_click_1": {"page": 2, "executor": 7, "kind": "button"}},
+    )
+    midi.synced = {(2, 7, 1)}
+    router.handle(InputEvent("key", "mc_click_1", 1, "midicraft"))
+    router.cleanup(send=False)
+    assert midi.notes == [(2, 7, 1, True), (2, 7, 1, False)]

@@ -23,3 +23,4 @@
 * [0021. Executor-Feedback über Playback-Polling und MIDI-Duplex-Ausgabe](0021-executor-feedback-ueber-playback-polling-und-midi-duplex-ausgabe.md)
 * [22. Geraete-Baenke als MIDI-Kanaele und Bank-Offset](0022-geraete-baenke-als-midi-kanaele-und-bank-offset.md)
 * [23. Produktname gMA2PiControl bei technischem Paketnamen ma2pi](0023-produktname-gma2picontrol-bei-technischem-paketnamen-ma2pi.md)
+* [24. Executor-Tasten über MA-MIDI-Remotes per RTP-MIDI](0024-executor-tasten-ueber-ma-midi-remotes-per-rtp-midi.md)

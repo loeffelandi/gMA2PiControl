@@ -598,6 +598,70 @@ relative encoders are never accelerated.
 Executor feedback for LED-capable button targets is described in
 `[feedback]`; a fader target still has no feedback and no PickUp.
 
+`transport = "midi"` or `"web"` is optional. Without it, a button target goes
+over MIDI remotes when `[midi_remote].enabled = true` and over the Web Remote
+otherwise; fader targets always use the Web Remote. See `[midi_remote]`.
+
+### `[midi_remote]`: executor buttons over MA MIDI remotes
+
+The Web Remote always fires an executor. A console key, and a MIDI remote of the
+MA, react to the command line instead: after `Store` (or Assign, Edit, Copy …)
+from the Cherry, an ENC button stores into its executor. With `[midi_remote]`
+enabled, `ma2pi` sends executor **buttons** as MIDI notes over RTP-MIDI to MIDI
+remotes of the MA and keeps that remote table in sync over Telnet. Faders,
+encoders, colours and executor states stay on the Web Remote (ADR-0024).
+
+```toml
+[midi_remote]
+enabled = true
+# host = "192.168.178.72"  # rtpMIDI computer, default: [ma2].host
+port = 5004                # rtpMIDI session port (data port = port + 1)
+channels = [15, 16]        # reserved for ma2pi, 128 targets per channel
+sync = "auto"              # "auto" writes, "check" only compares, "off" trusts the show
+telnet_port = 30000
+```
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `enabled` | bool | `false` | Turns the MIDI path on; button targets without `transport` then use it. |
+| `host` | string | `[ma2].host` | Computer running rtpMIDI. |
+| `port` | int | `5004` | rtpMIDI session port; `port + 1` must be free too. |
+| `channels` | list of 1–16 | `[16]` | MIDI channels owned by `ma2pi`. Entries on these channels are created, changed and **deleted** by the sync; entries on other channels are never touched. |
+| `sync` | `"auto"`, `"check"`, `"off"` | `"auto"` | `auto` writes the difference and reads it back; `check` only reports deviations and sends nothing for missing remotes; `off` opens no Telnet and sends to every target. |
+| `telnet_port` | int | `30000` | Telnet port of the MA. |
+
+Every button target `(page, executor, button)` that any device and bank can
+reach gets one note on the reserved channels, in sorted order, so the same
+configuration always yields the same table. Banks with an executor offset
+multiply the targets: the current MIDICRAFT configuration has 245 button
+targets and needs two channels (`channels = [15, 16]`); `--check-config`
+rejects a configuration that does not fit.
+
+Setup on the onPC computer:
+
+1. Install rtpMIDI (Tobias Erichsen), create a session (port 5004) and allow
+   *Anyone* to connect. UDP 5004 and 5005 must be free; the screen helper
+   therefore listens on UDP 5010.
+2. In the onPC, set the MIDI input to the rtpMIDI session. The onPC has a
+   single MIDI input: a directly connected MIDI device stops working unless it
+   is routed into the session with rtpMIDI *Live routings*. This setting is
+   local to the onPC and not stored in the show.
+3. Enable Telnet: `Setup → Console → Global Settings → Telnet = Login Enabled`.
+   `ma2pi` logs in with `[ma2].username` and its password. In
+   `Setup → Console → Remote Inputs`, tab *MIDI Remotes*, `Enabled` and *CLI*
+   must be on (Telnet: `cd 36`, `cd 2` shows `MidiRemotes 2 Enabled=On CLI=On`).
+4. Save the show after the first sync; otherwise a show reload drops the
+   remotes and `ma2pi` recreates them on the next sync.
+
+The Status page shows the RTP-MIDI session (state, latency) and the last sync
+(synced/targets, created, changed, removed, failed, time, error). A button is
+only sent while the session is up and its remote is confirmed; otherwise it is
+dropped and logged once per outage and target. `ma2pi` does not fall back to
+the Web Remote, because that would fire the executor instead of feeding the
+command line. Every Note-Off is repeated once after 20 ms, as RTP-MIDI runs
+without recovery journal. A MIDI target on a covered slot of a wide executor is
+not redirected: the MA treats it like the console key of that column.
+
 ### `[mapping]`: wide executors
 
 A wide (combined) executor covers several slots; the console then has no

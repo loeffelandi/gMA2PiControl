@@ -20,7 +20,20 @@ page_refresh_interval = 1.0                   # veraltet, ohne Wirkung (kein pre
 [screen_helper]
 enabled = true
 host = "192.168.0.10"                         # IP des onPC-PCs
-port = 5005
+port = 5010
+
+# Executor-Tasten als MIDI-Noten per RTP-MIDI an MIDI-Remotes der MA. Damit
+# greifen Store, Assign usw. von der Haupt-Kommandozeile wie bei Konsolentasten.
+# Auf dem onPC-PC: rtpMIDI-Session (Port 5004), MIDI-Eingang der onPC auf diese
+# Session, Telnet in der MA auf "Login Enabled". Button-Ziele ohne transport
+# gehen dann über MIDI, Fader bleiben beim Web Remote.
+[midi_remote]
+enabled = false
+# host = "192.168.0.10"                       # Default: Host der MA-Verbindung
+port = 5004                                   # rtpMIDI-Session; Datenport = port + 1
+channels = [16]                               # reservierte Kanäle, je 128 Ziele
+sync = "auto"                                 # auto | check | off
+telnet_port = 30000
 
 # Canbus-Keycodes für den LUA-Hardkey-Transport. Quelle: MIDIMonster maweb.c
 # (Community-Wissen, nicht offiziell dokumentiert). verified = false sendet nichts;

@@ -239,6 +239,7 @@
       kind: override?.kind ?? base?.kind ?? 'button',
       button: override?.button ?? base?.button ?? 1,
       accelerated: override?.accelerated ?? base?.accelerated ?? false,
+      transport: override?.transport ?? base?.transport ?? null,
     };
   }
 
@@ -351,7 +352,8 @@
       const kind = playback.kind ?? 'button';
       const suffix = kind === 'fader' ? 'Fader' : `Btn ${playback.button ?? 1}`;
       const acc = playback.accelerated ? ' · acc' : '';
-      return `Exec ${playback.executor ?? '?'} ${suffix}${acc}`;
+      const via = playback.transport ? ` · ${playback.transport}` : '';
+      return `Exec ${playback.executor ?? '?'} ${suffix}${acc}${via}`;
     }
     const encoder = encoderFor(control);
     if (encoder) {
@@ -417,6 +419,7 @@
             targetKind: playback.kind ?? 'button',
             button: playback.button ?? 1,
             accelerated: Boolean(playback.accelerated),
+            transport: playback.transport ?? null,
           }
         : encoder
           ? {
@@ -614,6 +617,11 @@
       } else {
         const executor = values.start - offset + index * values.step;
         const kind = inventory.find((item) => item.id === control)?.kind;
+        const inheritsMidi =
+          !useGlobalScope && config?.mapping?.playbacks?.[control]?.transport === 'midi';
+        // A bank fader would inherit the global "midi", which faders reject.
+        const transport =
+          values.transport ?? (values.targetKind === 'fader' && inheritsMidi ? 'web' : null);
         const entry: AnyConfig = {
           page: values.page === 'current' ? 'current' : Number(values.page),
           executor,
@@ -623,6 +631,7 @@
             kind === 'encoder' && values.targetKind === 'fader'
               ? Boolean(values.accelerated)
               : null,
+          transport,
         };
         area.playbacks[control] = entry;
       }
@@ -911,6 +920,7 @@
       inherited={dialogInherited}
       hasAssignment={dialogHasAssignment}
       screenEncoders={config?.mapping?.screen_encoders ?? {}}
+      midiRemoteEnabled={config?.midi_remote?.enabled === true}
       onSave={saveAssignment}
       onClear={clearAssignment}
       onClose={() => (dialog = null)}

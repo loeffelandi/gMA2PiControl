@@ -471,6 +471,128 @@ describe('DevicesPage bank offset', () => {
             kind: 'fader',
             button: null,
             accelerated: null,
+            transport: null,
+          },
+        },
+      },
+    });
+  });
+});
+
+describe('DevicesPage bank fader under a global MIDI button', () => {
+  it('writes web so the override does not inherit midi', async () => {
+    const midiConfig = {
+      ...config,
+      midi_remote: { enabled: true, port: 5004, channels: [16], sync: 'auto', telnet_port: 30000 },
+      mapping: {
+        ...config.mapping,
+        keys: {},
+        playbacks: {
+          bt_button: { page: 1, executor: 3, kind: 'button', button: 1, transport: 'midi' },
+        },
+      },
+    };
+    const api = fakeApi([device], midiConfig);
+    render(DevicesPage, { props: { api } });
+    await waitFor(() => expect(screen.getByText('Exec 3 Btn 1 · midi')).toBeTruthy());
+    await fireEvent.change(screen.getByLabelText('Bank'), { target: { value: '2' } });
+
+    await fireEvent.click(screen.getByText('B'));
+    await fireEvent.click(screen.getByText('Zuweisen'));
+    await fireEvent.change(screen.getByLabelText('Geltungsbereich'), {
+      target: { value: 'bank' },
+    });
+    await fireEvent.change(screen.getByLabelText('Art'), { target: { value: 'fader' } });
+    await fireEvent.change(screen.getByLabelText('Transport'), { target: { value: '' } });
+    await fireEvent.click(screen.getByText('Speichern'));
+
+    await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
+    const patch = (api.updateConfig as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(patch.mapping.device_banks.banktest['2'].playbacks.bt_button).toMatchObject({
+      kind: 'fader',
+      transport: 'web',
+    });
+  });
+});
+
+describe('DevicesPage playback transport', () => {
+  const transportConfig = {
+    ...config,
+    midi_remote: { enabled: true, port: 5004, channels: [16], sync: 'auto', telnet_port: 30000 },
+    mapping: {
+      ...config.mapping,
+      keys: {},
+      playbacks: {
+        bt_button: { page: 1, executor: 3, kind: 'button', button: 1, transport: 'midi' },
+        bt_fader: { page: 1, executor: 1, kind: 'fader' },
+      },
+    },
+  };
+
+  it('shows the transport hint and saves a changed transport', async () => {
+    const api = fakeApi([device], transportConfig);
+    render(DevicesPage, { props: { api } });
+    await waitFor(() => expect(screen.getByText('Exec 3 Btn 1 · midi')).toBeTruthy());
+    expect(screen.getByText('Exec 1 Fader')).toBeTruthy();
+
+    await fireEvent.click(screen.getByText('B'));
+    await fireEvent.click(screen.getByText('Zuweisen'));
+    const select = screen.getByLabelText('Transport') as HTMLSelectElement;
+    expect(select.value).toBe('midi');
+    await fireEvent.change(select, { target: { value: 'web' } });
+    await fireEvent.click(screen.getByText('Speichern'));
+
+    await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
+    expect(api.updateConfig).toHaveBeenCalledWith({
+      mapping: {
+        keys: { bt_button: null },
+        playbacks: {
+          bt_button: {
+            page: 1,
+            executor: 3,
+            kind: 'button',
+            button: 1,
+            accelerated: null,
+            transport: 'web',
+          },
+        },
+      },
+    });
+  });
+
+  it('writes null for Standard and offers no MIDI option for faders', async () => {
+    const api = fakeApi([device], transportConfig);
+    render(DevicesPage, { props: { api } });
+    await waitFor(() => expect(screen.getByText('Exec 3 Btn 1 · midi')).toBeTruthy());
+
+    await fireEvent.click(screen.getByText('F'));
+    await fireEvent.click(screen.getByText('Zuweisen'));
+    const faderSelect = screen.getByLabelText('Transport') as HTMLSelectElement;
+    expect(faderSelect.value).toBe('');
+    expect(Array.from(faderSelect.options).map((option) => option.value)).toEqual(['', 'web']);
+    expect(faderSelect.options[0].textContent?.trim()).toBe('Standard (Web)');
+    await fireEvent.click(screen.getByText('Abbrechen'));
+    await fireEvent.click(screen.getByText('F'));
+
+    await fireEvent.click(screen.getByText('B'));
+    await fireEvent.click(screen.getByText('Zuweisen'));
+    const select = screen.getByLabelText('Transport') as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: '' } });
+    expect(select.options[0].textContent?.trim()).toBe('Standard (MIDI)');
+    await fireEvent.click(screen.getByText('Speichern'));
+
+    await waitFor(() => expect(api.updateConfig).toHaveBeenCalled());
+    expect(api.updateConfig).toHaveBeenCalledWith({
+      mapping: {
+        keys: { bt_button: null },
+        playbacks: {
+          bt_button: {
+            page: 1,
+            executor: 3,
+            kind: 'button',
+            button: 1,
+            accelerated: null,
+            transport: null,
           },
         },
       },
