@@ -258,6 +258,11 @@ Feedback-Phase, 01:13 lag nach dem Einschalten. Die Stalls sind damit nicht
 allein durch LED-Ausgabe erklärbar. Die Hypothese H3 (anderer USB-Port bzw. Hub) bleibt ungeprüft und
 wäre ein eigener Change.
 
+Einschätzung des Betreibers (2026-11-27): Das Gerät wird offenbar immer wieder
+nicht erkannt oder hört auf zu arbeiten; erneutes Einstecken behebt das in
+9 von 10 Fällen. Das spricht für ein Problem des Geräts bzw. der USB-Strecke
+und nicht für die LED-Ausgabe von `ma2pi`.
+
 ## Open Questions
 
 Alle drei Fragen wurden durch den Betrieb beantwortet: 20 ms sind stabil

@@ -141,12 +141,11 @@ Gemessen im Live-Test (2026-11-26): rund 6,2 Playbacks-Abfragen/s, in der Spitze
 Geplant war, dass `Ma2Client` den Zeitpunkt der letzten Live-Aktion meldet und
 `ExecutorFeedback` Abfragen bis 300 ms danach überspringt (`LIVE_QUIET_SECONDS`).
 **Das wurde nie umgesetzt** und ist auf Entscheidung des Betreibers
-(2026-11-27) gestrichen. Das Ruckeln vom 2026-11-26 wurde danach nicht erneut
-gemessen; es ist offen, ob es noch auftritt. Zwischenzeitlich sendet der Poller
-zwei Blöcke je 250 ms, und die Priorität in der `SendQueue` (Steuerung vor
-Encodern vor Playback-Fadern vor Abfragen, Abfragen je Block zusammengefasst)
-bleibt der einzige Schutz. Tritt Ruckeln wieder auf, ist ein eigener Change mit
-Messung der richtige Weg.
+(2026-11-27) gestrichen. Der Betreiber hat danach getestet: Das Ruckeln der
+Fader vom 2026-11-26 tritt nicht mehr auf (Poller mit zwei Blöcken je 250 ms,
+Priorität in der `SendQueue`: Steuerung vor Encodern vor Playback-Fadern vor
+Abfragen, Abfragen je Block zusammengefasst). Tritt es wieder auf, ist ein
+eigener Change mit Messung der richtige Weg.
 
 *Alternativen:* festes Teilbudget fürs Polling, `rate_limit` anheben. Beide
 waren verworfen worden und bleiben es.
@@ -183,7 +182,7 @@ breiten Fader-Executoren fehl, die ebenfalls keine haben.
 - 6.3 mit `[feedback] enabled = true` auf dem Pi: Start/Stop von Exec 1–5 und
   101–105, Appearance-Farben und Page-Wechsel folgen; die 15 Startframes
   wurden vom ENC abgenommen, keine Stau-Warnung, Kernel-Log sauber.
-  Befunde: Fader ruckeln, wenn viel los ist (→ D7, nicht umgesetzt); Tasten
+  Befunde: Fader ruckeln, wenn viel los ist (→ D7, später nicht mehr aufgetreten); Tasten
   ohne Belegung behalten ihren alten LED-Zustand (→ D8).
 - Wiederholung am 2026-11-27 nach dem Deploy mit LEDs für alle Bänke und
   Auffrischen (`refresh_interval_ms = 1500`): Die LEDs folgen dem Executor-
